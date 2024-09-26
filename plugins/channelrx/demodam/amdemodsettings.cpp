@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021, 2023 Jon Beniston, M7RCE <jon@beniston.com>               //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,13 +20,14 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "amdemodsettings.h"
 
 AMDemodSettings::AMDemodSettings() :
-    m_channelMarker(0)
+    m_channelMarker(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -36,17 +40,23 @@ void AMDemodSettings::resetToDefaults()
     m_volume = 2.0;
     m_audioMute = false;
     m_bandpassEnable = false;
+    m_afBandwidth = 5000;
     m_rgbColor = QColor(255, 255, 0).rgb();
     m_title = "AM Demodulator";
     m_audioDeviceName = AudioDeviceManager::m_defaultDeviceName;
     m_pll = false;
     m_syncAMOperation = SyncAMDSB;
+    m_frequencyMode = Offset;
+    m_frequency = 0;
+    m_snap = false;
     m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray AMDemodSettings::serialize() const
@@ -65,6 +75,7 @@ QByteArray AMDemodSettings::serialize() const
     s.writeU32(7, m_rgbColor);
     s.writeBool(8, m_bandpassEnable);
     s.writeString(9, m_title);
+    s.writeReal(10, m_afBandwidth);
     s.writeString(11, m_audioDeviceName);
     s.writeBool(12, m_pll);
     s.writeS32(13, (int) m_syncAMOperation);
@@ -73,6 +84,18 @@ QByteArray AMDemodSettings::serialize() const
     s.writeU32(16, m_reverseAPIPort);
     s.writeU32(17, m_reverseAPIDeviceIndex);
     s.writeU32(18, m_reverseAPIChannelIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(19, m_rollupState->serialize());
+    }
+
+    s.writeS32(20, m_workspaceIndex);
+    s.writeBlob(21, m_geometryBytes);
+    s.writeBool(22, m_hidden);
+    s.writeBool(23, m_audioMute);
+    s.writeS32(24, (int) m_frequencyMode);
+    s.writeS64(25, m_frequency);
+    s.writeBool(26, m_snap);
 
     return s.final();
 }
@@ -102,15 +125,17 @@ bool AMDemodSettings::deserialize(const QByteArray& data)
         m_volume = tmp * 0.1;
         d.readS32(5, &tmp, -40);
         m_squelch = tmp;
-        d.readBlob(6, &bytetmp);
 
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
+            d.readBlob(6, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
 
         d.readU32(7, &m_rgbColor);
         d.readBool(8, &m_bandpassEnable, false);
         d.readString(9, &m_title, "AM Demodulator");
+        d.readReal(10, &m_afBandwidth, 5000);
         d.readString(11, &m_audioDeviceName, AudioDeviceManager::m_defaultDeviceName);
         d.readBool(12, &m_pll, false);
         d.readS32(13, &tmp, 0);
@@ -129,6 +154,20 @@ bool AMDemodSettings::deserialize(const QByteArray& data)
         m_reverseAPIDeviceIndex = utmp > 99 ? 99 : utmp;
         d.readU32(18, &utmp, 0);
         m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
+
+        if (m_rollupState)
+        {
+            d.readBlob(19, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(20, &m_workspaceIndex, 0);
+        d.readBlob(21, &m_geometryBytes);
+        d.readBool(22, &m_hidden, false);
+        d.readBool(23, &m_audioMute);
+        d.readS32(24, (int *) &m_frequencyMode, (int) Offset);
+        d.readS64(25, &m_frequency);
+        d.readBool(26, &m_snap, false);
 
         return true;
     }

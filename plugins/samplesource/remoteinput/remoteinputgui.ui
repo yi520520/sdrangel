@@ -7,13 +7,25 @@
     <x>0</x>
     <y>0</y>
     <width>360</width>
-    <height>270</height>
+    <height>380</height>
    </rect>
+  </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
   </property>
   <property name="minimumSize">
    <size>
     <width>360</width>
-    <height>270</height>
+    <height>380</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>380</width>
+    <height>400</height>
    </size>
   </property>
   <property name="font">
@@ -27,7 +39,7 @@
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
-    <number>3</number>
+    <number>2</number>
    </property>
    <property name="leftMargin">
     <number>2</number>
@@ -62,20 +74,6 @@
             <iconset resource="../../../sdrgui/resources/res.qrc">
              <normaloff>:/play.png</normaloff>
              <normalon>:/stop.png</normalon>:/play.png</iconset>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="ButtonSwitch" name="record">
-           <property name="toolTip">
-            <string>Toggle record I/Q samples from device</string>
-           </property>
-           <property name="text">
-            <string/>
-           </property>
-           <property name="icon">
-            <iconset resource="../../../sdrgui/resources/res.qrc">
-             <normaloff>:/record_off.png</normaloff>:/record_off.png</iconset>
            </property>
           </widget>
          </item>
@@ -114,89 +112,44 @@
       </spacer>
      </item>
      <item>
-      <widget class="ValueDial" name="centerFrequency" native="true">
-       <property name="enabled">
-        <bool>false</bool>
-       </property>
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
+      <widget class="QLabel" name="centerFrequency">
        <property name="minimumSize">
         <size>
-         <width>32</width>
-         <height>16</height>
+         <width>170</width>
+         <height>0</height>
         </size>
        </property>
        <property name="font">
         <font>
-         <family>Liberation Mono</family>
-         <pointsize>20</pointsize>
+         <family>Liberation Sans</family>
+         <pointsize>16</pointsize>
+         <italic>false</italic>
+         <bold>false</bold>
         </font>
        </property>
-       <property name="cursor">
-        <cursorShape>ForbiddenCursor</cursorShape>
+       <property name="text">
+        <string>10,000,000,000</string>
        </property>
-       <property name="focusPolicy">
-        <enum>Qt::StrongFocus</enum>
-       </property>
-       <property name="toolTip">
-        <string>Remote center frequency kHz</string>
+       <property name="alignment">
+        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
        </property>
       </widget>
      </item>
      <item>
-      <layout class="QVBoxLayout" name="hertzLayout">
-       <item>
-        <widget class="ValueDial" name="centerFrequencyHz" native="true">
-         <property name="enabled">
-          <bool>false</bool>
-         </property>
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="minimumSize">
-          <size>
-           <width>32</width>
-           <height>0</height>
-          </size>
-         </property>
-         <property name="font">
-          <font>
-           <family>Liberation Mono</family>
-           <pointsize>12</pointsize>
-          </font>
-         </property>
-         <property name="cursor">
-          <cursorShape>ForbiddenCursor</cursorShape>
-         </property>
-         <property name="toolTip">
-          <string>Remote center frequency sub kHz</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="freqUnits">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="text">
-          <string> Hz</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignCenter</set>
-         </property>
-        </widget>
-       </item>
-      </layout>
+      <widget class="QLabel" name="freqUnits">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="text">
+        <string> Hz</string>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignCenter</set>
+       </property>
+      </widget>
      </item>
      <item>
       <spacer name="horizontalSpacer_3">
@@ -219,6 +172,232 @@
       <enum>Qt::Horizontal</enum>
      </property>
     </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="remoteDevFreqLayout">
+     <property name="spacing">
+      <number>6</number>
+     </property>
+     <item>
+      <widget class="QLabel" name="remoteFrequencyLabel">
+       <property name="text">
+        <string>Rem dev Fc</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="ValueDial" name="remoteDeviceFrequency" native="true">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>32</width>
+         <height>16</height>
+        </size>
+       </property>
+       <property name="font">
+        <font>
+         <family>Liberation Mono</family>
+         <pointsize>12</pointsize>
+         <bold>false</bold>
+        </font>
+       </property>
+       <property name="cursor">
+        <cursorShape>PointingHandCursor</cursorShape>
+       </property>
+       <property name="toolTip">
+        <string>Remote device center frequency in kHz</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="remoteDeviceFreqUnits">
+       <property name="text">
+        <string>kHz</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacer_9">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="remoteChDecimationLayer">
+     <property name="spacing">
+      <number>3</number>
+     </property>
+     <item>
+      <layout class="QHBoxLayout" name="decimationStageLayer">
+       <item>
+        <widget class="QLabel" name="decimationLabel">
+         <property name="text">
+          <string>Rem ch Dec</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="decimationFactor">
+         <property name="maximumSize">
+          <size>
+           <width>55</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Decimation factor</string>
+         </property>
+         <item>
+          <property name="text">
+           <string>1</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>2</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>4</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>8</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>16</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>32</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>64</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="filterChainText">
+         <property name="minimumSize">
+          <size>
+           <width>50</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Filter chain stages left to right (L: low, C: center, H: high) </string>
+         </property>
+         <property name="text">
+          <string>LLLLLL</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer_8">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>40</width>
+           <height>20</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="offsetFrequencyText">
+         <property name="minimumSize">
+          <size>
+           <width>85</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Offset frequency with thousands separator (Hz)</string>
+         </property>
+         <property name="text">
+          <string>-9,999,999 Hz</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="decimationShiftLayer">
+       <property name="rightMargin">
+        <number>10</number>
+       </property>
+       <item>
+        <widget class="QLabel" name="positionLabel">
+         <property name="text">
+          <string>Rem ch Pos</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QSlider" name="position">
+         <property name="toolTip">
+          <string>Center frequency position</string>
+         </property>
+         <property name="maximum">
+          <number>2</number>
+         </property>
+         <property name="pageStep">
+          <number>1</number>
+         </property>
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="filterChainIndex">
+         <property name="minimumSize">
+          <size>
+           <width>24</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Filter chain hash code</string>
+         </property>
+         <property name="text">
+          <string>000</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
    </item>
    <item>
     <layout class="QHBoxLayout" name="gridLayout_corr">
@@ -589,24 +768,17 @@
     </widget>
    </item>
    <item>
-    <widget class="Line" name="line">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-    </widget>
-   </item>
-   <item>
     <layout class="QHBoxLayout" name="apiAddressLayout">
      <item>
       <widget class="QLabel" name="apiAddressLabel">
        <property name="minimumSize">
         <size>
-         <width>30</width>
+         <width>50</width>
          <height>0</height>
         </size>
        </property>
        <property name="text">
-        <string>API</string>
+        <string>Remote</string>
        </property>
       </widget>
      </item>
@@ -700,8 +872,11 @@
          <height>16777215</height>
         </size>
        </property>
+       <property name="toolTip">
+        <string>Get remote information</string>
+       </property>
        <property name="text">
-        <string>Set</string>
+        <string>Info</string>
        </property>
       </widget>
      </item>
@@ -713,7 +888,7 @@
       <widget class="QLabel" name="dataAddressLabel">
        <property name="minimumSize">
         <size>
-         <width>30</width>
+         <width>50</width>
          <height>0</height>
         </size>
        </property>
@@ -737,7 +912,7 @@
         </size>
        </property>
        <property name="toolTip">
-        <string>Local data connection IPv4 address</string>
+        <string>Local network interface IPv4 address for data reception</string>
        </property>
        <property name="inputMask">
         <string>000.000.000.000</string>
@@ -772,7 +947,7 @@
         </size>
        </property>
        <property name="toolTip">
-        <string>Local data connection port</string>
+        <string>Local data port</string>
        </property>
        <property name="inputMask">
         <string>00000</string>
@@ -806,12 +981,74 @@
          <height>16777215</height>
         </size>
        </property>
+       <property name="toolTip">
+        <string>Set data link</string>
+       </property>
        <property name="text">
         <string>Set</string>
        </property>
       </widget>
      </item>
     </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="mcastLayout">
+     <item>
+      <widget class="ButtonSwitch" name="multicastJoin">
+       <property name="toolTip">
+        <string>Join or leave multicast group</string>
+       </property>
+       <property name="text">
+        <string>Mcast</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLineEdit" name="multicastAddress">
+       <property name="minimumSize">
+        <size>
+         <width>120</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>120</width>
+         <height>16777215</height>
+        </size>
+       </property>
+       <property name="toolTip">
+        <string>Multicast group address</string>
+       </property>
+       <property name="inputMask">
+        <string>000.000.000.000</string>
+       </property>
+       <property name="text">
+        <string>0.0.0.0</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacer_6">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="Line" name="line">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
    </item>
    <item>
     <layout class="QHBoxLayout" name="statusLayout">
@@ -832,23 +1069,6 @@
         <string>...</string>
        </property>
       </widget>
-     </item>
-    </layout>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="padLayout">
-     <item>
-      <spacer name="verticalPadSpacer">
-       <property name="orientation">
-        <enum>Qt::Vertical</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>20</width>
-         <height>40</height>
-        </size>
-       </property>
-      </spacer>
      </item>
     </layout>
    </item>

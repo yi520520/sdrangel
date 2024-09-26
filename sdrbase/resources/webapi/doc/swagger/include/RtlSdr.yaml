@@ -31,10 +31,20 @@ RtlSdrSettings:
     transverterDeltaFrequency:
       type: integer
       format: int64
+    iqOrder:
+      type: integer
+      description: >
+        IQ samples order
+          * 0 - Q then I (swapped)
+          * 1 - I then Q (straight)
     rfBandwidth:
       type: integer
-    fileRecordName:
-      type: string
+    biasTee:
+      type: integer
+      description: >
+        Bias tee
+          * 0 - inactive
+          * 1 - active
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -43,7 +53,7 @@ RtlSdrSettings:
     reverseAPIPort:
       type: integer
     reverseAPIDeviceIndex:
-      type: integer      
+      type: integer
 
 RtlSdrReport:
   description: RTLSDR
@@ -52,3 +62,5 @@ RtlSdrReport:
       type: array
       items:
         $ref: "/doc/swagger/include/Structs.yaml#/Gain"
+    tunerType:
+      type: string

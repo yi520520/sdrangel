@@ -17,7 +17,7 @@ Frequency:
       type: integer
 
 FrequencyBand:
-  description: A band of frequencies given its boudaries in Hertz (Hz)
+  description: A band of frequencies given its boundaries in Hertz (Hz)
   properties:
     name:
       type: string
@@ -41,6 +41,9 @@ Range:
       type: integer
     step:
       type: integer
+    scale:
+      type: number
+      format: float
 
 RangeFloat:
   description: An arbitrary range of floating point values
@@ -53,10 +56,10 @@ RangeFloat:
       format: float
     step:
       type: number
-      format: float  
+      format: float
 
 FrequencyRange:
-  description: An frequency range with 64 bit support for min and max
+  description: A frequency range with 64 bit support for min and max
   properties:
     min:
       type: integer
@@ -66,6 +69,9 @@ FrequencyRange:
       format: int64
     step:
       type: integer
+    scale:
+      type: number
+      format: float
 
 NamedEnum:
   description: Enumeration with name for values
@@ -74,7 +80,7 @@ NamedEnum:
       type: string
     value:
       type: integer
-      
+
 Complex:
   description: A complex number
   properties:
@@ -84,4 +90,3 @@ Complex:
     imag:
       type: number
       format: float
-      

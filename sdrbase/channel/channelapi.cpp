@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2017, 2019-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // API for Rx channels                                                           //
 //                                                                               //
@@ -18,13 +21,30 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include "util/uid.h"
+#include "util/message.h"
 #include "channelapi.h"
+#include "util/message.h"
 
-ChannelAPI::ChannelAPI(const QString& name, StreamType streamType) :
+ChannelAPI::ChannelAPI(const QString& uri, StreamType streamType) :
+    m_guiMessageQueue(nullptr),
     m_streamType(streamType),
-    m_name(name),
+    m_name(uri),
+    m_uri(uri),
     m_indexInDeviceSet(-1),
     m_deviceSetIndex(0),
-    m_deviceAPI(0),
     m_uid(UidCalculator::getNewObjectId())
-{ }
+{
+    connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()));
+}
+
+void ChannelAPI::handleInputMessages()
+{
+	Message* message;
+
+	while ((message = m_inputMessageQueue.pop()) != nullptr)
+	{
+		if (handleMessage(*message)) {
+			delete message;
+		}
+	}
+}

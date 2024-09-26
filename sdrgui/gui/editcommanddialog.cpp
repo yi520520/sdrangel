@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #include "editcommanddialog.h"
 #include "ui_editcommanddialog.h"
 #include "commands/command.h"
-#include "commandkeyreceiver.h"
+#include "commands/commandkeyreceiver.h"
 
 #include <QFileInfo>
 #include <QFileDialog>
@@ -204,7 +205,7 @@ void EditCommandDialog::setKeyLabel()
     else if (m_keyModifiers != Qt::NoModifier)
     {
         QString altGrStr = m_keyModifiers & Qt::GroupSwitchModifier ? "Gr " : "";
-        int maskedModifiers = (m_keyModifiers & 0x3FFFFFFF) + ((m_keyModifiers & 0x40000000)>>3);
+        int maskedModifiers = ((int) m_keyModifiers & 0x3FFFFFFF) + (((int) m_keyModifiers & 0x40000000)>>3);
         ui->keyLabel->setText(altGrStr + QKeySequence(maskedModifiers, m_key).toString());
     }
     else

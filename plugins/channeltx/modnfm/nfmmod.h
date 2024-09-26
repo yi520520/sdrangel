@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,33 +24,25 @@
 #include <iostream>
 #include <fstream>
 
-#include <QMutex>
+#include <QRecursiveMutex>
 #include <QNetworkRequest>
 
 #include "dsp/basebandsamplesource.h"
-#include "channel/channelapi.h"
-#include "dsp/nco.h"
-#include "dsp/ncof.h"
-#include "dsp/interpolator.h"
-#include "dsp/lowpass.h"
-#include "dsp/bandpass.h"
-#include "util/movingaverage.h"
-#include "dsp/agc.h"
 #include "dsp/cwkeyer.h"
-#include "audio/audiofifo.h"
+#include "channel/channelapi.h"
 #include "util/message.h"
 
 #include "nfmmodsettings.h"
 
-class DeviceAPI;
-class ThreadedBasebandSampleSource;
-class UpChannelizer;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
+class DeviceAPI;
+class CWKeyer;
+class NFMModBaseband;
+class ObjectPipe;
 
 class NFMMod : public BasebandSampleSource, public ChannelAPI {
-    Q_OBJECT
-
 public:
     class MsgConfigureNFMMod : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -73,29 +67,6 @@ public:
         { }
     };
 
-    class MsgConfigureChannelizer : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        int getSampleRate() const { return m_sampleRate; }
-        int getCenterFrequency() const { return m_centerFrequency; }
-
-        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
-        {
-            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
-        }
-
-    private:
-        int m_sampleRate;
-        int  m_centerFrequency;
-
-        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
-            Message(),
-            m_sampleRate(sampleRate),
-            m_centerFrequency(centerFrequency)
-        { }
-    };
-
     class MsgConfigureFileSourceName : public Message
     {
         MESSAGE_CLASS_DECLARATION
@@ -111,7 +82,7 @@ public:
     private:
         QString m_fileName;
 
-        MsgConfigureFileSourceName(const QString& fileName) :
+        explicit MsgConfigureFileSourceName(const QString& fileName) :
             Message(),
             m_fileName(fileName)
         { }
@@ -129,10 +100,10 @@ public:
             return new MsgConfigureFileSourceSeek(seekPercentage);
         }
 
-    protected:
+    private:
         int m_seekPercentage; //!< percentage of seek position from the beginning 0..100
 
-        MsgConfigureFileSourceSeek(int seekPercentage) :
+        explicit MsgConfigureFileSourceSeek(int seekPercentage) :
             Message(),
             m_seekPercentage(seekPercentage)
         { }
@@ -167,10 +138,10 @@ public:
             return new MsgReportFileSourceStreamTiming(samplesCount);
         }
 
-    protected:
+    private:
         std::size_t m_samplesCount;
 
-        MsgReportFileSourceStreamTiming(std::size_t samplesCount) :
+        explicit MsgReportFileSourceStreamTiming(std::size_t samplesCount) :
             Message(),
             m_samplesCount(samplesCount)
         { }
@@ -189,7 +160,7 @@ public:
             return new MsgReportFileSourceStreamData(sampleRate, recordLength);
         }
 
-    protected:
+    private:
         int m_sampleRate;
         quint32 m_recordLength;
 
@@ -203,63 +174,74 @@ public:
 
     //=================================================================
 
-    NFMMod(DeviceAPI *deviceAPI);
-    ~NFMMod();
-    virtual void destroy() { delete this; }
+    explicit NFMMod(DeviceAPI *deviceAPI);
+    ~NFMMod() final;
+    void destroy() final { delete this; }
+    void setDeviceAPI(DeviceAPI *deviceAPI) final;
+    DeviceAPI *getDeviceAPI() final { return m_deviceAPI; }
 
-    virtual void pull(Sample& sample);
-    virtual void pullAudio(int nbSamples);
-    virtual void start();
-    virtual void stop();
-    virtual bool handleMessage(const Message& cmd);
+    void start() final;
+    void stop() final;
+    void pull(SampleVector::iterator& begin, unsigned int nbSamples) final;
+    void pushMessage(Message *msg) final { m_inputMessageQueue.push(msg); }
+    QString getSourceName() final { return objectName(); }
 
-    virtual void getIdentifier(QString& id) { id = objectName(); }
-    virtual void getTitle(QString& title) { title = m_settings.m_title; }
-    virtual qint64 getCenterFrequency() const { return m_settings.m_inputFrequencyOffset; }
+    void getIdentifier(QString& id) final { id = objectName(); }
+    QString getIdentifier() const final { return objectName(); }
+    void getTitle(QString& title) final { title = m_settings.m_title; }
+    qint64 getCenterFrequency() const final { return m_settings.m_inputFrequencyOffset; }
+    void setCenterFrequency(qint64 frequency) final;
 
-    virtual QByteArray serialize() const;
-    virtual bool deserialize(const QByteArray& data);
+    QByteArray serialize() const final;
+    bool deserialize(const QByteArray& data) final;
 
-    virtual int getNbSinkStreams() const { return 1; }
-    virtual int getNbSourceStreams() const { return 0; }
+    int getNbSinkStreams() const final { return 1; }
+    int getNbSourceStreams() const final { return 0; }
+    int getStreamIndex() const final { return m_settings.m_streamIndex; }
 
-    virtual qint64 getStreamCenterFrequency(int streamIndex, bool sinkElseSource) const
+    qint64 getStreamCenterFrequency(int streamIndex, bool sinkElseSource) const final
     {
         (void) streamIndex;
         (void) sinkElseSource;
         return m_settings.m_inputFrequencyOffset;
     }
 
-    virtual int webapiSettingsGet(
+    int webapiSettingsGet(
                 SWGSDRangel::SWGChannelSettings& response,
-                QString& errorMessage);
+                QString& errorMessage) final;
 
-    virtual int webapiSettingsPutPatch(
+    int webapiWorkspaceGet(
+            SWGSDRangel::SWGWorkspaceInfo& response,
+            QString& errorMessage) final;
+
+    int webapiSettingsPutPatch(
                 bool force,
                 const QStringList& channelSettingsKeys,
                 SWGSDRangel::SWGChannelSettings& response,
-                QString& errorMessage);
+                QString& errorMessage) final;
 
-    virtual int webapiReportGet(
+    int webapiReportGet(
                 SWGSDRangel::SWGChannelReport& response,
-                QString& errorMessage);
+                QString& errorMessage) final;
 
-    double getMagSq() const { return m_magsq; }
+    static void webapiFormatChannelSettings(
+        SWGSDRangel::SWGChannelSettings& response,
+        const NFMModSettings& settings);
 
+    static void webapiUpdateChannelSettings(
+            NFMModSettings& settings,
+            const QStringList& channelSettingsKeys,
+            SWGSDRangel::SWGChannelSettings& response);
+
+    double getMagSq() const;
     CWKeyer *getCWKeyer() { return &m_cwKeyer; }
+    void setLevelMeter(QObject *levelMeter) { m_levelMeter = levelMeter; }
+    uint32_t getNumberOfDeviceStreams() const;
+    int getAudioSampleRate() const;
+    int getFeedbackAudioSampleRate() const;
 
-    static const QString m_channelIdURI;
-    static const QString m_channelId;
-
-signals:
-    /**
-     * Level changed
-     * \param rmsLevel RMS level in range 0.0 - 1.0
-     * \param peakLevel Peak level in range 0.0 - 1.0
-     * \param numSamples Number of audio samples analyzed
-     */
-    void levelChanged(qreal rmsLevel, qreal peakLevel, int numSamples);
-
+    static const char* const m_channelIdURI;
+    static const char* const m_channelId;
 
 private:
     enum RateState {
@@ -268,84 +250,49 @@ private:
     };
 
     DeviceAPI* m_deviceAPI;
-    ThreadedBasebandSampleSource* m_threadedChannelizer;
-    UpChannelizer* m_channelizer;
-
-    int m_basebandSampleRate;
-    int m_outputSampleRate;
-    int m_inputFrequencyOffset;
+    QThread *m_thread;
+    bool m_running = false;
+    NFMModBaseband* m_basebandSource;
     NFMModSettings m_settings;
 
-    NCO m_carrierNco;
-    NCOF m_toneNco;
-    NCOF m_ctcssNco;
-    float m_modPhasor; //!< baseband modulator phasor
-    Complex m_modSample;
-
-    Interpolator m_interpolator;
-    Real m_interpolatorDistance;
-    Real m_interpolatorDistanceRemain;
-    bool m_interpolatorConsumed;
-
-    Interpolator m_feedbackInterpolator;
-    Real m_feedbackInterpolatorDistance;
-    Real m_feedbackInterpolatorDistanceRemain;
-    bool m_feedbackInterpolatorConsumed;
-
-    Lowpass<Real> m_lowpass;
-    Bandpass<Real> m_bandpass;
-
-    double m_magsq;
-    MovingAverageUtil<double, double, 16> m_movingAverage;
-
-    quint32 m_audioSampleRate;
-    AudioVector m_audioBuffer;
-    uint m_audioBufferFill;
-    AudioFifo m_audioFifo;
-
-    quint32 m_feedbackAudioSampleRate;
-    AudioVector m_feedbackAudioBuffer;
-    uint m_feedbackAudioBufferFill;
-    AudioFifo m_feedbackAudioFifo;
-
     SampleVector m_sampleBuffer;
-    QMutex m_settingsMutex;
+    QRecursiveMutex m_settingsMutex;
 
     std::ifstream m_ifstream;
     QString m_fileName;
-    quint64 m_fileSize;     //!< raw file size (bytes)
-    quint32 m_recordLength; //!< record length in seconds computed from file size
-    int m_sampleRate;
-
-    NFMModSettings::NFMModInputAF m_afInput;
-    quint32 m_levelCalcCount;
-    Real m_peakLevel;
-    Real m_levelSum;
-    CWKeyer m_cwKeyer;
+    quint64 m_fileSize = 0;     //!< raw file size (bytes)
+    quint32 m_recordLength = 0; //!< record length in seconds computed from file size
+    int m_sampleRate = 48000;
 
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-    static const int m_levelNbSamples;
+    CWKeyer m_cwKeyer;
+    QObject *m_levelMeter = nullptr;
 
-    void applyAudioSampleRate(int sampleRate);
-    void applyFeedbackAudioSampleRate(unsigned int sampleRate);
-    void processOneSample(Complex& ci);
-    void applyChannelSettings(int basebandSampleRate, int outputSampleRate, int inputFrequencyOffset, bool force = false);
+    bool handleMessage(const Message& cmd) final;
     void applySettings(const NFMModSettings& settings, bool force = false);
-    void pullAF(Real& sample);
-    void pushFeedback(Real sample);
-    void calculateLevel(Real& sample);
-    void modulateSample();
+    void sendSampleRateToDemodAnalyzer() const;
     void openFileStream();
     void seekFileStream(int seekPercentage);
-    void webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& response, const NFMModSettings& settings);
-    void webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response);
-    void webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const NFMModSettings& settings, bool force);
+    void webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response) const;
+    void webapiReverseSendSettings(const QList<QString>& channelSettingsKeys, const NFMModSettings& settings, bool force);
     void webapiReverseSendCWSettings(const CWKeyerSettings& settings);
+    void sendChannelSettings(
+        const QList<ObjectPipe*>& pipes,
+        const QList<QString>& channelSettingsKeys,
+        const NFMModSettings& settings,
+        bool force
+    );
+    void webapiFormatChannelSettings(
+        const QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const NFMModSettings& settings,
+        bool force
+    );
 
 private slots:
-    void networkManagerFinished(QNetworkReply *reply);
+    void networkManagerFinished(QNetworkReply *reply) const;
 };
 
 

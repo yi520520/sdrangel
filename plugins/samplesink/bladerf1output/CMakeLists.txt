@@ -3,14 +3,16 @@ project(bladerf1output)
 set(bladerf1output_SOURCES
 	bladerf1output.cpp
 	bladerf1outputplugin.cpp
-	bladerf1outputsettings.cpp
+    bladerf1outputsettings.cpp
+    bladerf1outputwebapiadapter.cpp
 	bladerf1outputthread.cpp
 )
 
 set(bladerf1output_HEADERS
 	bladerf1output.h
 	bladerf1soutputplugin.h
-	bladerf1outputsettings.h
+    bladerf1outputsettings.h
+    bladerf1outputwebapiadapter.h
 	bladerf1outputthread.h
 )
 
@@ -32,27 +34,33 @@ if(NOT SERVER_MODE)
         bladerf1outputgui.h
     )
 
-    set(TARGET_NAME outputbladerf1)
-    set(TARGET_LIB "Qt5::Widgets")
+    set(TARGET_NAME ${PLUGINS_PREFIX}outputbladerf1)
+    set(TARGET_LIB "Qt::Widgets")
     set(TARGET_LIB_GUI "sdrgui")
     set(INSTALL_FOLDER ${INSTALL_PLUGINS_DIR})
 else()
-    set(TARGET_NAME outputbladerf1srv)
+    set(TARGET_NAME ${PLUGINSSRV_PREFIX}outputbladerf1srv)
     set(TARGET_LIB "")
     set(TARGET_LIB_GUI "")
     set(INSTALL_FOLDER ${INSTALL_PLUGINSSRV_DIR})
 endif()
 
-add_library(${TARGET_NAME} SHARED
-	${bladerf1output_SOURCES}
-)
+if(NOT Qt6_FOUND)
+    add_library(${TARGET_NAME} ${bladerf1output_SOURCES})
+else()
+    qt_add_plugin(${TARGET_NAME} CLASS_NAME Bladerf1OutputPlugin ${bladerf1output_SOURCES})
+endif()
 
-if(ENABLE_EXTERNAL_LIBRARIES)
+if(NOT BUILD_SHARED_LIBS)
+    set_property(GLOBAL APPEND PROPERTY STATIC_PLUGINS_PROPERTY ${TARGET_NAME})
+endif()
+
+if(LIBBLADERF_EXTERNAL)
     add_dependencies(${TARGET_NAME} bladerf)
 endif()
 
-target_link_libraries(${TARGET_NAME}
-        Qt5::Core
+target_link_libraries(${TARGET_NAME} PRIVATE
+        Qt::Core
         ${TARGET_LIB}
 	sdrbase
 	${TARGET_LIB_GUI}
@@ -62,3 +70,8 @@ target_link_libraries(${TARGET_NAME}
 )
 
 install(TARGETS ${TARGET_NAME} DESTINATION ${INSTALL_FOLDER})
+
+# Install debug symbols
+if (WIN32)
+    install(FILES $<TARGET_PDB_FILE:${TARGET_NAME}> CONFIGURATIONS Debug RelWithDebInfo DESTINATION ${INSTALL_FOLDER} )
+endif()

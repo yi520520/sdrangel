@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2017, 2019-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 //                                                                               //
 // OpenGL interface modernization.                                               //
 // See: http://doc.qt.io/qt-5/qopenglshaderprogram.html                          //
@@ -25,7 +27,8 @@
 TransverterButton::TransverterButton(QWidget* parent) :
     QPushButton(parent),
     m_deltaFrequency(0),
-    m_deltaFrequencyActive(false)
+    m_deltaFrequencyActive(false),
+    m_iqOrder(true)
 {
     setObjectName("TransverterButton");
     connect(this, SIGNAL(clicked()), this, SLOT(onClicked()));
@@ -33,7 +36,7 @@ TransverterButton::TransverterButton(QWidget* parent) :
 
 void TransverterButton::onClicked()
 {
-    TransverterDialog transverterDialog(m_deltaFrequency, m_deltaFrequencyActive, this);
+    TransverterDialog transverterDialog(m_deltaFrequency, m_deltaFrequencyActive, m_iqOrder, this);
     transverterDialog.exec();
     updateState();
 }

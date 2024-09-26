@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,7 +22,7 @@
 #define SDRBASE_DSP_CWKEYER_H_
 
 #include <QObject>
-#include <QMutex>
+#include <QRecursiveMutex>
 
 #include "export.h"
 #include "util/message.h"
@@ -41,7 +43,7 @@ public:
     bool getFadeSample(bool on, float& sample);
 
 private:
-    QMutex m_mutex;
+    QRecursiveMutex m_mutex;
     unsigned int m_fadeInCounter;
     unsigned int m_fadeOutCounter;
     unsigned int m_nbFadeSamples;
@@ -117,19 +119,19 @@ public:
     void setKeyboardDashes();
     void setKeyboardSilence();
 
-    void webapiSettingsPutPatch(
+    static void webapiSettingsPutPatch(
         const QStringList& channelSettingsKeys,
         CWKeyerSettings& cwKeyerSettings,
         SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings
     );
 
-    void webapiFormatChannelSettings(
+    static void webapiFormatChannelSettings(
         SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings,
         const CWKeyerSettings& cwKeyerSettings
     );
 
 private:
-    QMutex m_mutex;
+    QRecursiveMutex m_mutex;
     CWKeyerSettings m_settings;
     MessageQueue m_inputMessageQueue;
     int m_dotLength;   //!< dot length in samples

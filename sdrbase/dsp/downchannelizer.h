@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016-2019 F4EXB                                                 //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,74 +20,29 @@
 #ifndef SDRBASE_DSP_DOWNCHANNELIZER_H
 #define SDRBASE_DSP_DOWNCHANNELIZER_H
 
-#include <dsp/basebandsamplesink.h>
 #include <list>
 #include <vector>
-#include <QMutex>
+
 #include "export.h"
-#include "util/message.h"
 #include "dsp/inthalfbandfiltereo.h"
+
+#include "channelsamplesink.h"
 
 #define DOWNCHANNELIZER_HB_FILTER_ORDER 48
 
-class MessageQueue;
-
-class SDRBASE_API DownChannelizer : public BasebandSampleSink {
-	Q_OBJECT
+class SDRBASE_API DownChannelizer : public ChannelSampleSink {
 public:
-    class SDRBASE_API MsgChannelizerNotification : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		MsgChannelizerNotification(int samplerate, qint64 frequencyOffset) :
-			Message(),
-			m_sampleRate(samplerate),
-			m_frequencyOffset(frequencyOffset)
-		{ }
-
-		int getSampleRate() const { return m_sampleRate; }
-		qint64 getFrequencyOffset() const { return m_frequencyOffset; }
-
-        static MsgChannelizerNotification* create(int samplerate, qint64 frequencyOffset)
-        {
-            return new MsgChannelizerNotification(samplerate, frequencyOffset);
-        }
-
-	private:
-		int m_sampleRate;
-		qint64 m_frequencyOffset;
-	};
-
-    class SDRBASE_API MsgSetChannelizer : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        MsgSetChannelizer(unsigned int log2Decim, unsigned int filterChainHash) :
-            Message(),
-            m_log2Decim(log2Decim),
-            m_filterChainHash(filterChainHash)
-        { }
-
-        unsigned int getLog2Decim() const { return m_log2Decim; }
-        unsigned int getFilterChainHash() const { return m_filterChainHash; }
-
-    private:
-        unsigned int m_log2Decim;
-        unsigned int m_filterChainHash;
-    };
-
-	DownChannelizer(BasebandSampleSink* sampleSink);
+	DownChannelizer(ChannelSampleSink* sampleSink);
 	virtual ~DownChannelizer();
 
-	void configure(MessageQueue* messageQueue, int sampleRate, int centerFrequency);
-    void set(MessageQueue* messageQueue, unsigned int log2Decim, unsigned int filterChainHash);
-	int getInputSampleRate() const { return m_inputSampleRate; }
-	int getRequestedCenterFrequency() const { return m_requestedCenterFrequency; }
+	virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end);
 
-	virtual void start();
-	virtual void stop();
-	virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool positiveOnly);
-	virtual bool handleMessage(const Message& cmd);
+    void setDecimation(unsigned int log2Decim, unsigned int filterChainHash);         //!< Define channelizer with decimation factor and filter chain definition
+    void setChannelization(int requestedSampleRate, qint64 requestedCenterFrequency); //!< Define channelizer with requested sample rate and center frequency (shift in the baseband)
+    void setBasebandSampleRate(int basebandSampleRate, bool decim = false);           //!< decim: true => use direct decimation false => use channel configuration
+	int getBasebandSampleRate() const { return m_basebandSampleRate; }
+    int getChannelSampleRate() const { return m_channelSampleRate; }
+	int getChannelFrequencyOffset() const { return m_channelFrequencyOffset; }
 
 protected:
 	struct FilterStage {
@@ -97,11 +53,11 @@ protected:
 		};
 
 #ifdef SDR_RX_SAMPLE_24BIT
-        typedef bool (IntHalfbandFilterEO<qint64, qint64, DOWNCHANNELIZER_HB_FILTER_ORDER>::*WorkFunction)(Sample* s);
-        IntHalfbandFilterEO<qint64, qint64, DOWNCHANNELIZER_HB_FILTER_ORDER>* m_filter;
+        typedef bool (IntHalfbandFilterEO<qint64, qint64, DOWNCHANNELIZER_HB_FILTER_ORDER, true>::*WorkFunction)(Sample* s);
+        IntHalfbandFilterEO<qint64, qint64, DOWNCHANNELIZER_HB_FILTER_ORDER, true>* m_filter;
 #else
-        typedef bool (IntHalfbandFilterEO<qint32, qint32, DOWNCHANNELIZER_HB_FILTER_ORDER>::*WorkFunction)(Sample* s);
-        IntHalfbandFilterEO<qint32, qint32, DOWNCHANNELIZER_HB_FILTER_ORDER>* m_filter;
+        typedef bool (IntHalfbandFilterEO<qint32, qint32, DOWNCHANNELIZER_HB_FILTER_ORDER, true>::*WorkFunction)(Sample* s);
+        IntHalfbandFilterEO<qint32, qint32, DOWNCHANNELIZER_HB_FILTER_ORDER, true>* m_filter;
 #endif
 
 		WorkFunction m_workFunction;
@@ -119,25 +75,23 @@ protected:
 	typedef std::list<FilterStage*> FilterStages;
 	FilterStages m_filterStages;
     bool m_filterChainSetMode;
-	BasebandSampleSink* m_sampleSink; //!< Demodulator
-	int m_inputSampleRate;
+	ChannelSampleSink* m_sampleSink; //!< Demodulator
+    int m_basebandSampleRate;
 	int m_requestedOutputSampleRate;
 	int m_requestedCenterFrequency;
-	int m_currentOutputSampleRate;
-	int m_currentCenterFrequency;
+	int m_channelSampleRate;
+    int m_channelFrequencyOffset;
+    unsigned int m_log2Decim;
+    unsigned int m_filterChainHash;
 	SampleVector m_sampleBuffer;
-	QMutex m_mutex;
 
-	void applyConfiguration();
-    void applySetting(unsigned int log2Decim, unsigned int filterChainHash);
-	bool signalContainsChannel(Real sigStart, Real sigEnd, Real chanStart, Real chanEnd) const;
+	void applyChannelization();
+    void applyDecimation();
+    static Real channelMinSpace(Real sigStart, Real sigEnd, Real chanStart, Real chanEnd);
 	Real createFilterChain(Real sigStart, Real sigEnd, Real chanStart, Real chanEnd);
-    void setFilterChain(const std::vector<unsigned int>& stageIndexes);
+    double setFilterChain(const std::vector<unsigned int>& stageIndexes);
 	void freeFilterChain();
 	void debugFilterChain();
-
-signals:
-	void inputSampleRateChanged();
 };
 
 #endif // SDRBASE_DSP_DOWNCHANNELIZER_H

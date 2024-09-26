@@ -1,7 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB.                                  //
-//                                                                               //
-// Swagger server adapter interface                                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2023 Jon Beniston, M7RCE <jon@beniston.com>                     //
+// Copyright (C) 2023 Daniele Forsi <iu5hkx@gmail.com>                           //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,7 +27,9 @@
 #include <vector>
 
 #include "loggerwithfile.h"
-#include "maincore.h"
+#include "mainparser.h"
+#include "mainserver.h"
+#include "remotetcpsinkstarter.h"
 #include "dsp/dsptypes.h"
 
 void handler(int sig) {
@@ -69,7 +74,7 @@ static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *lo
     MainParser parser;
     parser.parse(a);
 
-#if QT_VERSION >= 0x050400
+#if QT_VERSION >= QT_VERSION_CHECK(5, 4, 0)
     qInfo("%s %s Qt %s %db %s %s DSP Rx:%db Tx:%db PID %lld",
           qPrintable(QCoreApplication::applicationName()),
           qPrintable(QCoreApplication::applicationVersion()),
@@ -83,7 +88,7 @@ static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *lo
 #else
     qInfo("%s %s Qt %s %db DSP Rx:%db Tx:%db PID %lld",
           qPrintable(QCoreApplication::applicationName()),
-          qPrintable((QCoreApplication::>applicationVersion()),
+          qPrintable(QCoreApplication::>applicationVersion()),
                      qPrintable(QString(QT_VERSION_STR)),
                      QT_POINTER_SIZE*8,
                      SDR_RX_SAMP_SZ,
@@ -91,19 +96,39 @@ static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *lo
                      QCoreApplication::applicationPid());
 #endif
 
-          MainCore m(logger, parser, &a);
+    if (parser.getListDevices())
+    {
+        // Disable log on console, so we can more easily see device list
+        logger->setConsoleMinMessageLevel(QtFatalMsg);
+        // Don't pass logger to MainServer, otherwise it can re-enable log output
+        logger = nullptr;
+    }
 
-          // This will cause the application to exit when the main core is finished
-          QObject::connect(&m, SIGNAL(finished()), &a, SLOT(quit()));
+    MainServer m(logger, parser, &a);
 
-          return a.exec();
-          }
+    // This will cause the application to exit when the main core is finished
+    QObject::connect(&m, SIGNAL(finished()), &a, SLOT(quit()));
 
-      int main(int argc, char* argv[])
-      {
-        qtwebapp::LoggerWithFile *logger = new qtwebapp::LoggerWithFile(qApp);
-        logger->installMsgHandler();
-        int res = runQtApplication(argc, argv, logger);
-        qWarning("SDRangel quit.");
-        return res;
-      }
+    if (parser.getListDevices())
+    {
+        // List available physical devices and exit
+        RemoteTCPSinkStarter::listAvailableDevices();
+        exit (EXIT_SUCCESS);
+    }
+
+    if (parser.getRemoteTCPSink()) {
+        RemoteTCPSinkStarter::start(parser);
+    }
+
+    return a.exec();
+}
+
+int main(int argc, char* argv[])
+{
+    qtwebapp::LoggerWithFile *logger = new qtwebapp::LoggerWithFile(qApp);
+    logger->installMsgHandler();
+    int res = runQtApplication(argc, argv, logger);
+    delete logger;
+    qWarning("SDRangel quit.");
+    return res;
+}

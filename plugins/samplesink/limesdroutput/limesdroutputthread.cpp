@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,8 +18,9 @@
 #include <errno.h>
 #include <algorithm>
 
+#include "dsp/samplesourcefifo.h"
+
 #include "limesdroutputthread.h"
-#include "limesdroutputsettings.h"
 
 LimeSDROutputThread::LimeSDROutputThread(lms_stream_t* stream, SampleSourceFifo* sampleFifo, QObject* parent) :
     QThread(parent),
@@ -28,7 +29,7 @@ LimeSDROutputThread::LimeSDROutputThread(lms_stream_t* stream, SampleSourceFifo*
     m_sampleFifo(sampleFifo),
     m_log2Interp(0)
 {
-    std::fill(m_buf, m_buf + 2*LIMESDROUTPUT_BLOCKSIZE, 0);
+    std::fill(m_buf, m_buf + 2*DeviceLimeSDR::blockSize, 0);
 }
 
 LimeSDROutputThread::~LimeSDROutputThread()
@@ -87,18 +88,18 @@ void LimeSDROutputThread::run()
 
     while (m_running)
     {
-        callback(m_buf, LIMESDROUTPUT_BLOCKSIZE);
+        callback(m_buf, DeviceLimeSDR::blockSize);
 
-        res = LMS_SendStream(m_stream, (void *) m_buf, LIMESDROUTPUT_BLOCKSIZE, &metadata, 1000000);
+        res = LMS_SendStream(m_stream, (void *) m_buf, DeviceLimeSDR::blockSize, &metadata, 1000000);
 
         if (res < 0)
         {
             qCritical("LimeSDROutputThread::run write error: %s", strerror(errno));
             break;
         }
-        else if (res != LIMESDROUTPUT_BLOCKSIZE)
+        else if (res != DeviceLimeSDR::blockSize)
         {
-            qDebug("LimeSDROutputThread::run written %d/%d samples", res, LIMESDROUTPUT_BLOCKSIZE);
+            qDebug("LimeSDROutputThread::run written %d/%d samples", res, DeviceLimeSDR::blockSize);
         }
     }
 
@@ -108,39 +109,54 @@ void LimeSDROutputThread::run()
 //  Interpolate according to specified log2 (ex: log2=4 => decim=16)
 void LimeSDROutputThread::callback(qint16* buf, qint32 len)
 {
-    SampleVector::iterator beginRead;
-    m_sampleFifo->readAdvance(beginRead, len/(1<<m_log2Interp));
-    beginRead -= len;
+    SampleVector& data = m_sampleFifo->getData();
+    unsigned int iPart1Begin, iPart1End, iPart2Begin, iPart2End;
+    m_sampleFifo->read(len/(1<<m_log2Interp), iPart1Begin, iPart1End, iPart2Begin, iPart2End);
+
+    if (iPart1Begin != iPart1End) {
+        callbackPart(buf, data, iPart1Begin, iPart1End);
+    }
+
+    unsigned int shift = (iPart1End - iPart1Begin)*(1<<m_log2Interp);
+
+    if (iPart2Begin != iPart2End) {
+        callbackPart(buf + 2*shift, data, iPart2Begin, iPart2End);
+    }
+}
+
+void LimeSDROutputThread::callbackPart(qint16* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd)
+{
+    SampleVector::iterator beginRead = data.begin() + iBegin;
+    int len = 2*(iEnd - iBegin)*(1<<m_log2Interp);
 
     if (m_log2Interp == 0)
     {
-        m_interpolators.interpolate1(&beginRead, buf, len*2);
+        m_interpolators.interpolate1(&beginRead, buf, len);
     }
     else
     {
         switch (m_log2Interp)
         {
         case 1:
-            m_interpolators.interpolate2_cen(&beginRead, buf, len*2);
+            m_interpolators.interpolate2_cen(&beginRead, buf, len);
             break;
         case 2:
-            m_interpolators.interpolate4_cen(&beginRead, buf, len*2);
+            m_interpolators.interpolate4_cen(&beginRead, buf, len);
             break;
         case 3:
-            m_interpolators.interpolate8_cen(&beginRead, buf, len*2);
+            m_interpolators.interpolate8_cen(&beginRead, buf, len);
             break;
         case 4:
-            m_interpolators.interpolate16_cen(&beginRead, buf, len*2);
+            m_interpolators.interpolate16_cen(&beginRead, buf, len);
             break;
         case 5:
-            m_interpolators.interpolate32_cen(&beginRead, buf, len*2);
+            m_interpolators.interpolate32_cen(&beginRead, buf, len);
             break;
         case 6:
-            m_interpolators.interpolate64_cen(&beginRead, buf, len*2);
+            m_interpolators.interpolate64_cen(&beginRead, buf, len);
             break;
         default:
             break;
         }
     }
 }
-

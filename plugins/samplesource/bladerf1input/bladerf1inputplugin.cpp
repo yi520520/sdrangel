@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2018 Christopher Hewitt <hewitt@ieee.org>                       //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,7 +23,7 @@
 #include <QtPlugin>
 #include <libbladeRF.h>
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
+#include "bladerf1inputwebapiadapter.h"
 
 #ifdef SERVER_MODE
 #include "bladerf1input.h"
@@ -29,16 +32,17 @@
 #endif
 
 const PluginDescriptor Blderf1InputPlugin::m_pluginDescriptor = {
-	QString("BladeRF1 Input"),
-	QString("4.5.4"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("BladeRF1"),
+	QStringLiteral("BladeRF1 Input"),
+    QStringLiteral("7.20.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString Blderf1InputPlugin::m_hardwareID = "BladeRF1";
-const QString Blderf1InputPlugin::m_deviceTypeID = BLADERF1INPUT_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "BladeRF1";
+static constexpr const char* const m_deviceTypeID = BLADERF1INPUT_DEVICE_TYPE_ID;
 
 Blderf1InputPlugin::Blderf1InputPlugin(QObject* parent) :
 	QObject(parent)
@@ -55,60 +59,42 @@ void Blderf1InputPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleSource(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices Blderf1InputPlugin::enumSampleSources()
+void Blderf1InputPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
+{
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+    DeviceBladeRF1::enumOriginDevices(m_hardwareID, originDevices);
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices Blderf1InputPlugin::enumSampleSources(const OriginDevices& originDevices)
 {
 	SamplingDevices result;
-	struct bladerf_devinfo *devinfo = nullptr;
 
-	int count = bladerf_get_device_list(&devinfo);
-
-    if (devinfo)
+	for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
     {
-        for(int i = 0; i < count; i++)
+        if (it->hardwareId == m_hardwareID)
         {
-            struct bladerf *dev;
-
-            int status = bladerf_open_with_devinfo(&dev, &devinfo[i]);
-
-            if (status == BLADERF_ERR_NODEV)
-            {
-                qCritical("BlderfInputPlugin::enumSampleSources: No device at index %d", i);
-                continue;
-            }
-            else if (status != 0)
-            {
-                qCritical("BlderfInputPlugin::enumSampleSources: Failed to open device at index %d", i);
-                continue;
-            }
-
-            const char *boardName = bladerf_get_board_name(dev);
-
-            if (strcmp(boardName, "bladerf1") == 0)
-            {
-                QString displayedName(QString("BladeRF1[%1] %2").arg(devinfo[i].instance).arg(devinfo[i].serial));
-
-                result.append(SamplingDevice(displayedName,
-                        m_hardwareID,
-                        m_deviceTypeID,
-                        QString(devinfo[i].serial),
-                        i,
-                        PluginInterface::SamplingDevice::PhysicalDevice,
-                        PluginInterface::SamplingDevice::StreamSingleRx,
-                        1,
-                        0));
-            }
-
-            bladerf_close(dev);
+            result.append(SamplingDevice(
+                it->displayableName,
+                m_hardwareID,
+                m_deviceTypeID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::PhysicalDevice,
+                PluginInterface::SamplingDevice::StreamSingleRx,
+                1,
+                0));
         }
-
-		bladerf_free_device_list(devinfo); // Valgrind memcheck
-	}
+    }
 
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* Blderf1InputPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* Blderf1InputPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -119,7 +105,7 @@ PluginInstanceGUI* Blderf1InputPlugin::createSampleSourcePluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* Blderf1InputPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* Blderf1InputPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -150,3 +136,7 @@ DeviceSampleSource *Blderf1InputPlugin::createSampleSourcePluginInstance(const Q
     }
 }
 
+DeviceWebAPIAdapter *Blderf1InputPlugin::createDeviceWebAPIAdapter() const
+{
+    return new BladeRF1InputWebAPIAdapter();
+}

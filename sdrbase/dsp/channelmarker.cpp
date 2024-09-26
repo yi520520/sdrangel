@@ -1,3 +1,23 @@
+///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015, 2017-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+//                                                                               //
+// This program is free software; you can redistribute it and/or modify          //
+// it under the terms of the GNU General Public License as published by          //
+// the Free Software Foundation as version 3 of the License, or                  //
+// (at your option) any later version.                                           //
+//                                                                               //
+// This program is distributed in the hope that it will be useful,               //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                  //
+// GNU General Public License V3 for more details.                               //
+//                                                                               //
+// You should have received a copy of the GNU General Public License             //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.          //
+///////////////////////////////////////////////////////////////////////////////////
+
+#include "SWGChannelMarker.h"
 #include "dsp/channelmarker.h"
 #include "util/simpleserializer.h"
 
@@ -32,6 +52,7 @@ ChannelMarker::ChannelMarker(QObject* parent) :
 	m_bandwidth(0),
     m_oppositeBandwidth(0),
 	m_lowCutoff(0),
+    m_shift(0),
 	m_sidebands(dsb),
 	m_visible(false),
 	m_highlighted(false),
@@ -39,7 +60,7 @@ ChannelMarker::ChannelMarker(QObject* parent) :
 	m_movable(true),
 	m_fScaleDisplayType(FScaleDisplay_freq),
     m_sourceOrSinkStream(true),
-    m_streamIndex(0)
+    m_enabledStreamsBits(1)
 {
 	++m_nextColor;
 	if(m_colorTable[m_nextColor] == 0)
@@ -84,6 +105,12 @@ void ChannelMarker::setOppositeBandwidth(int bandwidth)
 void ChannelMarker::setLowCutoff(int lowCutoff)
 {
 	m_lowCutoff = lowCutoff;
+	emit changedByAPI();
+}
+
+void ChannelMarker::setShift(int shift)
+{
+	m_shift = shift;
 	emit changedByAPI();
 }
 
@@ -178,3 +205,56 @@ bool ChannelMarker::deserialize(const QByteArray& data)
     }
 }
 
+void ChannelMarker::formatTo(SWGSDRangel::SWGObject *swgObject) const
+{
+    SWGSDRangel::SWGChannelMarker *swgChannelMarker = static_cast<SWGSDRangel::SWGChannelMarker *>(swgObject);
+
+    swgChannelMarker->setCenterFrequency(getCenterFrequency());
+    swgChannelMarker->setColor(getColor().rgb());
+    swgChannelMarker->setFrequencyScaleDisplayType((int) getFrequencyScaleDisplayType());
+
+    if (swgChannelMarker->getTitle()) {
+        *swgChannelMarker->getTitle() = getTitle();
+    } else {
+        swgChannelMarker->setTitle(new QString(getTitle()));
+    }
+}
+
+void ChannelMarker::updateFrom(const QStringList& keys, const SWGSDRangel::SWGObject *swgObject)
+{
+    SWGSDRangel::SWGChannelMarker *swgChannelMarker =
+        static_cast<SWGSDRangel::SWGChannelMarker *>(const_cast<SWGSDRangel::SWGObject *>(swgObject));
+
+    if (keys.contains("channelMarker.centerFrequency")) {
+        setCenterFrequency(swgChannelMarker->getCenterFrequency());
+    }
+    if (keys.contains("channelMarker.color")) {
+        setColor(swgChannelMarker->getColor());
+    }
+    if (keys.contains("channelMarker.frequencyScaleDisplayType")) {
+        setFrequencyScaleDisplayType((frequencyScaleDisplay_t) swgChannelMarker->getFrequencyScaleDisplayType());
+    }
+    if (keys.contains("channelMarker.title")) {
+        setTitle(*swgChannelMarker->getTitle());
+    }
+}
+
+void ChannelMarker::updateSettings(const ChannelMarker *channelMarker)
+{
+    m_fScaleDisplayType = channelMarker->m_fScaleDisplayType;
+}
+
+void ChannelMarker::addStreamIndex(int streamIndex)
+{
+    m_enabledStreamsBits |= (1<<streamIndex);
+}
+
+void ChannelMarker::removeStreamIndex(int streamIndex)
+{
+    m_enabledStreamsBits &= ~(1<<streamIndex);
+}
+
+void ChannelMarker::clearStreamIndexes()
+{
+    m_enabledStreamsBits = 0;
+}

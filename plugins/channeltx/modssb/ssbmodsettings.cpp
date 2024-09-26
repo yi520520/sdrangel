@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,7 +18,7 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "ssbmodsettings.h"
@@ -37,9 +38,10 @@ const int SSBModSettings::m_agcTimeConstant[] = {
 const int SSBModSettings::m_nbAGCTimeConstants = 10;
 
 SSBModSettings::SSBModSettings() :
-    m_channelMarker(0),
-    m_spectrumGUI(0),
-    m_cwKeyerGUI(0)
+    m_channelMarker(nullptr),
+    m_spectrumGUI(nullptr),
+    m_cwKeyerGUI(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -59,6 +61,8 @@ void SSBModSettings::resetToDefaults()
     m_audioMute = false;
     m_playLoop = false;
     m_agc = false;
+    m_cmpPreGainDB = -10;
+    m_cmpThresholdDB = -60;
     m_rgbColor = QColor(0, 255, 0).rgb();
     m_title = "SSB Modulator";
     m_modAFInput = SSBModInputAF::SSBModInputNone;
@@ -66,11 +70,14 @@ void SSBModSettings::resetToDefaults()
     m_feedbackAudioDeviceName = AudioDeviceManager::m_defaultDeviceName;
     m_feedbackVolumeFactor = 0.5f;
     m_feedbackAudioEnable = false;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray SSBModSettings::serialize() const
@@ -89,6 +96,8 @@ QByteArray SSBModSettings::serialize() const
 
     if (m_cwKeyerGUI) {
         s.writeBlob(6, m_cwKeyerGUI->serialize());
+    } else { // standalone operation with presets
+        s.writeBlob(6, m_cwKeyerSettings.serialize());
     }
 
     s.writeS32(7, roundf(m_lowCutoff / 100.0));
@@ -97,6 +106,8 @@ QByteArray SSBModSettings::serialize() const
     s.writeBool(10, m_audioFlipChannels);
     s.writeBool(11, m_dsb);
     s.writeBool(12, m_agc);
+    s.writeS32(13, m_cmpPreGainDB);
+    s.writeS32(14, m_cmpThresholdDB);
 
     if (m_channelMarker) {
         s.writeBlob(18, m_channelMarker->serialize());
@@ -113,6 +124,15 @@ QByteArray SSBModSettings::serialize() const
     s.writeString(27, m_feedbackAudioDeviceName);
     s.writeReal(28, m_feedbackVolumeFactor);
     s.writeBool(29, m_feedbackAudioEnable);
+    s.writeS32(30, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(31, m_rollupState->serialize());
+    }
+
+    s.writeS32(32, m_workspaceIndex);
+    s.writeBlob(33, m_geometryBytes);
+    s.writeBool(34, m_hidden);
 
     return s.final();
 }
@@ -135,10 +155,8 @@ bool SSBModSettings::deserialize(const QByteArray& data)
 
         d.readS32(1, &tmp, 0);
         m_inputFrequencyOffset = tmp;
-
         d.readS32(2, &tmp, 30);
         m_bandwidth = tmp * 100.0;
-
         d.readS32(3, &tmp, 100);
         m_toneFrequency = tmp * 10.0;
 
@@ -149,31 +167,34 @@ bool SSBModSettings::deserialize(const QByteArray& data)
         }
 
         d.readU32(5, &m_rgbColor);
+        d.readBlob(6, &bytetmp);
 
         if (m_cwKeyerGUI) {
-            d.readBlob(6, &bytetmp);
             m_cwKeyerGUI->deserialize(bytetmp);
+        } else { // standalone operation with presets
+            m_cwKeyerSettings.deserialize(bytetmp);
         }
 
         d.readS32(7, &tmp, 3);
         m_lowCutoff = tmp * 100.0;
-
         d.readS32(8, &m_spanLog2, 3);
         d.readBool(9, &m_audioBinaural, false);
         d.readBool(10, &m_audioFlipChannels, false);
         d.readBool(11, &m_dsb, false);
         d.readBool(12, &m_agc, false);
-        d.readS32(13, &tmp, 7);
+        d.readS32(13, &m_cmpPreGainDB, -10);
+        d.readS32(14, &m_cmpThresholdDB, -60);
 
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
             d.readBlob(18, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
 
         d.readString(19, &m_title, "SSB Modulator");
         d.readString(20, &m_audioDeviceName, AudioDeviceManager::m_defaultDeviceName);
-
         d.readS32(21, &tmp, 0);
+
         if ((tmp < 0) || (tmp > (int) SSBModInputAF::SSBModInputTone)) {
             m_modAFInput = SSBModInputNone;
         } else {
@@ -197,6 +218,17 @@ bool SSBModSettings::deserialize(const QByteArray& data)
         d.readString(27, &m_feedbackAudioDeviceName, AudioDeviceManager::m_defaultDeviceName);
         d.readReal(28, &m_feedbackVolumeFactor, 1.0);
         d.readBool(29, &m_feedbackAudioEnable, false);
+        d.readS32(30, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(31, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(32, &m_workspaceIndex, 0);
+        d.readBlob(33, &m_geometryBytes);
+        d.readBool(34, &m_hidden, false);
 
         return true;
     }

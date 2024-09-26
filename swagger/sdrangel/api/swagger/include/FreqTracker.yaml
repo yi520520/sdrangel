@@ -19,6 +19,8 @@ FreqTrackerSettings:
       type: integer
     title:
       type: string
+    spanLog2:
+      type: integer
     alphaEMA:
       description: Alpha factor for delta frequency EMA
       type: number
@@ -41,6 +43,9 @@ FreqTrackerSettings:
     squelchGate:
       description: Squelch trigger gate in 10s of ms
       type: integer
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -52,6 +57,12 @@ FreqTrackerSettings:
       type: integer
     reverseAPIChannelIndex:
       type: integer
+    spectrumConfig:
+      $ref: "http://swgserver:8081/api/swagger/include/GLSpectrum.yaml#/GLSpectrum"
+    channelMarker:
+      $ref: "http://swgserver:8081/api/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "http://swgserver:8081/api/swagger/include/RollupState.yaml#/RollupState"
 
 FreqTrackerReport:
   description: FreqTracker
@@ -60,6 +71,9 @@ FreqTrackerReport:
       description: power received in channel (dB)
       type: number
       format: float
+    trackingDeltaFrequency:
+      description: difference between channel and PLL or FLL center frequency (Hz)
+      type: integer
     squelch:
       description: squelch status (1 if open else 0)
       type: integer

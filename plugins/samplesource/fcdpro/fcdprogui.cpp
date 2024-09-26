@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -16,13 +18,13 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include "ui_fcdprogui.h"
 #include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
 #include "fcdprogui.h"
 
@@ -32,17 +34,21 @@
 #include "fcdtraits.h"
 
 FCDProGui::FCDProGui(DeviceUISet *deviceUISet, QWidget* parent) :
-	QWidget(parent),
+	DeviceGUI(parent),
 	ui(new Ui::FCDProGui),
-	m_deviceUISet(deviceUISet),
 	m_forceSettings(true),
 	m_settings(),
 	m_sampleSource(NULL),
 	m_lastEngineState(DeviceAPI::StNotStarted)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_sampleSource = (FCDProInput*) m_deviceUISet->m_deviceAPI->getSampleSource();
 
-	ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#FCDProGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesource/fcdpro/readme.md";
 	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
     updateFrequencyLimits();
 
@@ -146,10 +152,11 @@ FCDProGui::FCDProGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
 	displaySettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 
 	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
     m_sampleSource->setMessageQueueToGUI(&m_inputMessageQueue);
@@ -157,6 +164,8 @@ FCDProGui::FCDProGui(DeviceUISet *deviceUISet, QWidget* parent) :
 
 FCDProGui::~FCDProGui()
 {
+    m_statusTimer.stop();
+    m_updateTimer.stop();
 	delete ui;
 }
 
@@ -165,31 +174,9 @@ void FCDProGui::destroy()
 	delete this;
 }
 
-void FCDProGui::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString FCDProGui::getName() const
-{
-	return objectName();
-}
-
 void FCDProGui::resetToDefaults()
 {
 	m_settings.resetToDefaults();
-	displaySettings();
-	sendSettings();
-}
-
-qint64 FCDProGui::getCenterFrequency() const
-{
-	return m_settings.m_centerFrequency;
-}
-
-void FCDProGui::setCenterFrequency(qint64 centerFrequency)
-{
-	m_settings.m_centerFrequency = centerFrequency;
 	displaySettings();
 	sendSettings();
 }
@@ -220,7 +207,13 @@ bool FCDProGui::handleMessage(const Message& message)
     if (FCDProInput::MsgConfigureFCDPro::match(message))
     {
         const FCDProInput::MsgConfigureFCDPro& cfg = (FCDProInput::MsgConfigureFCDPro&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         blockApplySettings(true);
         displaySettings();
         blockApplySettings(false);
@@ -283,18 +276,26 @@ void FCDProGui::updateFrequencyLimits()
     qint64 minLimit = fcd_traits<Pro>::loLowLimitFreq/1000 + deltaFrequency;
     qint64 maxLimit = fcd_traits<Pro>::loHighLimitFreq/1000 + deltaFrequency;
 
-    minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
-    maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
-
+    if (m_settings.m_transverterMode)
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 999999999 ? 999999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 999999999 ? 999999999 : maxLimit;
+        ui->centerFrequency->setValueRange(9, minLimit, maxLimit);
+    }
+    else
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
+        ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
+    }
     qDebug("FCDProGui::updateFrequencyLimits: delta: %lld min: %lld max: %lld", deltaFrequency, minLimit, maxLimit);
-
-    ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
 }
 
 void FCDProGui::displaySettings()
 {
     ui->transverter->setDeltaFrequency(m_settings.m_transverterDeltaFrequency);
     ui->transverter->setDeltaFrequencyActive(m_settings.m_transverterMode);
+    ui->transverter->setIQOrder(m_settings.m_iqOrder);
     updateFrequencyLimits();
 	ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
 	ui->ppm->setValue(m_settings.m_LOppmTenths);
@@ -331,6 +332,7 @@ void FCDProGui::sendSettings()
 void FCDProGui::on_centerFrequency_changed(quint64 value)
 {
 	m_settings.m_centerFrequency = value * 1000;
+    m_settingsKeys.append("centerFrequency");
 	sendSettings();
 }
 
@@ -338,114 +340,133 @@ void FCDProGui::on_ppm_valueChanged(int value)
 {
 	m_settings.m_LOppmTenths = value;
 	displaySettings();
+    m_settingsKeys.append("LOppmTenths");
 	sendSettings();
 }
 
 void FCDProGui::on_dcOffset_toggled(bool checked)
 {
 	m_settings.m_dcBlock = checked;
+    m_settingsKeys.append("dcBlock");
 	sendSettings();
 }
 
 void FCDProGui::on_iqImbalance_toggled(bool checked)
 {
 	m_settings.m_iqCorrection = checked;
+    m_settingsKeys.append("iqCorrection");
 	sendSettings();
 }
 
 void FCDProGui::on_lnaGain_currentIndexChanged(int index)
 {
 	m_settings.m_lnaGainIndex = index;
+    m_settingsKeys.append("lnaGainIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_rfFilter_currentIndexChanged(int index)
 {
 	m_settings.m_rfFilterIndex = index;
+    m_settingsKeys.append("rfFilterIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_lnaEnhance_currentIndexChanged(int index)
 {
 	m_settings.m_lnaEnhanceIndex = index;
+    m_settingsKeys.append("lnaEnhanceIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_band_currentIndexChanged(int index)
 {
 	m_settings.m_bandIndex = index;
+    m_settingsKeys.append("bandIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_mixGain_currentIndexChanged(int index)
 {
 	m_settings.m_mixerGainIndex = index;
+    m_settingsKeys.append("mixerGainIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_mixFilter_currentIndexChanged(int index)
 {
 	m_settings.m_mixerFilterIndex = index;
+    m_settingsKeys.append("mixerFilterIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_bias_currentIndexChanged(int index)
 {
 	m_settings.m_biasCurrentIndex = index;
+    m_settingsKeys.append("biasCurrentIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_mode_currentIndexChanged(int index)
 {
 	m_settings.m_modeIndex = index;
+    m_settingsKeys.append("modeIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_gain1_currentIndexChanged(int index)
 {
 	m_settings.m_gain1Index = index;
+    m_settingsKeys.append("gain1Index");
 	sendSettings();
 }
 
 void FCDProGui::on_rcFilter_currentIndexChanged(int index)
 {
 	m_settings.m_rcFilterIndex = index;
+    m_settingsKeys.append("rcFilterIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_gain2_currentIndexChanged(int index)
 {
 	m_settings.m_gain2Index = index;
+    m_settingsKeys.append("gain2Index");
 	sendSettings();
 }
 
 void FCDProGui::on_gain3_currentIndexChanged(int index)
 {
 	m_settings.m_gain3Index = index;
+    m_settingsKeys.append("gain3Index");
 	sendSettings();
 }
 
 void FCDProGui::on_gain4_currentIndexChanged(int index)
 {
 	m_settings.m_gain4Index = index;
+    m_settingsKeys.append("gain4Index");
 	sendSettings();
 }
 
 void FCDProGui::on_ifFilter_currentIndexChanged(int index)
 {
 	m_settings.m_ifFilterIndex = index;
+    m_settingsKeys.append("ifFilterIndex");
 	sendSettings();
 }
 
 void FCDProGui::on_gain5_currentIndexChanged(int index)
 {
 	m_settings.m_gain5Index = index;
+    m_settingsKeys.append("gain5Index");
 	sendSettings();
 }
 
 void FCDProGui::on_gain6_currentIndexChanged(int index)
 {
 	m_settings.m_gain6Index = index;
+    m_settingsKeys.append("gain6Index");
 	sendSettings();
 }
 
@@ -456,6 +477,7 @@ void FCDProGui::on_decim_currentIndexChanged(int index)
 	}
 
 	m_settings.m_log2Decim = index;
+    m_settingsKeys.append("log2Decim");
 	sendSettings();
 }
 
@@ -491,6 +513,20 @@ void FCDProGui::on_setDefaults_clicked(bool checked)
 	m_settings.m_lnaEnhanceIndex = 0;     // Off
 	m_settings.m_biasCurrentIndex = 3;    // V/U band
 	m_settings.m_modeIndex = 0;           // Linearity
+    m_settingsKeys.append("lnaGainIndex");
+    m_settingsKeys.append("mixerGainIndex");
+    m_settingsKeys.append("mixerFilterIndex");
+    m_settingsKeys.append("gain1Index");
+    m_settingsKeys.append("rcFilterIndex");
+    m_settingsKeys.append("gain2Index");
+    m_settingsKeys.append("gain3Index");
+    m_settingsKeys.append("gain4Index");
+    m_settingsKeys.append("ifFilterIndex");
+    m_settingsKeys.append("gain5Index");
+    m_settingsKeys.append("gain6Index");
+    m_settingsKeys.append("lnaEnhanceIndex");
+    m_settingsKeys.append("biasCurrentIndex");
+    m_settingsKeys.append("modeIndex");
 	displaySettings();
 	sendSettings();
 }
@@ -504,25 +540,18 @@ void FCDProGui::on_startStop_toggled(bool checked)
     }
 }
 
-void FCDProGui::on_record_toggled(bool checked)
-{
-    if (checked) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
-
-    FCDProInput::MsgFileRecord* message = FCDProInput::MsgFileRecord::create(checked);
-    m_sampleSource->getInputMessageQueue()->push(message);
-}
-
 void FCDProGui::on_transverter_clicked()
 {
     m_settings.m_transverterMode = ui->transverter->getDeltaFrequencyAcive();
     m_settings.m_transverterDeltaFrequency = ui->transverter->getDeltaFrequency();
+    m_settings.m_iqOrder = ui->transverter->getIQOrder();
     qDebug("FCDProGui::on_transverter_clicked: %lld Hz %s", m_settings.m_transverterDeltaFrequency, m_settings.m_transverterMode ? "on" : "off");
     updateFrequencyLimits();
     m_settings.m_centerFrequency = ui->centerFrequency->getValueNew()*1000;
+    m_settingsKeys.append("transverterMode");
+    m_settingsKeys.append("transverterDeltaFrequency");
+    m_settingsKeys.append("iqOrder");
+    m_settingsKeys.append("centerFrequency");
     sendSettings();
 }
 
@@ -557,27 +586,57 @@ void FCDProGui::updateStatus()
 
 void FCDProGui::updateHardware()
 {
-	FCDProInput::MsgConfigureFCDPro* message = FCDProInput::MsgConfigureFCDPro::create(m_settings, m_forceSettings);
+	FCDProInput::MsgConfigureFCDPro* message = FCDProInput::MsgConfigureFCDPro::create(m_settings, m_settingsKeys, m_forceSettings);
 	m_sampleSource->getInputMessageQueue()->push(message);
 	m_forceSettings = false;
+    m_settingsKeys.clear();
 	m_updateTimer.stop();
 }
 
 void FCDProGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void FCDProGui::makeUIConnections()
+{
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &FCDProGui::on_centerFrequency_changed);
+    QObject::connect(ui->ppm, &QSlider::valueChanged, this, &FCDProGui::on_ppm_valueChanged);
+    QObject::connect(ui->dcOffset, &ButtonSwitch::toggled, this, &FCDProGui::on_dcOffset_toggled);
+    QObject::connect(ui->iqImbalance, &ButtonSwitch::toggled, this, &FCDProGui::on_iqImbalance_toggled);
+    QObject::connect(ui->lnaGain, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_lnaGain_currentIndexChanged);
+    QObject::connect(ui->rfFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_rfFilter_currentIndexChanged);
+    QObject::connect(ui->lnaEnhance, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_lnaEnhance_currentIndexChanged);
+    QObject::connect(ui->band, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_band_currentIndexChanged);
+    QObject::connect(ui->mixGain, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_mixGain_currentIndexChanged);
+    QObject::connect(ui->mixFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_mixFilter_currentIndexChanged);
+    QObject::connect(ui->bias, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_bias_currentIndexChanged);
+    QObject::connect(ui->mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_mode_currentIndexChanged);
+    QObject::connect(ui->rcFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_rcFilter_currentIndexChanged);
+    QObject::connect(ui->ifFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_ifFilter_currentIndexChanged);
+    QObject::connect(ui->decim, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_decim_currentIndexChanged);
+    QObject::connect(ui->fcPos, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FCDProGui::on_fcPos_currentIndexChanged);
+    QObject::connect(ui->setDefaults, &QPushButton::clicked, this, &FCDProGui::on_setDefaults_clicked);
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &FCDProGui::on_startStop_toggled);
+    QObject::connect(ui->transverter, &TransverterButton::clicked, this, &FCDProGui::on_transverter_clicked);
 }

@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,7 +24,9 @@
 #include <QCommandLineParser>
 #include <stdint.h>
 
-class ParserBench
+#include "export.h"
+
+class SDRBENCH_API ParserBench
 {
 public:
     typedef enum
@@ -33,7 +37,10 @@ public:
         TestDecimatorsFF,
         TestDecimatorsInfII,
         TestDecimatorsSupII,
-        TestAMBE
+        TestGolay2312,
+        TestFT8,
+        TestCallsign,
+        TestFT8Protocols
     } TestType;
 
     ParserBench();
@@ -46,18 +53,24 @@ public:
     uint32_t getNbSamples() const { return m_nbSamples; }
     uint32_t getRepetition() const { return m_repetition; }
     uint32_t getLog2Factor() const { return m_log2Factor; }
+    const QString& getFileName() const { return m_fileName; }
+    const QString& getArgsStr() const { return m_argsStr; }
 
 private:
     QString  m_testStr;
     uint32_t m_nbSamples;
     uint32_t m_repetition;
     uint32_t m_log2Factor;
+    QString m_fileName;
+    QString m_argsStr;
 
     QCommandLineParser m_parser;
     QCommandLineOption m_testOption;
     QCommandLineOption m_nbSamplesOption;
     QCommandLineOption m_repetitionOption;
     QCommandLineOption m_log2FactorOption;
+    QCommandLineOption m_fileOption;
+    QCommandLineOption m_argsOption;
 };
 
 

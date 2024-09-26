@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,8 +20,10 @@
 
 #include "device/deviceuiset.h"
 #include "gui/basicchannelsettingsdialog.h"
+#include "gui/dialpopup.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/hbfilterchainconverter.h"
-#include "mainwindow.h"
+#include "dsp/dspcommands.h"
 
 #include "remotesinkgui.h"
 #include "remotesink.h"
@@ -35,25 +38,6 @@ RemoteSinkGUI* RemoteSinkGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUI
 void RemoteSinkGUI::destroy()
 {
     delete this;
-}
-
-void RemoteSinkGUI::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString RemoteSinkGUI::getName() const
-{
-    return objectName();
-}
-
-qint64 RemoteSinkGUI::getCenterFrequency() const {
-    return 0;
-}
-
-void RemoteSinkGUI::setCenterFrequency(qint64 centerFrequency)
-{
-    (void) centerFrequency;
 }
 
 void RemoteSinkGUI::resetToDefaults()
@@ -82,22 +66,25 @@ bool RemoteSinkGUI::deserialize(const QByteArray& data)
 
 bool RemoteSinkGUI::handleMessage(const Message& message)
 {
-    if (RemoteSink::MsgSampleRateNotification::match(message))
-    {
-        RemoteSink::MsgSampleRateNotification& notif = (RemoteSink::MsgSampleRateNotification&) message;
-        //m_channelMarker.setBandwidth(notif.getSampleRate());
-        m_sampleRate = notif.getSampleRate();
-        updateTxDelayTime();
-        displayRateAndShift();
-        return true;
-    }
-    else if (RemoteSink::MsgConfigureRemoteSink::match(message))
+    if (RemoteSink::MsgConfigureRemoteSink::match(message))
     {
         const RemoteSink::MsgConfigureRemoteSink& cfg = (RemoteSink::MsgConfigureRemoteSink&) message;
         m_settings = cfg.getSettings();
         blockApplySettings(true);
+        m_channelMarker.updateSettings(static_cast<const ChannelMarker*>(m_settings.m_channelMarker));
         displaySettings();
         blockApplySettings(false);
+
+        return true;
+    }
+    else if (DSPSignalNotification::match(message))
+    {
+        DSPSignalNotification& cfg = (DSPSignalNotification&) message;
+        m_deviceCenterFrequency = cfg.getCenterFrequency();
+        m_basebandSampleRate = cfg.getSampleRate();
+        qDebug("RemoteSinkGUI::handleMessage: DSPSignalNotification: m_basebandSampleRate: %d", m_basebandSampleRate);
+        displayRateAndShift();
+
         return true;
     }
     else
@@ -107,20 +94,26 @@ bool RemoteSinkGUI::handleMessage(const Message& message)
 }
 
 RemoteSinkGUI::RemoteSinkGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *channelrx, QWidget* parent) :
-        RollupWidget(parent),
+        ChannelGUI(parent),
         ui(new Ui::RemoteSinkGUI),
         m_pluginAPI(pluginAPI),
         m_deviceUISet(deviceUISet),
-        m_sampleRate(0),
+        m_basebandSampleRate(0),
+        m_deviceCenterFrequency(0),
         m_tickCount(0)
 {
-    ui->setupUi(this);
     setAttribute(Qt::WA_DeleteOnClose, true);
-    connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
+    m_helpURL = "plugins/channelrx/remotesink/readme.md";
+    RollupContents *rollupContents = getRollupContents();
+	ui->setupUi(rollupContents);
+    setSizePolicy(rollupContents->sizePolicy());
+    rollupContents->arrangeRollups();
+	connect(rollupContents, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
     connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
 
     m_remoteSink = (RemoteSink*) channelrx;
     m_remoteSink->setMessageQueueToGUI(getInputMessageQueue());
+    m_basebandSampleRate = m_remoteSink->getBasebandSampleRate();
 
     m_channelMarker.blockSignals(true);
     m_channelMarker.setColor(m_settings.m_rgbColor);
@@ -130,24 +123,21 @@ RemoteSinkGUI::RemoteSinkGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, Bas
     m_channelMarker.setVisible(true); // activate signal on the last setting only
 
     m_settings.setChannelMarker(&m_channelMarker);
+    m_settings.setRollupState(&m_rollupState);
 
-    m_deviceUISet->registerRxChannelInstance(RemoteSink::m_channelIdURI, this);
     m_deviceUISet->addChannelMarker(&m_channelMarker);
-    m_deviceUISet->addRollupWidget(this);
 
     connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
-    //connect(&(m_deviceUISet->m_deviceSourceAPI->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
-
-    m_time.start();
 
     displaySettings();
+    makeUIConnections();
     applySettings(true);
+    DialPopup::addPopupsToChildDials(this);
+    m_resizer.enableChildMouseTracking();
 }
 
 RemoteSinkGUI::~RemoteSinkGUI()
 {
-    m_deviceUISet->removeRxChannelInstance(this);
-    delete m_remoteSink; // TODO: check this: when the GUI closes it has to delete the demodulator
     delete ui;
 }
 
@@ -167,29 +157,19 @@ void RemoteSinkGUI::applySettings(bool force)
     }
 }
 
-void RemoteSinkGUI::applyChannelSettings()
-{
-    if (m_doApplySettings)
-    {
-        RemoteSink::MsgConfigureChannelizer *msgChan = RemoteSink::MsgConfigureChannelizer::create(
-                m_settings.m_log2Decim,
-                m_settings.m_filterChainHash);
-        m_remoteSink->getInputMessageQueue()->push(msgChan);
-    }
-}
-
 void RemoteSinkGUI::displaySettings()
 {
     m_channelMarker.blockSignals(true);
     m_channelMarker.setCenterFrequency(0);
     m_channelMarker.setTitle(m_settings.m_title);
-    m_channelMarker.setBandwidth(m_sampleRate); // TODO
+    m_channelMarker.setBandwidth(m_basebandSampleRate); // TODO
     m_channelMarker.setMovable(false); // do not let user move the center arbitrarily
     m_channelMarker.blockSignals(false);
     m_channelMarker.setColor(m_settings.m_rgbColor); // activate signal on the last setting only
 
     setTitleColor(m_settings.m_rgbColor);
     setWindowTitle(m_channelMarker.getTitle());
+    setTitle(m_channelMarker.getTitle());
 
     blockApplySettings(true);
     ui->decimationFactor->setCurrentIndex(m_settings.m_log2Decim);
@@ -198,17 +178,18 @@ void RemoteSinkGUI::displaySettings()
     QString s = QString::number(128 + m_settings.m_nbFECBlocks, 'f', 0);
     QString s1 = QString::number(m_settings.m_nbFECBlocks, 'f', 0);
     ui->nominalNbBlocksText->setText(tr("%1/%2").arg(s).arg(s1));
-    ui->txDelayText->setText(tr("%1%").arg(m_settings.m_txDelay));
-    ui->txDelay->setValue(m_settings.m_txDelay);
-    updateTxDelayTime();
+    ui->nbTxBytes->setCurrentIndex(log2(m_settings.m_nbTxBytes));
     applyDecimation();
+    updateIndexLabel();
+    getRollupContents()->restoreState(m_rollupState);
+    updateAbsoluteCenterFrequency();
     blockApplySettings(false);
 }
 
 void RemoteSinkGUI::displayRateAndShift()
 {
-    int shift = m_shiftFrequencyFactor * m_sampleRate;
-    double channelSampleRate = ((double) m_sampleRate) / (1<<m_settings.m_log2Decim);
+    int shift = m_shiftFrequencyFactor * m_basebandSampleRate;
+    double channelSampleRate = ((double) m_basebandSampleRate) / (1<<m_settings.m_log2Decim);
     QLocale loc;
     ui->offsetFrequencyText->setText(tr("%1 Hz").arg(loc.toString(shift)));
     ui->channelRateText->setText(tr("%1k").arg(QString::number(channelSampleRate / 1000.0, 'g', 5)));
@@ -216,14 +197,16 @@ void RemoteSinkGUI::displayRateAndShift()
     m_channelMarker.setBandwidth(channelSampleRate);
 }
 
-void RemoteSinkGUI::leaveEvent(QEvent*)
+void RemoteSinkGUI::leaveEvent(QEvent* event)
 {
     m_channelMarker.setHighlighted(false);
+    ChannelGUI::leaveEvent(event);
 }
 
-void RemoteSinkGUI::enterEvent(QEvent*)
+void RemoteSinkGUI::enterEvent(EnterEventType* event)
 {
     m_channelMarker.setHighlighted(true);
+    ChannelGUI::enterEvent(event);
 }
 
 void RemoteSinkGUI::handleSourceMessages()
@@ -243,11 +226,14 @@ void RemoteSinkGUI::onWidgetRolled(QWidget* widget, bool rollDown)
 {
     (void) widget;
     (void) rollDown;
+
+    getRollupContents()->saveState(m_rollupState);
+    applySettings();
 }
 
 void RemoteSinkGUI::onMenuDialogCalled(const QPoint &p)
 {
-    if (m_contextMenuType == ContextMenuChannelSettings)
+    if (m_contextMenuType == ContextMenuType::ContextMenuChannelSettings)
     {
         BasicChannelSettingsDialog dialog(&m_channelMarker, this);
         dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
@@ -255,8 +241,16 @@ void RemoteSinkGUI::onMenuDialogCalled(const QPoint &p)
         dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
         dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
         dialog.setReverseAPIChannelIndex(m_settings.m_reverseAPIChannelIndex);
+        dialog.setDefaultTitle(m_displayedName);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            dialog.setNumberOfStreams(m_remoteSink->getNumberOfDeviceStreams());
+            dialog.setStreamIndex(m_settings.m_streamIndex);
+        }
 
         dialog.move(p);
+        new DialogPositioner(&dialog, false);
         dialog.exec();
 
         m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
@@ -268,7 +262,16 @@ void RemoteSinkGUI::onMenuDialogCalled(const QPoint &p)
         m_settings.m_reverseAPIChannelIndex = dialog.getReverseAPIChannelIndex();
 
         setWindowTitle(m_settings.m_title);
+        setTitle(m_channelMarker.getTitle());
         setTitleColor(m_settings.m_rgbColor);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            m_settings.m_streamIndex = dialog.getSelectedStreamIndex();
+            m_channelMarker.clearStreamIndexes();
+            m_channelMarker.addStreamIndex(m_settings.m_streamIndex);
+            updateIndexLabel();
+        }
 
         applySettings();
     }
@@ -327,14 +330,6 @@ void RemoteSinkGUI::on_dataApplyButton_clicked(bool checked)
     applySettings();
 }
 
-void RemoteSinkGUI::on_txDelay_valueChanged(int value)
-{
-    m_settings.m_txDelay = value; // percentage
-    ui->txDelayText->setText(tr("%1%").arg(value));
-    updateTxDelayTime();
-    applySettings();
-}
-
 void RemoteSinkGUI::on_nbFECBlocks_valueChanged(int value)
 {
     m_settings.m_nbFECBlocks = value;
@@ -343,17 +338,13 @@ void RemoteSinkGUI::on_nbFECBlocks_valueChanged(int value)
     QString s = QString::number(nbOriginalBlocks + nbFECBlocks, 'f', 0);
     QString s1 = QString::number(nbFECBlocks, 'f', 0);
     ui->nominalNbBlocksText->setText(tr("%1/%2").arg(s).arg(s1));
-    updateTxDelayTime();
     applySettings();
 }
 
-void RemoteSinkGUI::updateTxDelayTime()
+void RemoteSinkGUI::on_nbTxBytes_currentIndexChanged(int index)
 {
-    double txDelayRatio = m_settings.m_txDelay / 100.0;
-    int samplesPerBlock = RemoteNbBytesPerBlock / sizeof(Sample);
-    double delay = m_sampleRate == 0 ? 0.0 : (127*samplesPerBlock*txDelayRatio) / m_sampleRate;
-    delay /= 128 + m_settings.m_nbFECBlocks;
-    ui->txDelayTime->setText(tr("%1µs").arg(QString::number(delay*1e6, 'f', 0)));
+    m_settings.m_nbTxBytes = 1 << index;
+    applySettings();
 }
 
 void RemoteSinkGUI::applyDecimation()
@@ -377,8 +368,9 @@ void RemoteSinkGUI::applyPosition()
     m_shiftFrequencyFactor = HBFilterChainConverter::convertToString(m_settings.m_log2Decim, m_settings.m_filterChainHash, s);
     ui->filterChainText->setText(s);
 
+    updateAbsoluteCenterFrequency();
     displayRateAndShift();
-    applyChannelSettings();
+    applySettings();
 }
 
 void RemoteSinkGUI::tick()
@@ -386,4 +378,21 @@ void RemoteSinkGUI::tick()
     if (++m_tickCount == 20) { // once per second
         m_tickCount = 0;
     }
+}
+
+void RemoteSinkGUI::makeUIConnections()
+{
+    QObject::connect(ui->decimationFactor, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &RemoteSinkGUI::on_decimationFactor_currentIndexChanged);
+    QObject::connect(ui->position, &QSlider::valueChanged, this, &RemoteSinkGUI::on_position_valueChanged);
+    QObject::connect(ui->dataAddress, &QLineEdit::returnPressed, this, &RemoteSinkGUI::on_dataAddress_returnPressed);
+    QObject::connect(ui->dataPort, &QLineEdit::returnPressed, this, &RemoteSinkGUI::on_dataPort_returnPressed);
+    QObject::connect(ui->dataApplyButton, &QPushButton::clicked, this, &RemoteSinkGUI::on_dataApplyButton_clicked);
+    QObject::connect(ui->nbFECBlocks, &QDial::valueChanged, this, &RemoteSinkGUI::on_nbFECBlocks_valueChanged);
+    QObject::connect(ui->nbTxBytes, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &RemoteSinkGUI::on_nbTxBytes_currentIndexChanged);
+}
+
+void RemoteSinkGUI::updateAbsoluteCenterFrequency()
+{
+    int shift = m_shiftFrequencyFactor * m_basebandSampleRate;
+    setStatusFrequency(m_deviceCenterFrequency + shift);
 }

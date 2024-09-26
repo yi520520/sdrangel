@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017, 2018 Edouard Griffiths, F4EXB                             //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 // Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -20,23 +21,23 @@
 
 #include <QDebug>
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include <algorithm>
 
 #include "ui_xtrxinputgui.h"
 #include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialpopup.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 
 XTRXInputGUI::XTRXInputGUI(DeviceUISet *deviceUISet, QWidget* parent) :
-    QWidget(parent),
+    DeviceGUI(parent),
     ui(new Ui::XTRXInputGUI),
-    m_deviceUISet(deviceUISet),
     m_settings(),
     m_sampleRateMode(true),
     m_sampleRate(0),
@@ -46,9 +47,14 @@ XTRXInputGUI::XTRXInputGUI(DeviceUISet *deviceUISet, QWidget* parent) :
     m_statusCounter(0),
     m_deviceStatusCounter(0)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_XTRXInput = (XTRXInput*) m_deviceUISet->m_deviceAPI->getSampleSource();
 
-    ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#XTRXInputGUI { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesource/xtrxinput/readme.md";
 
     float minF, maxF, stepF;
 
@@ -72,16 +78,20 @@ XTRXInputGUI::XTRXInputGUI(DeviceUISet *deviceUISet, QWidget* parent) :
     connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
     m_statusTimer.start(500);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
     displaySettings();
+    makeUIConnections();
 
     connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
+    DialPopup::addPopupsToChildDials(this);
+    m_resizer.enableChildMouseTracking();
 }
 
 XTRXInputGUI::~XTRXInputGUI()
 {
+    m_statusTimer.stop();
+    m_updateTimer.stop();
     delete ui;
 }
 
@@ -90,32 +100,11 @@ void XTRXInputGUI::destroy()
     delete this;
 }
 
-void XTRXInputGUI::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString XTRXInputGUI::getName() const
-{
-    return objectName();
-}
-
 void XTRXInputGUI::resetToDefaults()
 {
     m_settings.resetToDefaults();
     displaySettings();
-    sendSettings();
-}
-
-qint64 XTRXInputGUI::getCenterFrequency() const
-{
-    return m_settings.m_centerFrequency + (m_settings.m_ncoEnable ? m_settings.m_ncoFrequency : 0);
-}
-
-void XTRXInputGUI::setCenterFrequency(qint64 centerFrequency)
-{
-    m_settings.m_centerFrequency = centerFrequency - (m_settings.m_ncoEnable ? m_settings.m_ncoFrequency : 0);
-    displaySettings();
+    m_forceSettings = true;
     sendSettings();
 }
 
@@ -175,6 +164,7 @@ bool XTRXInputGUI::handleMessage(const Message& message)
     else if (XTRXInput::MsgReportClockGenChange::match(message))
     {
         m_settings.m_devSampleRate = m_XTRXInput->getDevSampleRate();
+        m_settings.m_log2HardDecim = m_XTRXInput->getLog2HardDecim();
 
         blockApplySettings(true);
         displaySettings();
@@ -227,6 +217,7 @@ bool XTRXInputGUI::handleMessage(const Message& message)
 
         return true;
     }
+
     return false;
 }
 
@@ -234,7 +225,7 @@ void XTRXInputGUI::handleInputMessages()
 {
     Message* message;
 
-    while ((message = m_inputMessageQueue.pop()) != 0)
+    while ((message = m_inputMessageQueue.pop()))
     {
         if (DSPSignalNotification::match(*message))
         {
@@ -250,7 +241,13 @@ void XTRXInputGUI::handleInputMessages()
         {
             qDebug("XTRXInputGUI::handleInputMessages: MsgConfigureXTRX");
             const XTRXInput::MsgConfigureXTRX& cfg = (XTRXInput::MsgConfigureXTRX&) *message;
-            m_settings = cfg.getSettings();
+
+            if (cfg.getForce()) {
+                m_settings = cfg.getSettings();
+            } else {
+                m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+            }
+
             displaySettings();
 
             delete message;
@@ -406,8 +403,9 @@ void XTRXInputGUI::setCenterFrequencySetting(uint64_t kHzValue)
 
 void XTRXInputGUI::sendSettings()
 {
-    if(!m_updateTimer.isActive())
+    if (!m_updateTimer.isActive()) {
         m_updateTimer.start(100);
+    }
 }
 
 void XTRXInputGUI::updateHardware()
@@ -415,9 +413,10 @@ void XTRXInputGUI::updateHardware()
     if (m_doApplySettings)
     {
         qDebug() << "XTRXInputGUI::updateHardware";
-        XTRXInput::MsgConfigureXTRX* message = XTRXInput::MsgConfigureXTRX::create(m_settings, m_forceSettings);
+        XTRXInput::MsgConfigureXTRX* message = XTRXInput::MsgConfigureXTRX::create(m_settings, m_settingsKeys, m_forceSettings);
         m_XTRXInput->getInputMessageQueue()->push(message);
         m_forceSettings = false;
+        m_settingsKeys.clear();
         m_updateTimer.stop();
     }
 }
@@ -491,21 +490,10 @@ void XTRXInputGUI::on_startStop_toggled(bool checked)
     }
 }
 
-void XTRXInputGUI::on_record_toggled(bool checked)
-{
-    if (checked) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
-
-    XTRXInput::MsgFileRecord* message = XTRXInput::MsgFileRecord::create(checked);
-    m_XTRXInput->getInputMessageQueue()->push(message);
-}
-
 void XTRXInputGUI::on_centerFrequency_changed(quint64 value)
 {
     setCenterFrequencySetting(value);
+    m_settingsKeys.append("centerFrequency");
     sendSettings();
 }
 
@@ -513,6 +501,7 @@ void XTRXInputGUI::on_ncoFrequency_changed(qint64 value)
 {
     m_settings.m_ncoFrequency = value;
     setCenterFrequencyDisplay();
+    m_settingsKeys.append("ncoFrequency");
     sendSettings();
 }
 
@@ -520,18 +509,21 @@ void XTRXInputGUI::on_ncoEnable_toggled(bool checked)
 {
     m_settings.m_ncoEnable = checked;
     setCenterFrequencyDisplay();
+    m_settingsKeys.append("ncoEnable");
     sendSettings();
 }
 
 void XTRXInputGUI::on_dcOffset_toggled(bool checked)
 {
     m_settings.m_dcBlock = checked;
+    m_settingsKeys.append("dcBlock");
     sendSettings();
 }
 
 void XTRXInputGUI::on_iqImbalance_toggled(bool checked)
 {
     m_settings.m_iqCorrection = checked;
+    m_settingsKeys.append("iqCorrection");
     sendSettings();
 }
 
@@ -545,20 +537,18 @@ void XTRXInputGUI::on_sampleRate_changed(quint64 value)
 
     updateADCRate();
     setNCODisplay();
-    sendSettings();}
+    m_settingsKeys.append("devSampleRate");
+    sendSettings();
+}
 
 void XTRXInputGUI::on_hwDecim_currentIndexChanged(int index)
 {
-    if ((index <0) || (index > 5))
+    if ((index <0) || (index > 5)) {
         return;
-    m_settings.m_log2HardDecim = index;
-    displaySampleRate();
-
-    if (m_sampleRateMode) {
-        m_settings.m_devSampleRate = ui->sampleRate->getValueNew();
-    } else {
-        m_settings.m_devSampleRate = ui->sampleRate->getValueNew() * (1 << m_settings.m_log2SoftDecim);
     }
+
+    m_settings.m_log2HardDecim = index;
+    m_settingsKeys.append("log2HardDecim");
 
     updateADCRate();
     setNCODisplay();
@@ -572,18 +562,30 @@ void XTRXInputGUI::on_swDecim_currentIndexChanged(int index)
     }
 
     m_settings.m_log2SoftDecim = index;
+    m_settingsKeys.append("log2SoftDecim");
+    displaySampleRate();
+
+    if (m_sampleRateMode) {
+        m_settings.m_devSampleRate = ui->sampleRate->getValueNew();
+    } else {
+        m_settings.m_devSampleRate = ui->sampleRate->getValueNew() * (1 << m_settings.m_log2SoftDecim);
+    }
+
+    m_settingsKeys.append("devSampleRate");
     sendSettings();
 }
 
 void XTRXInputGUI::on_lpf_changed(quint64 value)
 {
     m_settings.m_lpfBW = value * 1000;
+    m_settingsKeys.append("lpfBW");
     sendSettings();
 }
 
 void XTRXInputGUI::on_gainMode_currentIndexChanged(int index)
 {
     m_settings.m_gainMode = (XTRXInputSettings::GainMode) index;
+    m_settingsKeys.append("gainMode");
 
     if (index == 0)
     {
@@ -607,6 +609,7 @@ void XTRXInputGUI::on_gain_valueChanged(int value)
 {
     m_settings.m_gain = value;
     ui->gainText->setText(tr("%1").arg(m_settings.m_gain));
+    m_settingsKeys.append("gain");
     sendSettings();
 }
 
@@ -614,18 +617,21 @@ void XTRXInputGUI::on_lnaGain_valueChanged(int value)
 {
     m_settings.m_lnaGain = value;
     ui->lnaGainText->setText(tr("%1").arg(m_settings.m_lnaGain));
+    m_settingsKeys.append("lnaGain");
     sendSettings();
 }
 
 void XTRXInputGUI::on_tiaGain_currentIndexChanged(int index)
 {
     m_settings.m_tiaGain = index + 1;
+    m_settingsKeys.append("tiaGain");
     sendSettings();
 }
 
 void XTRXInputGUI::on_pgaGain_valueChanged(int value)
 {
     m_settings.m_pgaGain = value;
+    m_settingsKeys.append("pgaGain");
     ui->pgaGainText->setText(tr("%1").arg(m_settings.m_pgaGain));
     sendSettings();
 }
@@ -633,6 +639,7 @@ void XTRXInputGUI::on_pgaGain_valueChanged(int value)
 void XTRXInputGUI::on_antenna_currentIndexChanged(int index)
 {
     m_settings.m_antennaPath = (xtrx_antenna_t) index;
+    m_settingsKeys.append("antennaPath");
     sendSettings();
 }
 
@@ -640,6 +647,8 @@ void XTRXInputGUI::on_extClock_clicked()
 {
     m_settings.m_extClock = ui->extClock->getExternalClockActive();
     m_settings.m_extClockFreq = ui->extClock->getExternalClockFrequency();
+    m_settingsKeys.append("extClock");
+    m_settingsKeys.append("extClockFreq");
     qDebug("XTRXInputGUI::on_extClock_clicked: %u Hz %s", m_settings.m_extClockFreq, m_settings.m_extClock ? "on" : "off");
     sendSettings();
 }
@@ -647,6 +656,7 @@ void XTRXInputGUI::on_extClock_clicked()
 void XTRXInputGUI::on_pwrmode_currentIndexChanged(int index)
 {
     m_settings.m_pwrmode = index;
+    m_settingsKeys.append("pwrmode");
     sendSettings();
 }
 
@@ -658,19 +668,52 @@ void XTRXInputGUI::on_sampleRateMode_toggled(bool checked)
 
 void XTRXInputGUI::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settingsKeys.append("useReverseAPI");
+        m_settingsKeys.append("reverseAPIAddress");
+        m_settingsKeys.append("reverseAPIPort");
+        m_settingsKeys.append("reverseAPIDeviceIndex");
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void XTRXInputGUI::makeUIConnections()
+{
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &XTRXInputGUI::on_startStop_toggled);
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &XTRXInputGUI::on_centerFrequency_changed);
+    QObject::connect(ui->ncoFrequency, &ValueDialZ::changed, this, &XTRXInputGUI::on_ncoFrequency_changed);
+    QObject::connect(ui->ncoEnable, &ButtonSwitch::toggled, this, &XTRXInputGUI::on_ncoEnable_toggled);
+    QObject::connect(ui->dcOffset, &ButtonSwitch::toggled, this, &XTRXInputGUI::on_dcOffset_toggled);
+    QObject::connect(ui->iqImbalance, &ButtonSwitch::toggled, this, &XTRXInputGUI::on_iqImbalance_toggled);
+    QObject::connect(ui->sampleRate, &ValueDial::changed, this, &XTRXInputGUI::on_sampleRate_changed);
+    QObject::connect(ui->hwDecim, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &XTRXInputGUI::on_hwDecim_currentIndexChanged);
+    QObject::connect(ui->swDecim, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &XTRXInputGUI::on_swDecim_currentIndexChanged);
+    QObject::connect(ui->lpf, &ValueDial::changed, this, &XTRXInputGUI::on_lpf_changed);
+    QObject::connect(ui->gainMode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &XTRXInputGUI::on_gainMode_currentIndexChanged);
+    QObject::connect(ui->gain, &QDial::valueChanged, this, &XTRXInputGUI::on_gain_valueChanged);
+    QObject::connect(ui->lnaGain, &QDial::valueChanged, this, &XTRXInputGUI::on_lnaGain_valueChanged);
+    QObject::connect(ui->tiaGain, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &XTRXInputGUI::on_tiaGain_currentIndexChanged);
+    QObject::connect(ui->pgaGain, &QDial::valueChanged, this, &XTRXInputGUI::on_pgaGain_valueChanged);
+    QObject::connect(ui->antenna, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &XTRXInputGUI::on_antenna_currentIndexChanged);
+    QObject::connect(ui->extClock, &ExternalClockButton::clicked, this, &XTRXInputGUI::on_extClock_clicked);
+    QObject::connect(ui->pwrmode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &XTRXInputGUI::on_pwrmode_currentIndexChanged);
+    QObject::connect(ui->sampleRateMode, &QToolButton::toggled, this, &XTRXInputGUI::on_sampleRateMode_toggled);
 }

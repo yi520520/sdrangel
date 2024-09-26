@@ -1,4 +1,7 @@
 ﻿///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2017-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2020 Vort <vvort@yandex.ru>                                     //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 // Copyright (C) 2018 F4HKW                                                      //
 // for F4EXB / SDRAngel                                                          //
 //                                                                               //
@@ -22,10 +25,10 @@
 #ifndef INCLUDE_TVSCREEN_H
 #define INCLUDE_TVSCREEN_H
 
-#include <QGLWidget>
+#include <QOpenGLWidget>
 #include <QPen>
 #include <QTimer>
-#include <QMutex>
+#include <QRecursiveMutex>
 #include <QFont>
 #include <QMatrix4x4>
 #include "dsp/dsptypes.h"
@@ -36,52 +39,51 @@
 
 class QPainter;
 
-class SDRGUI_API TVScreen: public QGLWidget
+class SDRGUI_API TVScreen: public QOpenGLWidget
 {
 	Q_OBJECT
 
 public:
 
-	TVScreen(bool blnColor, QWidget* parent = 0);
+	TVScreen(bool color, QWidget* parent = nullptr);
     virtual ~TVScreen();
 
-    void setColor(bool blnColor);
-    void resizeTVScreen(int intCols, int intRows);
-    void getSize(int& intCols, int& intRows) const;
-    void renderImage(unsigned char * objData);
-    QRgb* getRowBuffer(int intRow);
+    void setColor(bool color);
+    void resizeTVScreen(int cols, int rows);
+    void getSize(int& cols, int& rows) const;
+    void renderImage(unsigned char * data);
+    QRgb* getRowBuffer(int row);
     void resetImage();
     void resetImage(int alpha);
 
-    bool selectRow(int intLine);
-    bool setDataColor(int intCol, int intRed, int intGreen, int intBlue);
-    bool setDataColor(int intCol, int intRed, int intGreen, int intBlue, int intAlpha);
-    void setAlphaBlend(bool blnAlphaBlend) { m_objGLShaderArray.setAlphaBlend(blnAlphaBlend); }
-    void setAlphaReset() { m_objGLShaderArray.setAlphaReset(); }
+    bool selectRow(int line);
+    bool setDataColor(int col, int red, int green, int blue);
+    bool setDataColor(int col, int red, int green, int blue, int alpha);
+    void setAlphaBlend(bool alphaBlend) { m_glShaderArray.setAlphaBlend(alphaBlend); }
+    void setAlphaReset() { m_glShaderArray.setAlphaReset(); }
 
     void connectTimer(const QTimer& timer);
 
     //Valeurs par défaut
-    static const int TV_COLS=256;
-    static const int TV_ROWS=256;
+    static const int TV_COLS = 256;
+    static const int TV_ROWS = 256;
 
 signals:
 	void traceSizeChanged(int);
 	void sampleRateChanged(int);
 
 private:
-    bool m_blnGLContextInitialized;
-    int m_intAskedCols;
-    int m_intAskedRows;
+    bool m_glContextInitialized;
+    int m_askedCols;
+    int m_askedRows;
 
 
 	// state
-    QTimer m_objTimer;
-    QMutex m_objMutex;
-    bool m_blnDataChanged;
-    bool m_blnConfigChanged;
+    QTimer m_timer;
+    QRecursiveMutex m_mutex;
+    bool m_dataChanged;
 
-    GLShaderTVArray m_objGLShaderArray;
+    GLShaderTVArray m_glShaderArray;
 
     int m_cols;
     int m_rows;
@@ -92,7 +94,7 @@ private:
 
 	void mousePressEvent(QMouseEvent*);
 
-	unsigned char *m_chrLastData;
+	unsigned char *m_lastData;
 
 protected slots:
 	void cleanup();

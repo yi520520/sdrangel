@@ -1,6 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
 // written by Christian Daniel                                                   //
+// Copyright (C) 2014-2015 John Greb <hexameron@spam.no>                         //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,384 +28,154 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QBuffer>
+#include <QThread>
 
 #include "SWGChannelSettings.h"
+#include "SWGWorkspaceInfo.h"
 #include "SWGNFMDemodSettings.h"
 #include "SWGChannelReport.h"
 #include "SWGNFMDemodReport.h"
 
-#include "dsp/downchannelizer.h"
-#include "util/stepfunctions.h"
-#include "util/db.h"
-#include "audio/audiooutput.h"
-#include "dsp/dspengine.h"
-#include "dsp/threadedbasebandsamplesink.h"
 #include "dsp/dspcommands.h"
+#include "dsp/devicesamplemimo.h"
 #include "device/deviceapi.h"
+#include "settings/serializable.h"
+#include "util/db.h"
+#include "maincore.h"
 
 #include "nfmdemod.h"
 
 MESSAGE_CLASS_DEFINITION(NFMDemod::MsgConfigureNFMDemod, Message)
-MESSAGE_CLASS_DEFINITION(NFMDemod::MsgConfigureChannelizer, Message)
-MESSAGE_CLASS_DEFINITION(NFMDemod::MsgReportCTCSSFreq, Message)
 
-const QString NFMDemod::m_channelIdURI = "sdrangel.channel.nfmdemod";
-const QString NFMDemod::m_channelId = "NFMDemod";
+const char* const NFMDemod::m_channelIdURI = "sdrangel.channel.nfmdemod";
+const char* const NFMDemod::m_channelId = "NFMDemod";
 
-static const double afSqTones[2] = {1000.0, 6000.0}; // {1200.0, 8000.0};
-static const double afSqTones_lowrate[2] = {1000.0, 3500.0};
 const int NFMDemod::m_udpBlockSize = 512;
 
 NFMDemod::NFMDemod(DeviceAPI *devieAPI) :
         ChannelAPI(m_channelIdURI, ChannelAPI::StreamSingleSink),
         m_deviceAPI(devieAPI),
-        m_inputSampleRate(48000),
-        m_inputFrequencyOffset(0),
         m_running(false),
-        m_ctcssIndex(0),
-        m_sampleCount(0),
-        m_squelchCount(0),
-        m_squelchGate(4800),
-        m_squelchLevel(-990),
-        m_squelchOpen(false),
-        m_afSquelchOpen(false),
-        m_magsq(0.0f),
-        m_magsqSum(0.0f),
-        m_magsqPeak(0.0f),
-        m_magsqCount(0),
-        m_afSquelch(),
-        m_squelchDelayLine(24000),
-        m_audioFifo(48000),
-        m_settingsMutex(QMutex::Recursive)
+        m_basebandSampleRate(0)
 {
     qDebug("NFMDemod::NFMDemod");
 	setObjectName(m_channelId);
-
-	m_audioBuffer.resize(1<<14);
-	m_audioBufferFill = 0;
-
-	m_agcLevel = 1.0;
-
-    DSPEngine::instance()->getAudioDeviceManager()->addAudioSink(&m_audioFifo, getInputMessageQueue());
-    m_audioSampleRate = DSPEngine::instance()->getAudioDeviceManager()->getOutputSampleRate();
-    m_discriCompensation = (m_audioSampleRate/48000.0f);
-    m_discriCompensation *= sqrt(m_discriCompensation);
-
-	m_ctcssDetector.setCoefficients(m_audioSampleRate/16, m_audioSampleRate/8.0f); // 0.5s / 2 Hz resolution
-	m_afSquelch.setCoefficients(m_audioSampleRate/2000, 600, m_audioSampleRate, 200, 0, afSqTones); // 0.5ms test period, 300ms average span, audio SR, 100ms attack, no decay
-
-    m_ctcssLowpass.create(301, m_audioSampleRate, 250.0);
-
-    applyChannelSettings(m_inputSampleRate, m_inputFrequencyOffset, true);
 	applySettings(m_settings, true);
 
-    m_channelizer = new DownChannelizer(this);
-    m_threadedChannelizer = new ThreadedBasebandSampleSink(m_channelizer, this);
-    m_deviceAPI->addChannelSink(m_threadedChannelizer);
+    m_deviceAPI->addChannelSink(this);
     m_deviceAPI->addChannelSinkAPI(this);
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &NFMDemod::networkManagerFinished
+    );
+    QObject::connect(
+        this,
+        &ChannelAPI::indexInDeviceSetChanged,
+        this,
+        &NFMDemod::handleIndexInDeviceSetChanged
+    );
 }
 
 NFMDemod::~NFMDemod()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &NFMDemod::networkManagerFinished
+    );
     delete m_networkManager;
-	DSPEngine::instance()->getAudioDeviceManager()->removeAudioSink(&m_audioFifo);
 	m_deviceAPI->removeChannelSinkAPI(this);
-    m_deviceAPI->removeChannelSink(m_threadedChannelizer);
-    delete m_threadedChannelizer;
-    delete m_channelizer;
+    m_deviceAPI->removeChannelSink(this);
+
+    stop();
 }
 
-float arctan2(Real y, Real x)
+void NFMDemod::setDeviceAPI(DeviceAPI *deviceAPI)
 {
-	Real coeff_1 = M_PI / 4;
-	Real coeff_2 = 3 * coeff_1;
-	Real abs_y = fabs(y) + 1e-10;      // kludge to prevent 0/0 condition
-	Real angle;
-	if( x>= 0) {
-		Real r = (x - abs_y) / (x + abs_y);
-		angle = coeff_1 - coeff_1 * r;
-	} else {
-		Real r = (x + abs_y) / (abs_y - x);
-		angle = coeff_2 - coeff_1 * r;
-	}
-	if(y < 0) {
-		return(-angle);
-	} else {
-	    return(angle);
-	}
+    if (deviceAPI != m_deviceAPI)
+    {
+        m_deviceAPI->removeChannelSinkAPI(this);
+        m_deviceAPI->removeChannelSink(this);
+        m_deviceAPI = deviceAPI;
+        m_deviceAPI->addChannelSink(this);
+        m_deviceAPI->addChannelSinkAPI(this);
+    }
 }
 
-Real angleDist(Real a, Real b)
+uint32_t NFMDemod::getNumberOfDeviceStreams() const
 {
-	Real dist = b - a;
-
-	while(dist <= M_PI)
-		dist += 2 * M_PI;
-	while(dist >= M_PI)
-		dist -= 2 * M_PI;
-
-	return dist;
+    return m_deviceAPI->getNbSourceStreams();
 }
 
 void NFMDemod::feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool firstOfBurst)
 {
     (void) firstOfBurst;
-	Complex ci;
-
-	if (!m_running) {
-	    return;
-	}
-
-	m_settingsMutex.lock();
-
-	for (SampleVector::const_iterator it = begin; it != end; ++it)
-	{
-		Complex c(it->real(), it->imag());
-		c *= m_nco.nextIQ();
-
-        if (m_interpolatorDistance < 1.0f) // interpolate
-        {
-            while (!m_interpolator.interpolate(&m_interpolatorDistanceRemain, c, &ci))
-            {
-                processOneSample(ci);
-                m_interpolatorDistanceRemain += m_interpolatorDistance;
-            }
-        }
-        else // decimate
-        {
-            if (m_interpolator.decimate(&m_interpolatorDistanceRemain, c, &ci))
-            {
-                processOneSample(ci);
-                m_interpolatorDistanceRemain += m_interpolatorDistance;
-            }
-        }
-    }
-
-	m_settingsMutex.unlock();
-}
-
-void NFMDemod::processOneSample(Complex &ci)
-{
-    qint16 sample;
-
-    double magsqRaw; // = ci.real()*ci.real() + c.imag()*c.imag();
-    Real deviation;
-
-    Real demod = m_phaseDiscri.phaseDiscriminatorDelta(ci, magsqRaw, deviation);
-
-    Real magsq = magsqRaw / (SDR_RX_SCALED*SDR_RX_SCALED);
-    m_movingAverage(magsq);
-    m_magsqSum += magsq;
-
-    if (magsq > m_magsqPeak)
-    {
-        m_magsqPeak = magsq;
-    }
-
-    m_magsqCount++;
-    m_sampleCount++;
-
-    // AF processing
-
-    if (m_settings.m_deltaSquelch)
-    {
-        if (m_afSquelch.analyze(demod * m_discriCompensation))
-        {
-            m_afSquelchOpen = m_afSquelch.evaluate(); // ? m_squelchGate + m_squelchDecay : 0;
-
-            if (!m_afSquelchOpen) {
-                m_squelchDelayLine.zeroBack(m_audioSampleRate/10); // zero out evaluation period
-            }
-        }
-
-        if (m_afSquelchOpen)
-        {
-            m_squelchDelayLine.write(demod * m_discriCompensation);
-
-            if (m_squelchCount < 2*m_squelchGate) {
-                m_squelchCount++;
-            }
-        }
-        else
-        {
-            m_squelchDelayLine.write(0);
-
-            if (m_squelchCount > 0) {
-                m_squelchCount--;
-            }
-        }
-    }
-    else
-    {
-        if ((Real) m_movingAverage < m_squelchLevel)
-        {
-            m_squelchDelayLine.write(0);
-
-            if (m_squelchCount > 0) {
-                m_squelchCount--;
-            }
-        }
-        else
-        {
-            m_squelchDelayLine.write(demod * m_discriCompensation);
-
-            if (m_squelchCount < 2*m_squelchGate) {
-                m_squelchCount++;
-            }
-        }
-    }
-
-    m_squelchOpen = (m_squelchCount > m_squelchGate);
-
-    if (m_settings.m_audioMute)
-    {
-        sample = 0;
-    }
-    else
-    {
-        if (m_squelchOpen)
-        {
-            if (m_settings.m_ctcssOn)
-            {
-                Real ctcss_sample = m_ctcssLowpass.filter(demod * m_discriCompensation);
-
-                if ((m_sampleCount & 7) == 7) // decimate 48k -> 6k
-                {
-                    if (m_ctcssDetector.analyze(&ctcss_sample))
-                    {
-                        int maxToneIndex;
-
-                        if (m_ctcssDetector.getDetectedTone(maxToneIndex))
-                        {
-                            if (maxToneIndex+1 != m_ctcssIndex)
-                            {
-                                if (getMessageQueueToGUI()) {
-                                    MsgReportCTCSSFreq *msg = MsgReportCTCSSFreq::create(m_ctcssDetector.getToneSet()[maxToneIndex]);
-                                    getMessageQueueToGUI()->push(msg);
-                                }
-                                m_ctcssIndex = maxToneIndex+1;
-                            }
-                        }
-                        else
-                        {
-                            if (m_ctcssIndex != 0)
-                            {
-                                if (getMessageQueueToGUI()) {
-                                    MsgReportCTCSSFreq *msg = MsgReportCTCSSFreq::create(0);
-                                    getMessageQueueToGUI()->push(msg);
-                                }
-                                m_ctcssIndex = 0;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (m_settings.m_ctcssOn && m_ctcssIndexSelected && (m_ctcssIndexSelected != m_ctcssIndex))
-            {
-                sample = 0;
-            }
-            else
-            {
-                if (m_settings.m_highPass) {
-                    sample = m_bandpass.filter(m_squelchDelayLine.readBack(m_squelchGate)) * m_settings.m_volume;
-                } else {
-                    sample = m_lowpass.filter(m_squelchDelayLine.readBack(m_squelchGate)) * m_settings.m_volume * 301.0f;
-                }
-            }
-        }
-        else
-        {
-            if (m_ctcssIndex != 0)
-            {
-                if (getMessageQueueToGUI()) {
-                    MsgReportCTCSSFreq *msg = MsgReportCTCSSFreq::create(0);
-                    getMessageQueueToGUI()->push(msg);
-                }
-
-                m_ctcssIndex = 0;
-            }
-
-            sample = 0;
-        }
-    }
-
-
-    m_audioBuffer[m_audioBufferFill].l = sample;
-    m_audioBuffer[m_audioBufferFill].r = sample;
-    ++m_audioBufferFill;
-
-    if (m_audioBufferFill >= m_audioBuffer.size())
-    {
-        uint res = m_audioFifo.write((const quint8*)&m_audioBuffer[0], m_audioBufferFill);
-
-        if (res != m_audioBufferFill)
-        {
-            qDebug("NFMDemod::feed: %u/%u audio samples written", res, m_audioBufferFill);
-        }
-
-        m_audioBufferFill = 0;
-    }
-
-	if (m_audioBufferFill > 0)
-	{
-		uint res = m_audioFifo.write((const quint8*)&m_audioBuffer[0], m_audioBufferFill);
-
-		if (res != m_audioBufferFill)
-		{
-			qDebug("NFMDemod::feed: %u/%u tail samples written", res, m_audioBufferFill);
-		}
-
-		m_audioBufferFill = 0;
-	}
+    m_basebandSink->feed(begin, end);
 }
 
 void NFMDemod::start()
 {
+    if (m_running) {
+        return;
+    }
+
     qDebug() << "NFMDemod::start";
-    m_squelchCount = 0;
-	m_audioFifo.clear();
-	m_phaseDiscri.reset();
-	applyChannelSettings(m_inputSampleRate, m_inputFrequencyOffset, true);
-	m_running = true;
+    m_thread = new QThread();
+    m_basebandSink = new NFMDemodBaseband();
+    m_basebandSink->setFifoLabel(QString("%1 [%2:%3]")
+        .arg(m_channelId)
+        .arg(m_deviceAPI->getDeviceSetIndex())
+        .arg(getIndexInDeviceSet())
+    );
+    m_basebandSink->setChannel(this);
+    m_basebandSink->setMessageQueueToGUI(getMessageQueueToGUI());
+    m_basebandSink->moveToThread(m_thread);
+
+    QObject::connect(
+        m_thread,
+        &QThread::finished,
+        m_basebandSink,
+        &QObject::deleteLater
+    );
+    QObject::connect(
+        m_thread,
+        &QThread::finished,
+        m_thread,
+        &QThread::deleteLater
+    );
+
+    if (m_basebandSampleRate != 0) {
+        m_basebandSink->setBasebandSampleRate(m_basebandSampleRate);
+    }
+
+    m_thread->start();
+
+    NFMDemodBaseband::MsgConfigureNFMDemodBaseband *msg = NFMDemodBaseband::MsgConfigureNFMDemodBaseband::create(m_settings, true);
+    m_basebandSink->getInputMessageQueue()->push(msg);
+
+    m_running = true;
 }
 
 void NFMDemod::stop()
 {
+    if (!m_running) {
+        return;
+    }
+
     qDebug() << "NFMDemod::stop";
     m_running = false;
+	m_thread->quit();
+	m_thread->wait();
 }
 
 bool NFMDemod::handleMessage(const Message& cmd)
 {
-	if (DownChannelizer::MsgChannelizerNotification::match(cmd))
-	{
-		DownChannelizer::MsgChannelizerNotification& notif = (DownChannelizer::MsgChannelizerNotification&) cmd;
-		qDebug() << "NFMDemod::handleMessage: DownChannelizer::MsgChannelizerNotification";
-
-		applyChannelSettings(notif.getSampleRate(), notif.getFrequencyOffset());
-
-		return true;
-	}
-    else if (MsgConfigureChannelizer::match(cmd))
-    {
-        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
-
-        qDebug() << "NFMDemod::handleMessage: MsgConfigureChannelizer:"
-                 << " sampleRate: " << cfg.getSampleRate()
-                 << " centerFrequency: " << cfg.getCenterFrequency();
-
-        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-            cfg.getSampleRate(),
-            cfg.getCenterFrequency());
-
-        return true;
-    }
-	else if (MsgConfigureNFMDemod::match(cmd))
+	if (MsgConfigureNFMDemod::match(cmd))
 	{
 	    MsgConfigureNFMDemod& cfg = (MsgConfigureNFMDemod&) cmd;
 		qDebug() << "NFMDemod::handleMessage: MsgConfigureNFMDemod";
@@ -410,99 +184,47 @@ bool NFMDemod::handleMessage(const Message& cmd)
 
         return true;
 	}
-	else if (BasebandSampleSink::MsgThreadedSink::match(cmd))
+	else if (DSPSignalNotification::match(cmd))
 	{
-	    BasebandSampleSink::MsgThreadedSink& cfg = (BasebandSampleSink::MsgThreadedSink&) cmd;
-	    const QThread *thread = cfg.getThread();
-	    qDebug("NFMDemod::handleMessage: BasebandSampleSink::MsgThreadedSink: %p", thread);
+        qDebug() << "NFMDemod::handleMessage: DSPSignalNotification";
+        DSPSignalNotification& notif = (DSPSignalNotification&) cmd;
+        m_basebandSampleRate = notif.getSampleRate();
+        // Forward to the sink if any
+        if (m_running) {
+            m_basebandSink->getInputMessageQueue()->push(new DSPSignalNotification(notif));
+        }
+
+        // Forward to GUI if any
+        if (getMessageQueueToGUI()) {
+            getMessageQueueToGUI()->push(new DSPSignalNotification(notif));
+        }
+
 	    return true;
 	}
-    else if (DSPConfigureAudio::match(cmd))
+    else if (MainCore::MsgChannelDemodQuery::match(cmd))
     {
-        DSPConfigureAudio& cfg = (DSPConfigureAudio&) cmd;
-        uint32_t sampleRate = cfg.getSampleRate();
-
-        qDebug() << "NFMDemod::handleMessage: DSPConfigureAudio:"
-                << " sampleRate: " << sampleRate;
-
-        if (sampleRate != m_audioSampleRate) {
-            applyAudioSampleRate(sampleRate);
-        }
+        qDebug() << "NFMDemod::handleMessage: MsgChannelDemodQuery";
+        sendSampleRateToDemodAnalyzer();
 
         return true;
     }
-	else if (DSPSignalNotification::match(cmd))
-	{
-	    return true;
-	}
 	else
 	{
 		return false;
 	}
 }
 
-void NFMDemod::applyAudioSampleRate(int sampleRate)
+void NFMDemod::setCenterFrequency(qint64 frequency)
 {
-    qDebug("NFMDemod::applyAudioSampleRate: %d", sampleRate);
+    NFMDemodSettings settings = m_settings;
+    settings.m_inputFrequencyOffset = frequency;
+    applySettings(settings, false);
 
-    MsgConfigureChannelizer* channelConfigMsg = MsgConfigureChannelizer::create(
-            sampleRate, m_settings.m_inputFrequencyOffset);
-    m_inputMessageQueue.push(channelConfigMsg);
-
-    m_settingsMutex.lock();
-
-    m_interpolator.create(16, m_inputSampleRate, m_settings.m_rfBandwidth / 2.2f);
-    m_interpolatorDistanceRemain = 0;
-    m_interpolatorDistance = (Real) m_inputSampleRate / (Real) sampleRate;
-    m_ctcssLowpass.create(301, sampleRate, 250.0);
-    m_bandpass.create(301, sampleRate, 300.0, m_settings.m_afBandwidth);
-    m_lowpass.create(301, sampleRate, m_settings.m_afBandwidth);
-    m_squelchGate = (sampleRate / 100) * m_settings.m_squelchGate; // gate is given in 10s of ms at 48000 Hz audio sample rate
-    m_squelchCount = 0; // reset squelch open counter
-    m_ctcssDetector.setCoefficients(sampleRate/16, sampleRate/8.0f); // 0.5s / 2 Hz resolution
-
-    if (sampleRate < 16000) {
-        m_afSquelch.setCoefficients(sampleRate/2000, 600, sampleRate, 200, 0, afSqTones_lowrate); // 0.5ms test period, 300ms average span, audio SR, 100ms attack, no decay
-
-    } else {
-        m_afSquelch.setCoefficients(sampleRate/2000, 600, sampleRate, 200, 0, afSqTones); // 0.5ms test period, 300ms average span, audio SR, 100ms attack, no decay
-    }
-
-    m_discriCompensation = (sampleRate/48000.0f);
-    m_discriCompensation *= sqrt(m_discriCompensation);
-
-    m_phaseDiscri.setFMScaling(sampleRate / static_cast<float>(m_settings.m_fmDeviation));
-    m_audioFifo.setSize(sampleRate);
-    m_squelchDelayLine.resize(sampleRate/2);
-
-    m_settingsMutex.unlock();
-
-    m_audioSampleRate = sampleRate;
-}
-
-void NFMDemod::applyChannelSettings(int inputSampleRate, int inputFrequencyOffset, bool force)
-{
-    qDebug() << "NFMDemod::applyChannelSettings:"
-            << " inputSampleRate: " << inputSampleRate
-            << " inputFrequencyOffset: " << inputFrequencyOffset;
-
-    if ((inputFrequencyOffset != m_inputFrequencyOffset) ||
-        (inputSampleRate != m_inputSampleRate) || force)
+    if (m_guiMessageQueue) // forward to GUI if any
     {
-        m_nco.setFreq(-inputFrequencyOffset, inputSampleRate);
+        MsgConfigureNFMDemod *msgToGUI = MsgConfigureNFMDemod::create(settings, false);
+        m_guiMessageQueue->push(msgToGUI);
     }
-
-    if ((inputSampleRate != m_inputSampleRate) || force)
-    {
-        m_settingsMutex.lock();
-        m_interpolator.create(16, inputSampleRate, m_settings.m_rfBandwidth / 2.2f);
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorDistance =  (Real) inputSampleRate / (Real) m_audioSampleRate;
-        m_settingsMutex.unlock();
-    }
-
-    m_inputSampleRate = inputSampleRate;
-    m_inputFrequencyOffset = inputFrequencyOffset;
 }
 
 void NFMDemod::applySettings(const NFMDemodSettings& settings, bool force)
@@ -518,9 +240,13 @@ void NFMDemod::applySettings(const NFMDemodSettings& settings, bool force)
             << " m_squelch: " << settings.m_squelch
             << " m_ctcssIndex: " << settings.m_ctcssIndex
             << " m_ctcssOn: " << settings.m_ctcssOn
+            << " m_dcsOn: " << settings.m_dcsOn
+            << " m_dcsCode: " << Qt::oct << settings.m_dcsCode << Qt::dec
+            << " m_dcsPositive: " << settings.m_dcsPositive
             << " m_highPass: " << settings.m_highPass
             << " m_audioMute: " << settings.m_audioMute
             << " m_audioDeviceName: " << settings.m_audioDeviceName
+            << " m_streamIndex: " << settings.m_streamIndex
             << " m_useReverseAPI: " << settings.m_useReverseAPI
             << " m_reverseAPIAddress: " << settings.m_reverseAPIAddress
             << " m_reverseAPIPort: " << settings.m_reverseAPIPort
@@ -548,86 +274,53 @@ void NFMDemod::applySettings(const NFMDemodSettings& settings, bool force)
     if ((settings.m_title != m_settings.m_title) || force) {
         reverseAPIKeys.append("title");
     }
-
-    if ((settings.m_rfBandwidth != m_settings.m_rfBandwidth) || force)
-    {
+    if ((settings.m_rfBandwidth != m_settings.m_rfBandwidth) || force) {
         reverseAPIKeys.append("rfBandwidth");
-        m_settingsMutex.lock();
-        m_interpolator.create(16, m_inputSampleRate, settings.m_rfBandwidth / 2.2);
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorDistance =  (Real) m_inputSampleRate / (Real) m_audioSampleRate;
-        m_settingsMutex.unlock();
     }
-
-    if ((settings.m_fmDeviation != m_settings.m_fmDeviation) || force)
-    {
+    if ((settings.m_fmDeviation != m_settings.m_fmDeviation) || force) {
         reverseAPIKeys.append("fmDeviation");
-        m_phaseDiscri.setFMScaling((8.0f*m_audioSampleRate) / static_cast<float>(settings.m_fmDeviation)); // integrate 4x factor
     }
-
-    if ((settings.m_afBandwidth != m_settings.m_afBandwidth) || force)
-    {
+    if ((settings.m_afBandwidth != m_settings.m_afBandwidth) || force) {
         reverseAPIKeys.append("afBandwidth");
-        m_settingsMutex.lock();
-        m_bandpass.create(301, m_audioSampleRate, 300.0, settings.m_afBandwidth);
-        m_lowpass.create(301, m_audioSampleRate, settings.m_afBandwidth);
-        m_settingsMutex.unlock();
     }
-
-    if ((settings.m_squelchGate != m_settings.m_squelchGate) || force)
-    {
+    if ((settings.m_squelchGate != m_settings.m_squelchGate) || force) {
         reverseAPIKeys.append("squelchGate");
-        m_squelchGate = (m_audioSampleRate / 100) * settings.m_squelchGate; // gate is given in 10s of ms at 48000 Hz audio sample rate
-        m_squelchCount = 0; // reset squelch open counter
     }
-
     if ((settings.m_squelch != m_settings.m_squelch) || force) {
         reverseAPIKeys.append("squelch");
     }
     if ((settings.m_deltaSquelch != m_settings.m_deltaSquelch) || force) {
         reverseAPIKeys.append("deltaSquelch");
     }
-
-    if ((settings.m_squelch != m_settings.m_squelch) ||
-        (settings.m_deltaSquelch != m_settings.m_deltaSquelch) || force)
-    {
-        if (settings.m_deltaSquelch)
-        { // input is a value in negative centis
-            m_squelchLevel = (- settings.m_squelch) / 100.0;
-            m_afSquelch.setThreshold(m_squelchLevel);
-            m_afSquelch.reset();
-        }
-        else
-        { // input is a value in deci-Bels
-            m_squelchLevel = std::pow(10.0, settings.m_squelch / 10.0);
-            m_movingAverage.reset();
-        }
-
-        m_squelchCount = 0; // reset squelch open counter
-    }
-
-    if ((settings.m_ctcssIndex != m_settings.m_ctcssIndex) || force)
-    {
+    if ((settings.m_ctcssIndex != m_settings.m_ctcssIndex) || force) {
         reverseAPIKeys.append("ctcssIndex");
-        setSelectedCtcssIndex(settings.m_ctcssIndex);
     }
-
     if ((settings.m_highPass != m_settings.m_highPass) || force) {
         reverseAPIKeys.append("highPass");
     }
-
-    if ((settings.m_audioDeviceName != m_settings.m_audioDeviceName) || force)
-    {
+    if ((settings.m_audioDeviceName != m_settings.m_audioDeviceName) || force) {
         reverseAPIKeys.append("audioDeviceName");
-        AudioDeviceManager *audioDeviceManager = DSPEngine::instance()->getAudioDeviceManager();
-        int audioDeviceIndex = audioDeviceManager->getOutputDeviceIndex(settings.m_audioDeviceName);
-        //qDebug("AMDemod::applySettings: audioDeviceName: %s audioDeviceIndex: %d", qPrintable(settings.m_audioDeviceName), audioDeviceIndex);
-        audioDeviceManager->addAudioSink(&m_audioFifo, getInputMessageQueue(), audioDeviceIndex);
-        uint32_t audioSampleRate = audioDeviceManager->getOutputSampleRate(audioDeviceIndex);
+    }
 
-        if (m_audioSampleRate != audioSampleRate) {
-            applyAudioSampleRate(audioSampleRate);
+    if (m_settings.m_streamIndex != settings.m_streamIndex)
+    {
+        if (m_deviceAPI->getSampleMIMO()) // change of stream is possible for MIMO devices only
+        {
+            m_deviceAPI->removeChannelSinkAPI(this);
+            m_deviceAPI->removeChannelSink(this, m_settings.m_streamIndex);
+            m_deviceAPI->addChannelSink(this, settings.m_streamIndex);
+            m_deviceAPI->addChannelSinkAPI(this);
+            m_settings.m_streamIndex = settings.m_streamIndex; // make sure ChannelAPI::getStreamIndex() is consistent
+            emit streamIndexChanged(settings.m_streamIndex);
         }
+
+        reverseAPIKeys.append("streamIndex");
+    }
+
+    if (m_running)
+    {
+        NFMDemodBaseband::MsgConfigureNFMDemodBaseband *msg = NFMDemodBaseband::MsgConfigureNFMDemodBaseband::create(settings, force);
+        m_basebandSink->getInputMessageQueue()->push(msg);
     }
 
     if (settings.m_useReverseAPI)
@@ -638,6 +331,13 @@ void NFMDemod::applySettings(const NFMDemodSettings& settings, bool force)
                 (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex) ||
                 (m_settings.m_reverseAPIChannelIndex != settings.m_reverseAPIChannelIndex);
         webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+    }
+
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "settings", pipes);
+
+    if (pipes.size() > 0) {
+        sendChannelSettings(pipes, reverseAPIKeys, settings, force);
     }
 
     m_settings = settings;
@@ -658,14 +358,29 @@ bool NFMDemod::deserialize(const QByteArray& data)
         success = false;
     }
 
-    NFMDemod::MsgConfigureChannelizer* channelConfigMsg = NFMDemod::MsgConfigureChannelizer::create(
-            m_audioSampleRate, m_settings.m_inputFrequencyOffset);
-    m_inputMessageQueue.push(channelConfigMsg);
-
     MsgConfigureNFMDemod *msg = MsgConfigureNFMDemod::create(m_settings, true);
     m_inputMessageQueue.push(msg);
 
     return success;
+}
+
+void NFMDemod::sendSampleRateToDemodAnalyzer()
+{
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "reportdemod", pipes);
+
+    if (pipes.size() > 0)
+    {
+        for (const auto& pipe : pipes)
+        {
+            MessageQueue *messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+            MainCore::MsgChannelDemodReport *msg = MainCore::MsgChannelDemodReport::create(
+                this,
+                getAudioSampleRate()
+            );
+            messageQueue->push(msg);
+        }
+    }
 }
 
 int NFMDemod::webapiSettingsGet(
@@ -679,6 +394,15 @@ int NFMDemod::webapiSettingsGet(
     return 200;
 }
 
+int NFMDemod::webapiWorkspaceGet(
+        SWGSDRangel::SWGWorkspaceInfo& response,
+        QString& errorMessage)
+{
+    (void) errorMessage;
+    response.setIndex(m_settings.m_workspaceIndex);
+    return 200;
+}
+
 int NFMDemod::webapiSettingsPutPatch(
             bool force,
             const QStringList& channelSettingsKeys,
@@ -687,8 +411,27 @@ int NFMDemod::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     NFMDemodSettings settings = m_settings;
-    bool frequencyOffsetChanged = false;
+    webapiUpdateChannelSettings(settings, channelSettingsKeys, response);
 
+    MsgConfigureNFMDemod *msg = MsgConfigureNFMDemod::create(settings, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureNFMDemod *msgToGUI = MsgConfigureNFMDemod::create(settings, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatChannelSettings(response, settings);
+
+    return 200;
+}
+
+void NFMDemod::webapiUpdateChannelSettings(
+        NFMDemodSettings& settings,
+        const QStringList& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings& response)
+{
     if (channelSettingsKeys.contains("afBandwidth")) {
         settings.m_afBandwidth = response.getNfmDemodSettings()->getAfBandwidth();
     }
@@ -710,10 +453,8 @@ int NFMDemod::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("fmDeviation")) {
         settings.m_fmDeviation = response.getNfmDemodSettings()->getFmDeviation();
     }
-    if (channelSettingsKeys.contains("inputFrequencyOffset"))
-    {
+    if (channelSettingsKeys.contains("inputFrequencyOffset")) {
         settings.m_inputFrequencyOffset = response.getNfmDemodSettings()->getInputFrequencyOffset();
-        frequencyOffsetChanged = true;
     }
     if (channelSettingsKeys.contains("rfBandwidth")) {
         settings.m_rfBandwidth = response.getNfmDemodSettings()->getRfBandwidth();
@@ -736,6 +477,9 @@ int NFMDemod::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("audioDeviceName")) {
         settings.m_audioDeviceName = *response.getNfmDemodSettings()->getAudioDeviceName();
     }
+    if (channelSettingsKeys.contains("streamIndex")) {
+        settings.m_streamIndex = response.getNfmDemodSettings()->getStreamIndex();
+    }
     if (channelSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getNfmDemodSettings()->getUseReverseApi() != 0;
     }
@@ -751,26 +495,12 @@ int NFMDemod::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("reverseAPIChannelIndex")) {
         settings.m_reverseAPIChannelIndex = response.getNfmDemodSettings()->getReverseApiChannelIndex();
     }
-
-    if (frequencyOffsetChanged)
-    {
-        MsgConfigureChannelizer* channelConfigMsg = MsgConfigureChannelizer::create(
-                m_audioSampleRate, settings.m_inputFrequencyOffset);
-        m_inputMessageQueue.push(channelConfigMsg);
+    if (settings.m_channelMarker && channelSettingsKeys.contains("channelMarker")) {
+        settings.m_channelMarker->updateFrom(channelSettingsKeys, response.getNfmDemodSettings()->getChannelMarker());
     }
-
-    MsgConfigureNFMDemod *msg = MsgConfigureNFMDemod::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureNFMDemod *msgToGUI = MsgConfigureNFMDemod::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
+    if (settings.m_rollupState && channelSettingsKeys.contains("rollupState")) {
+        settings.m_rollupState->updateFrom(channelSettingsKeys, response.getNfmDemodSettings()->getRollupState());
     }
-
-    webapiFormatChannelSettings(response, settings);
-
-    return 200;
 }
 
 int NFMDemod::webapiReportGet(
@@ -812,6 +542,7 @@ void NFMDemod::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& resp
         response.getNfmDemodSettings()->setAudioDeviceName(new QString(settings.m_audioDeviceName));
     }
 
+    response.getNfmDemodSettings()->setStreamIndex(settings.m_streamIndex);
     response.getNfmDemodSettings()->setUseReverseApi(settings.m_useReverseAPI ? 1 : 0);
 
     if (response.getNfmDemodSettings()->getReverseApiAddress()) {
@@ -823,6 +554,34 @@ void NFMDemod::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& resp
     response.getNfmDemodSettings()->setReverseApiPort(settings.m_reverseAPIPort);
     response.getNfmDemodSettings()->setReverseApiDeviceIndex(settings.m_reverseAPIDeviceIndex);
     response.getNfmDemodSettings()->setReverseApiChannelIndex(settings.m_reverseAPIChannelIndex);
+
+    if (settings.m_channelMarker)
+    {
+        if (response.getNfmDemodSettings()->getChannelMarker())
+        {
+            settings.m_channelMarker->formatTo(response.getNfmDemodSettings()->getChannelMarker());
+        }
+        else
+        {
+            SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+            settings.m_channelMarker->formatTo(swgChannelMarker);
+            response.getNfmDemodSettings()->setChannelMarker(swgChannelMarker);
+        }
+    }
+
+    if (settings.m_rollupState)
+    {
+        if (response.getNfmDemodSettings()->getRollupState())
+        {
+            settings.m_rollupState->formatTo(response.getNfmDemodSettings()->getRollupState());
+        }
+        else
+        {
+            SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+            settings.m_rollupState->formatTo(swgRollupState);
+            response.getNfmDemodSettings()->setRollupState(swgRollupState);
+        }
+    }
 }
 
 void NFMDemod::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response)
@@ -832,19 +591,87 @@ void NFMDemod::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response
     getMagSqLevels(magsqAvg, magsqPeak, nbMagsqSamples);
 
     response.getNfmDemodReport()->setChannelPowerDb(CalcDb::dbPower(magsqAvg));
-    response.getNfmDemodReport()->setCtcssTone(m_settings.m_ctcssOn ? (m_ctcssIndex ? 0 : m_ctcssDetector.getToneSet()[m_ctcssIndex-1]) : 0);
-    response.getNfmDemodReport()->setSquelch(m_squelchOpen ? 1 : 0);
-    response.getNfmDemodReport()->setAudioSampleRate(m_audioSampleRate);
-    response.getNfmDemodReport()->setChannelSampleRate(m_inputSampleRate);
+
+    if (m_running)
+    {
+        int nbCtcssToneFrequencies = CTCSSDetector::getNTones();
+        const Real *ctcssToneFrequencies = CTCSSDetector::getToneSet();
+        response.getNfmDemodReport()->setCtcssTone(
+            m_settings.m_ctcssOn ?
+                m_settings.m_ctcssIndex < 0 ?
+                    0
+                    : m_settings.m_ctcssIndex < nbCtcssToneFrequencies ?
+                        ctcssToneFrequencies[m_settings.m_ctcssIndex-1]
+                        : 0
+                : 0
+        );
+        response.getNfmDemodReport()->setSquelch(m_basebandSink->getSquelchOpen() ? 1 : 0);
+        response.getNfmDemodReport()->setAudioSampleRate(m_basebandSink->getAudioSampleRate());
+        response.getNfmDemodReport()->setChannelSampleRate(m_basebandSink->getChannelSampleRate());
+    }
 }
 
 void NFMDemod::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const NFMDemodSettings& settings, bool force)
 {
     SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
-    swgChannelSettings->setDirection(0); // single sink (Rx)
+    webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+
+    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
+            .arg(settings.m_reverseAPIAddress)
+            .arg(settings.m_reverseAPIPort)
+            .arg(settings.m_reverseAPIDeviceIndex)
+            .arg(settings.m_reverseAPIChannelIndex);
+    m_networkRequest.setUrl(QUrl(channelSettingsURL));
+    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QBuffer *buffer = new QBuffer();
+    buffer->open((QBuffer::ReadWrite));
+    buffer->write(swgChannelSettings->asJson().toUtf8());
+    buffer->seek(0);
+
+    // Always use PATCH to avoid passing reverse API settings
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
+
+    delete swgChannelSettings;
+}
+
+void NFMDemod::sendChannelSettings(
+    const QList<ObjectPipe*>& pipes,
+    QList<QString>& channelSettingsKeys,
+    const NFMDemodSettings& settings,
+    bool force)
+{
+    for (const auto& pipe : pipes)
+    {
+        MessageQueue *messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+
+        if (messageQueue)
+        {
+            SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+            webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+            MainCore::MsgChannelSettings *msg = MainCore::MsgChannelSettings::create(
+                this,
+                channelSettingsKeys,
+                swgChannelSettings,
+                force
+            );
+            messageQueue->push(msg);
+        }
+    }
+}
+
+void NFMDemod::webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const NFMDemodSettings& settings,
+        bool force
+)
+{
+    swgChannelSettings->setDirection(0); // Single sink (Rx)
     swgChannelSettings->setOriginatorChannelIndex(getIndexInDeviceSet());
     swgChannelSettings->setOriginatorDeviceSetIndex(getDeviceSetIndex());
-    swgChannelSettings->setChannelType(new QString("NFMDemod"));
+    swgChannelSettings->setChannelType(new QString(m_channelId));
     swgChannelSettings->setNfmDemodSettings(new SWGSDRangel::SWGNFMDemodSettings());
     SWGSDRangel::SWGNFMDemodSettings *swgNFMDemodSettings = swgChannelSettings->getNfmDemodSettings();
 
@@ -895,24 +722,23 @@ void NFMDemod::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, co
     if (channelSettingsKeys.contains("audioDeviceName") || force) {
         swgNFMDemodSettings->setAudioDeviceName(new QString(settings.m_audioDeviceName));
     }
+    if (channelSettingsKeys.contains("streamIndex") || force) {
+        swgNFMDemodSettings->setStreamIndex(settings.m_streamIndex);
+    }
 
-    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
-            .arg(settings.m_reverseAPIAddress)
-            .arg(settings.m_reverseAPIPort)
-            .arg(settings.m_reverseAPIDeviceIndex)
-            .arg(settings.m_reverseAPIChannelIndex);
-    m_networkRequest.setUrl(QUrl(channelSettingsURL));
-    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    if (settings.m_channelMarker && (channelSettingsKeys.contains("channelMarker") || force))
+    {
+        SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+        settings.m_channelMarker->formatTo(swgChannelMarker);
+        swgNFMDemodSettings->setChannelMarker(swgChannelMarker);
+    }
 
-    QBuffer *buffer=new QBuffer();
-    buffer->open((QBuffer::ReadWrite));
-    buffer->write(swgChannelSettings->asJson().toUtf8());
-    buffer->seek(0);
-
-    // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
-
-    delete swgChannelSettings;
+    if (settings.m_rollupState && (channelSettingsKeys.contains("rollupState") || force))
+    {
+        SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+        settings.m_rollupState->formatTo(swgRollupState);
+        swgNFMDemodSettings->setRollupState(swgRollupState);
+    }
 }
 
 void NFMDemod::networkManagerFinished(QNetworkReply *reply)
@@ -925,10 +751,27 @@ void NFMDemod::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("NFMDemod::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    }
+
+    reply->deleteLater();
+}
+
+void NFMDemod::handleIndexInDeviceSetChanged(int index)
+{
+    if (!m_running || (index < 0)) {
         return;
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("NFMDemod::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    QString fifoLabel = QString("%1 [%2:%3]")
+        .arg(m_channelId)
+        .arg(m_deviceAPI->getDeviceSetIndex())
+        .arg(index);
+    m_basebandSink->setFifoLabel(fifoLabel);
+    m_basebandSink->setAudioFifoLabel(fifoLabel);
 }

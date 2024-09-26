@@ -9,6 +9,10 @@ AMDemodSettings:
       description: channel RF bandwidth in Hz (floors to next 100 Hz)
       type: number
       format: float
+    afBandwidth:
+      description: AF bandwidth in Hz
+      type: number
+      format: float
     squelch:
       description: power squelch threshold in decibels
       type: number
@@ -33,6 +37,16 @@ AMDemodSettings:
     syncAMOperation:
       description: Synchronous AM sidebands mode (DSB, USB, LSB)
       type: integer
+    frequencyMode:
+      description: (0 for Offset, 1 for MW, 2 for 25k, 3 for 8.33k)
+      type: integer
+    frequency:
+      description: Channel center frequency
+      type: integer
+      format: int64
+    snap:
+      description: Snap channel marker to channel center frequencies
+      type: integer
     streamIndex:
       description: MIMO channel. Not relevant when connected to SI (single Rx).
       type: integer
@@ -47,6 +61,10 @@ AMDemodSettings:
       type: integer
     reverseAPIChannelIndex:
       type: integer
+    channelMarker:
+      $ref: "http://swgserver:8081/api/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "http://swgserver:8081/api/swagger/include/RollupState.yaml#/RollupState"
 
 AMDemodReport:
   description: AMDemod

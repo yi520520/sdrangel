@@ -8,16 +8,13 @@ This input sample source plugin gets its samples from a [BladeRF 2.0 micro devic
 
 The plugin will be built only if the [BladeRF host library](https://github.com/Nuand/bladeRF) is installed in your system. If you build it from source and install it in a custom location say: `/opt/install/libbladeRF` you will have to add `-DBLADERF_INCLUDE_DIR=/opt/install/libbladeRF` to the cmake command line.
 
-Note that libbladeRF v2 with git tag 2018.10-rc1 should be used (official release) thus:
-
-  - The FX3 firmware version should be v2.3.1
-  - The FPGA image version should be v0.9.0
-
 The FPGA .rbf file should be copied to the folder where the `sdrangel` binary resides. You can download FPGA images from [here](https://www.nuand.com/fpga_images/)
 
 The BladeRF Host library is also provided by many Linux distributions (check its version) and is built in the SDRangel binary releases.
 
 <h2>Interface</h2>
+
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
 
 ![BladeRF2 input plugin GUI](../../../doc/img/BladeRF2Input_plugin.png)
 
@@ -36,10 +33,6 @@ Device start / stop button.
   - Blue triangle icon: device is ready and can be started
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon, plug back in and start again.
-
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
 
 <h4>1.4: Stream sample rate</h4>
 
@@ -64,33 +57,7 @@ This is the Rx filter bandwidth in kHz. Minimum and maximum values are adjusted 
 
 <h3>5: Transverter mode open dialog</h3>
 
-This button opens a dialog to set the transverter mode frequency translation options:
-
-![Input stream transverter dialog](../../../doc/img/RTLSDR_plugin_xvrt.png)
-
-Note that if you mouse over the button a tooltip appears that displays the translating frequency and if translation is enabled or disabled. When the frequency translation is enabled the button is lit.
-
-<h4>5.1: Translating frequency</h4>
-
-You can set the translating frequency in Hz with this dial. Use the wheels to adjust the sample rate. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
-
-The frequency set in the device is the frequency on the main dial (1) minus this frequency. Thus it is positive for down converters and negative for up converters.
-
-For example a mixer at 120 MHz for HF operation you would set the value to -120,000,000 Hz so that if the main dial frequency is set at 7,130 kHz the PlutoSDR will be set to 127.130 MHz.
-
-If you use a down converter to receive the 6 cm band narrowband center frequency of 5670 MHz at 432 MHz you would set the translating frequency to 5760 - 432 = 5328 MHz thus dial +5,328,000,000 Hz.
-
-For bands even higher in the frequency spectrum the GHz digits are not really significant so you can have them set at 1 GHz. Thus to receive the 10368 MHz frequency at 432 MHz you would set the translating frequency to 1368 - 432 = 936 MHz. Note that in this case the frequency of the LO used in the mixer of the transverter is set at 9936 MHz.
-
-The Hz precision allows a fine tuning of the transverter LO offset
-
-<h4>5.2: Translating frequency enable/disable</h4>
-
-Use this toggle button to activate or deactivate the frequency translation
-
-<h4>5.3: Confirmation buttons</h4>
-
-Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes.
+This button opens a dialog to set the transverter mode frequency translation options. The details about this dialog can be found [here](../../../sdrgui/gui/transverterdialog.md)
 
 <h3>6A: Device sample rate / Baseband sample rate input toggle</h3>
 
@@ -109,7 +76,7 @@ Use the wheels to adjust the sample rate. Left click on a digit sets the cursor 
 
 The ADC sample rate is the same for all Rx channels. The GUI of the sibling channel if present is adjusted automatically.
 
-<h3>7: Baseband center frequency position relative the the BladeRF Rx center frequency</h3>
+<h3>7: Baseband center frequency position relative to the BladeRF Rx center frequency</h3>
 
 Possible values are:
 
@@ -126,7 +93,7 @@ With SR as the sample rate before decimation Fc is calculated as:
 
 The I/Q stream from the BladeRF ADC is downsampled by a power of two before being sent to the passband. Possible values are increasing powers of two: 1 (no decimation), 2, 4, 8, 16, 32, 64.
 
-<h3>9: Gain mode</h2>
+<h3>9: Gain mode</h3>
 
 This selects the gain processing in use. Values are fetched automatically from the device. Normal values are
 

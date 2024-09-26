@@ -1,5 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
+// Copyright (C) 2021-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,49 +27,31 @@
 #include <QDebug>
 
 #include "device/deviceuiset.h"
-#include "dsp/upchannelizer.h"
 
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 #include "util/db.h"
 #include "dsp/dspengine.h"
+#include "dsp/cwkeyer.h"
+#include "dsp/dspcommands.h"
 #include "gui/crightclickenabler.h"
 #include "gui/audioselectdialog.h"
 #include "gui/basicchannelsettingsdialog.h"
-#include "mainwindow.h"
+#include "gui/dialpopup.h"
+#include "gui/dialogpositioner.h"
+#include "maincore.h"
 
 #include "ui_ammodgui.h"
 #include "ammodgui.h"
 
 AMModGUI* AMModGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx)
 {
-	AMModGUI* gui = new AMModGUI(pluginAPI, deviceUISet, channelTx);
+	auto* gui = new AMModGUI(pluginAPI, deviceUISet, channelTx);
 	return gui;
 }
 
 void AMModGUI::destroy()
 {
     delete this;
-}
-
-void AMModGUI::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString AMModGUI::getName() const
-{
-	return objectName();
-}
-
-qint64 AMModGUI::getCenterFrequency() const {
-	return m_channelMarker.getCenterFrequency();
-}
-
-void AMModGUI::setCenterFrequency(qint64 centerFrequency)
-{
-	m_channelMarker.setCenterFrequency(centerFrequency);
-	applySettings();
 }
 
 void AMModGUI::resetToDefaults()
@@ -95,32 +82,45 @@ bool AMModGUI::handleMessage(const Message& message)
 {
     if (AMMod::MsgReportFileSourceStreamData::match(message))
     {
-        m_recordSampleRate = ((AMMod::MsgReportFileSourceStreamData&)message).getSampleRate();
-        m_recordLength = ((AMMod::MsgReportFileSourceStreamData&)message).getRecordLength();
+        auto& cmd = (const AMMod::MsgReportFileSourceStreamData&) message;
+        m_recordSampleRate = cmd.getSampleRate();
+        m_recordLength = cmd.getRecordLength();
         m_samplesCount = 0;
         updateWithStreamData();
         return true;
     }
     else if (AMMod::MsgReportFileSourceStreamTiming::match(message))
     {
-        m_samplesCount = ((AMMod::MsgReportFileSourceStreamTiming&)message).getSamplesCount();
+        auto& cmd = (const AMMod::MsgReportFileSourceStreamTiming&) message;
+        m_samplesCount = (int) cmd.getSamplesCount();
         updateWithStreamTime();
         return true;
     }
     else if (AMMod::MsgConfigureAMMod::match(message))
     {
-        const AMMod::MsgConfigureAMMod& cfg = (AMMod::MsgConfigureAMMod&) message;
+        auto& cfg = (const AMMod::MsgConfigureAMMod&) message;
         m_settings = cfg.getSettings();
         blockApplySettings(true);
+        m_channelMarker.updateSettings(static_cast<const ChannelMarker*>(m_settings.m_channelMarker));
         displaySettings();
         blockApplySettings(false);
         return true;
     }
     else if (CWKeyer::MsgConfigureCWKeyer::match(message))
     {
-        const CWKeyer::MsgConfigureCWKeyer& cfg = (CWKeyer::MsgConfigureCWKeyer&) message;
+        auto& cfg = (const CWKeyer::MsgConfigureCWKeyer&) message;
         ui->cwKeyerGUI->setSettings(cfg.getSettings());
         ui->cwKeyerGUI->displaySettings();
+        return true;
+    }
+    else if (DSPSignalNotification::match(message))
+    {
+        auto& notif = (const DSPSignalNotification&) message;
+        m_deviceCenterFrequency = notif.getCenterFrequency();
+        m_basebandSampleRate = notif.getSampleRate();
+        ui->deltaFrequency->setValueRange(false, 7, -m_basebandSampleRate/2, m_basebandSampleRate/2);
+        ui->deltaFrequencyLabel->setToolTip(tr("Range %1 %L2 Hz").arg(QChar(0xB1)).arg(m_basebandSampleRate/2));
+        updateAbsoluteCenterFrequency();
         return true;
     }
     else
@@ -140,7 +140,7 @@ void AMModGUI::handleSourceMessages()
 {
     Message* message;
 
-    while ((message = getInputMessageQueue()->pop()) != 0)
+    while ((message = getInputMessageQueue()->pop()) != nullptr)
     {
         if (handleMessage(*message))
         {
@@ -151,15 +151,16 @@ void AMModGUI::handleSourceMessages()
 
 void AMModGUI::on_deltaFrequency_changed(qint64 value)
 {
-    m_channelMarker.setCenterFrequency(value);
+    m_channelMarker.setCenterFrequency((int) value);
     m_settings.m_inputFrequencyOffset = value;
+    updateAbsoluteCenterFrequency();
     applySettings();
 }
 
 void AMModGUI::on_rfBW_valueChanged(int value)
 {
 	ui->rfBWText->setText(QString("%1 kHz").arg(value / 10.0, 0, 'f', 1));
-	m_settings.m_rfBandwidth = value * 100.0;
+	m_settings.m_rfBandwidth = (float) value * 100.0f;
 	m_channelMarker.setBandwidth(value * 100);
 	applySettings();
 }
@@ -167,21 +168,21 @@ void AMModGUI::on_rfBW_valueChanged(int value)
 void AMModGUI::on_modPercent_valueChanged(int value)
 {
 	ui->modPercentText->setText(QString("%1").arg(value));
-	m_settings.m_modFactor = value / 100.0;
+	m_settings.m_modFactor = (float) value / 100.0f;
 	applySettings();
 }
 
 void AMModGUI::on_volume_valueChanged(int value)
 {
     ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
-    m_settings.m_volumeFactor = value / 10.0;
+    m_settings.m_volumeFactor = (float) value / 10.0f;
     applySettings();
 }
 
 void AMModGUI::on_toneFrequency_valueChanged(int value)
 {
     ui->toneFrequencyText->setText(QString("%1k").arg(value / 100.0, 0, 'f', 2));
-    m_settings.m_toneFrequency = value * 10.0;
+    m_settings.m_toneFrequency = (float) value * 10.0f;
     applySettings();
 }
 
@@ -245,7 +246,7 @@ void AMModGUI::on_feedbackEnable_toggled(bool checked)
 void AMModGUI::on_feedbackVolume_valueChanged(int value)
 {
     ui->feedbackVolumeText->setText(QString("%1").arg(value / 100.0, 0, 'f', 2));
-    m_settings.m_feedbackVolumeFactor = value / 100.0;
+    m_settings.m_feedbackVolumeFactor = (float) value / 100.0f;
     applySettings();
 }
 
@@ -266,7 +267,7 @@ void AMModGUI::on_showFileDialog_clicked(bool checked)
 {
     (void) checked;
     QString fileName = QFileDialog::getOpenFileName(this,
-        tr("Open raw audio file"), ".", tr("Raw audio Files (*.raw)"), 0, QFileDialog::DontUseNativeDialog);
+        tr("Open raw audio file"), ".", tr("Raw audio Files (*.raw)"), nullptr, QFileDialog::DontUseNativeDialog);
 
     if (fileName != "")
     {
@@ -284,15 +285,18 @@ void AMModGUI::configureFileName()
     m_amMod->getInputMessageQueue()->push(message);
 }
 
-void AMModGUI::onWidgetRolled(QWidget* widget, bool rollDown)
+void AMModGUI::onWidgetRolled(const QWidget* widget, bool rollDown)
 {
     (void) widget;
     (void) rollDown;
+
+    getRollupContents()->saveState(m_rollupState);
+    applySettings();
 }
 
 void AMModGUI::onMenuDialogCalled(const QPoint &p)
 {
-    if (m_contextMenuType == ContextMenuChannelSettings)
+    if (m_contextMenuType == ContextMenuType::ContextMenuChannelSettings)
     {
         BasicChannelSettingsDialog dialog(&m_channelMarker, this);
         dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
@@ -300,10 +304,18 @@ void AMModGUI::onMenuDialogCalled(const QPoint &p)
         dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
         dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
         dialog.setReverseAPIChannelIndex(m_settings.m_reverseAPIChannelIndex);
+        dialog.setDefaultTitle(m_displayedName);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            dialog.setNumberOfStreams(m_amMod->getNumberOfDeviceStreams());
+            dialog.setStreamIndex(m_settings.m_streamIndex);
+        }
+
         dialog.move(p);
+        new DialogPositioner(&dialog, false);
         dialog.exec();
 
-        m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
         m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
         m_settings.m_title = m_channelMarker.getTitle();
         m_settings.m_useReverseAPI = dialog.useReverseAPI();
@@ -313,7 +325,16 @@ void AMModGUI::onMenuDialogCalled(const QPoint &p)
         m_settings.m_reverseAPIChannelIndex = dialog.getReverseAPIChannelIndex();
 
         setWindowTitle(m_settings.m_title);
+        setTitle(m_channelMarker.getTitle());
         setTitleColor(m_settings.m_rgbColor);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            m_settings.m_streamIndex = dialog.getSelectedStreamIndex();
+            m_channelMarker.clearStreamIndexes();
+            m_channelMarker.addStreamIndex(m_settings.m_streamIndex);
+            updateIndexLabel();
+        }
 
         applySettings();
     }
@@ -322,33 +343,41 @@ void AMModGUI::onMenuDialogCalled(const QPoint &p)
 }
 
 AMModGUI::AMModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent) :
-	RollupWidget(parent),
+	ChannelGUI(parent),
 	ui(new Ui::AMModGUI),
 	m_pluginAPI(pluginAPI),
 	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
+    m_deviceCenterFrequency(0),
+    m_basebandSampleRate(1),
 	m_doApplySettings(true),
     m_recordLength(0),
     m_recordSampleRate(48000),
     m_samplesCount(0),
+    m_audioSampleRate(-1),
+    m_feedbackAudioSampleRate(-1),
     m_tickCount(0),
     m_enableNavTime(false)
 {
-	ui->setupUi(this);
 	setAttribute(Qt::WA_DeleteOnClose, true);
-	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
+    m_helpURL = "plugins/channeltx/modam/readme.md";
+    RollupContents *rollupContents = getRollupContents();
+	ui->setupUi(rollupContents);
+    setSizePolicy(rollupContents->sizePolicy());
+    rollupContents->arrangeRollups();
+	connect(rollupContents, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
 	connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
 
-	m_amMod = (AMMod*) channelTx; //new AMMod(m_deviceUISet->m_deviceSinkAPI);
-	m_amMod->setMessageQueueToGUI(getInputMessageQueue());
+	m_amMod = (AMMod*) channelTx;
+	m_amMod->setMessageQueueToGUI(AMModGUI::getInputMessageQueue());
 
-	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
+	connect(&MainCore::instance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
 
-    CRightClickEnabler *audioMuteRightClickEnabler = new CRightClickEnabler(ui->mic);
-    connect(audioMuteRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(audioSelect()));
+    m_audioMuteRightClickEnabler = new CRightClickEnabler(ui->mic);
+    connect(m_audioMuteRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(audioSelect(const QPoint &)));
 
-    CRightClickEnabler *feedbackRightClickEnabler = new CRightClickEnabler(ui->feedbackEnable);
-    connect(feedbackRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(audioFeedbackSelect()));
+    m_feedbackRightClickEnabler = new CRightClickEnabler(ui->feedbackEnable);
+    connect(m_feedbackRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(audioFeedbackSelect(const QPoint &)));
 
     ui->deltaFrequencyLabel->setText(QString("%1f").arg(QChar(0x94, 0x03)));
     ui->deltaFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
@@ -364,11 +393,10 @@ AMModGUI::AMModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampl
 	m_channelMarker.setVisible(true); // activate signal on the last setting only
 
 	m_settings.setChannelMarker(&m_channelMarker);
+    m_settings.setRollupState(&m_rollupState);
 	m_settings.setCWKeyerGUI(ui->cwKeyerGUI);
 
-	m_deviceUISet->registerTxChannelInstance(AMMod::m_channelIdURI, this);
 	m_deviceUISet->addChannelMarker(&m_channelMarker);
-	m_deviceUISet->addRollupWidget(this);
 
 	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
 
@@ -380,18 +408,21 @@ AMModGUI::AMModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampl
 
     ui->cwKeyerGUI->setCWKeyer(m_amMod->getCWKeyer());
 
-	connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
-	connect(m_amMod, SIGNAL(levelChanged(qreal, qreal, int)), ui->volumeMeter, SLOT(levelChanged(qreal, qreal, int)));
+	connect(AMModGUI::getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
+    m_amMod->setLevelMeter(ui->volumeMeter);
 
 	displaySettings();
+    makeUIConnections();
     applySettings(true);
+    DialPopup::addPopupsToChildDials(this);
+    m_resizer.enableChildMouseTracking();
 }
 
 AMModGUI::~AMModGUI()
 {
-    m_deviceUISet->removeTxChannelInstance(this);
-	delete m_amMod; // TODO: check this: when the GUI closes it has to delete the modulator
 	delete ui;
+    delete m_audioMuteRightClickEnabler;
+    delete m_feedbackRightClickEnabler;
 }
 
 void AMModGUI::blockApplySettings(bool block)
@@ -404,11 +435,6 @@ void AMModGUI::applySettings(bool force)
 	if (m_doApplySettings)
 	{
 		setTitleColor(m_channelMarker.getColor());
-
-		AMMod::MsgConfigureChannelizer *msgConfigure = AMMod::MsgConfigureChannelizer::create(
-		        48000, m_channelMarker.getCenterFrequency());
-        m_amMod->getInputMessageQueue()->push(msgConfigure);
-
         AMMod::MsgConfigureAMMod* message = AMMod::MsgConfigureAMMod::create( m_settings, force);
         m_amMod->getInputMessageQueue()->push(message);
 	}
@@ -417,30 +443,31 @@ void AMModGUI::applySettings(bool force)
 void AMModGUI::displaySettings()
 {
     m_channelMarker.blockSignals(true);
-    m_channelMarker.setCenterFrequency(m_settings.m_inputFrequencyOffset);
+    m_channelMarker.setCenterFrequency((int) m_settings.m_inputFrequencyOffset);
     m_channelMarker.setTitle(m_settings.m_title);
-    m_channelMarker.setBandwidth(m_settings.m_rfBandwidth);
+    m_channelMarker.setBandwidth((int) m_settings.m_rfBandwidth);
     m_channelMarker.blockSignals(false);
     m_channelMarker.setColor(m_settings.m_rgbColor); // activate signal on the last setting only
 
     setTitleColor(m_settings.m_rgbColor);
     setWindowTitle(m_channelMarker.getTitle());
+    setTitle(m_channelMarker.getTitle());
 
     blockApplySettings(true);
 
     ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
 
-    ui->rfBW->setValue(roundf(m_settings.m_rfBandwidth / 100.0));
+    ui->rfBW->setValue((int) roundf(m_settings.m_rfBandwidth / 100.f));
     ui->rfBWText->setText(QString("%1 kHz").arg(m_settings.m_rfBandwidth / 1000.0, 0, 'f', 1));
 
-    int modPercent = roundf(m_settings.m_modFactor * 100.0);
+    auto modPercent = (int) roundf(m_settings.m_modFactor * 100.0f);
     ui->modPercent->setValue(modPercent);
     ui->modPercentText->setText(QString("%1").arg(modPercent));
 
-    ui->toneFrequency->setValue(roundf(m_settings.m_toneFrequency / 10.0));
+    ui->toneFrequency->setValue((int) roundf(m_settings.m_toneFrequency / 10.0f));
     ui->toneFrequencyText->setText(QString("%1k").arg(m_settings.m_toneFrequency / 1000.0, 0, 'f', 2));
 
-    ui->volume->setValue(roundf(m_settings.m_volumeFactor * 10.0));
+    ui->volume->setValue((int) roundf(m_settings.m_volumeFactor * 10.0f));
     ui->volumeText->setText(QString("%1").arg(m_settings.m_volumeFactor, 0, 'f', 1));
 
     ui->channelMute->setChecked(m_settings.m_channelMute);
@@ -457,26 +484,34 @@ void AMModGUI::displaySettings()
     ui->morseKeyer->setChecked(m_settings.m_modAFInput == AMModSettings::AMModInputAF::AMModInputCWTone);
 
     ui->feedbackEnable->setChecked(m_settings.m_feedbackAudioEnable);
-    ui->feedbackVolume->setValue(roundf(m_settings.m_feedbackVolumeFactor * 100.0));
+    ui->feedbackVolume->setValue((int) roundf(m_settings.m_feedbackVolumeFactor * 100.0f));
     ui->feedbackVolumeText->setText(QString("%1").arg(m_settings.m_feedbackVolumeFactor, 0, 'f', 2));
 
+    updateIndexLabel();
+
+    getRollupContents()->restoreState(m_rollupState);
+    updateAbsoluteCenterFrequency();
     blockApplySettings(false);
 }
 
-void AMModGUI::leaveEvent(QEvent*)
+void AMModGUI::leaveEvent(QEvent* event)
 {
 	m_channelMarker.setHighlighted(false);
+    ChannelGUI::leaveEvent(event);
 }
 
-void AMModGUI::enterEvent(QEvent*)
+void AMModGUI::enterEvent(EnterEventType* event)
 {
 	m_channelMarker.setHighlighted(true);
+    ChannelGUI::enterEvent(event);
 }
 
-void AMModGUI::audioSelect()
+void AMModGUI::audioSelect(const QPoint& p)
 {
     qDebug("AMModGUI::audioSelect");
     AudioSelectDialog audioSelect(DSPEngine::instance()->getAudioDeviceManager(), m_settings.m_audioDeviceName, true); // true for input
+    audioSelect.move(p);
+    new DialogPositioner(&audioSelect, false);
     audioSelect.exec();
 
     if (audioSelect.m_selected)
@@ -486,10 +521,12 @@ void AMModGUI::audioSelect()
     }
 }
 
-void AMModGUI::audioFeedbackSelect()
+void AMModGUI::audioFeedbackSelect(const QPoint& p)
 {
     qDebug("AMModGUI::audioFeedbackSelect");
     AudioSelectDialog audioSelect(DSPEngine::instance()->getAudioDeviceManager(), m_settings.m_audioDeviceName, false); // false for output
+    audioSelect.move(p);
+
     audioSelect.exec();
 
     if (audioSelect.m_selected)
@@ -504,6 +541,32 @@ void AMModGUI::tick()
     double powDb = CalcDb::dbPower(m_amMod->getMagSq());
 	m_channelPowerDbAvg(powDb);
 	ui->channelPower->setText(tr("%1 dB").arg(m_channelPowerDbAvg.asDouble(), 0, 'f', 1));
+
+    int audioSampleRate = m_amMod->getAudioSampleRate();
+
+    if (audioSampleRate != m_audioSampleRate)
+    {
+        if (audioSampleRate < 0) {
+            ui->mic->setColor(QColor("red"));
+        } else {
+            ui->mic->resetColor();
+        }
+
+        m_audioSampleRate = audioSampleRate;
+    }
+
+    int feedbackAudioSampleRate = m_amMod->getFeedbackAudioSampleRate();
+
+    if (feedbackAudioSampleRate != m_feedbackAudioSampleRate)
+    {
+        if (feedbackAudioSampleRate < 0) {
+            ui->feedbackEnable->setStyleSheet("QToolButton { background-color : red; }");
+        } else {
+            ui->feedbackEnable->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
+        }
+
+        m_feedbackAudioSampleRate = feedbackAudioSampleRate;
+    }
 
     if (((++m_tickCount & 0xf) == 0) && (m_settings.m_modAFInput == AMModSettings::AMModInputFile))
     {
@@ -544,4 +607,28 @@ void AMModGUI::updateWithStreamTime()
         float posRatio = (float) t_sec / (float) m_recordLength;
         ui->navTimeSlider->setValue((int) (posRatio * 100.0));
     }
+}
+
+void AMModGUI::makeUIConnections() const
+{
+    QObject::connect(ui->deltaFrequency, &ValueDialZ::changed, this, &AMModGUI::on_deltaFrequency_changed);
+    QObject::connect(ui->rfBW, &QSlider::valueChanged, this, &AMModGUI::on_rfBW_valueChanged);
+    QObject::connect(ui->modPercent, &QSlider::valueChanged, this, &AMModGUI::on_modPercent_valueChanged);
+    QObject::connect(ui->volume, &QDial::valueChanged, this, &AMModGUI::on_volume_valueChanged);
+    QObject::connect(ui->channelMute, &QToolButton::toggled, this, &AMModGUI::on_channelMute_toggled);
+    QObject::connect(ui->tone, &ButtonSwitch::toggled, this, &AMModGUI::on_tone_toggled);
+    QObject::connect(ui->toneFrequency, &QDial::valueChanged, this, &AMModGUI::on_toneFrequency_valueChanged);
+    QObject::connect(ui->mic, &ButtonSwitch::toggled, this, &AMModGUI::on_mic_toggled);
+    QObject::connect(ui->play, &ButtonSwitch::toggled, this, &AMModGUI::on_play_toggled);
+    QObject::connect(ui->morseKeyer, &ButtonSwitch::toggled, this, &AMModGUI::on_morseKeyer_toggled);
+    QObject::connect(ui->playLoop, &ButtonSwitch::toggled, this, &AMModGUI::on_playLoop_toggled);
+    QObject::connect(ui->navTimeSlider, &QSlider::valueChanged, this, &AMModGUI::on_navTimeSlider_valueChanged);
+    QObject::connect(ui->showFileDialog, &QPushButton::clicked, this, &AMModGUI::on_showFileDialog_clicked);
+    QObject::connect(ui->feedbackEnable, &QToolButton::toggled, this, &AMModGUI::on_feedbackEnable_toggled);
+    QObject::connect(ui->feedbackVolume, &QDial::valueChanged, this, &AMModGUI::on_feedbackVolume_valueChanged);
+}
+
+void AMModGUI::updateAbsoluteCenterFrequency()
+{
+    setStatusFrequency(m_deviceCenterFrequency + m_settings.m_inputFrequencyOffset);
 }

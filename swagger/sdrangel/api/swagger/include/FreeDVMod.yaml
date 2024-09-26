@@ -27,7 +27,10 @@ FreeDVModSettings:
     modAFInput:
       type: integer
     gaugeInputElseModem:
-      type: integer      
+      type: integer
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -40,7 +43,13 @@ FreeDVModSettings:
     reverseAPIChannelIndex:
       type: integer
     cwKeyer:
-      $ref: "http://localhost:8081/api/swagger/include/CWKeyer.yaml#/CWKeyerSettings"
+      $ref: "http://swgserver:8081/api/swagger/include/CWKeyer.yaml#/CWKeyerSettings"
+    spectrumConfig:
+      $ref: "http://swgserver:8081/api/swagger/include/GLSpectrum.yaml#/GLSpectrum"
+    channelMarker:
+      $ref: "http://swgserver:8081/api/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "http://swgserver:8081/api/swagger/include/RollupState.yaml#/RollupState"
 
 FreeDVModReport:
   description: FreeDVMod

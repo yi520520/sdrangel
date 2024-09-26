@@ -1,6 +1,12 @@
 ///////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
 // written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2018 fire <fire@80211.at>                                       //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Vort <vvort@yandex.ru>                                     //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,6 +27,8 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
+#include <QApplication>
+#include <QAccessibleValueChangeEvent>
 #include <cstdlib>
 
 #include "gui/valuedial.h"
@@ -33,8 +41,11 @@ ValueDial::ValueDial(QWidget *parent, ColorMapper colorMapper) :
     setAutoFillBackground(false);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
+	setAttribute(Qt::WA_InputMethodEnabled, true);
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
+
+	setInputMethodHints(Qt::ImhDigitsOnly);
 
     m_background.setStart(0, 0);
     m_background.setFinalStop(0, 1);
@@ -73,7 +84,7 @@ void ValueDial::setFont(const QFont &font)
     QWidget::setFont(font);
 
     QFontMetrics fm(font);
-    m_digitWidth = fm.width('0');
+    m_digitWidth = fm.horizontalAdvance('0');
     m_digitHeight = fm.ascent();
     if (m_digitWidth < m_digitHeight) {
         m_digitWidth = m_digitHeight;
@@ -104,6 +115,7 @@ void ValueDial::setColorMapper(ColorMapper colorMapper)
 void ValueDial::setValue(quint64 value)
 {
     m_valueNew = value;
+    m_textNew = formatText(m_valueNew);
 
     if (m_valueNew < m_valueMin) {
         m_valueNew = m_valueMin;
@@ -111,16 +123,24 @@ void ValueDial::setValue(quint64 value)
         m_valueNew = m_valueMax;
     }
 
-    if (m_valueNew < m_value) {
+    QAccessibleValueChangeEvent event(this, value);
+    QAccessible::updateAccessibility(&event);
+
+    if (m_valueNew < m_value)
+    {
         m_animationState = 1;
-    } else if (m_valueNew > m_value) {
+    }
+    else if (m_valueNew > m_value)
+    {
         m_animationState = -1;
-    } else {
+    }
+    else
+    {
+        m_text = m_textNew;
         return;
     }
 
     m_animationTimer.start(20);
-    m_textNew = formatText(m_valueNew);
 }
 
 void ValueDial::setValueRange(uint numDigits, quint64 min, quint64 max)
@@ -130,12 +150,25 @@ void ValueDial::setValueRange(uint numDigits, quint64 min, quint64 max)
     m_valueMin = min;
     m_valueMax = max;
 
-    m_text = formatText(m_value);
+    if (m_animationTimer.isActive())
+    {
+        m_textNew = formatText(m_valueNew);
 
-    if (m_value < min) {
-        setValue(min);
-    } else if (m_value > max) {
-        setValue(max);
+        if (m_valueNew < min) {
+            setValue(min);
+        } else if (m_valueNew > max) {
+            setValue(max);
+        }
+    }
+    else
+    {
+        m_text = formatText(m_value);
+
+        if (m_value < min) {
+            setValue(min);
+        } else if (m_value > max) {
+            setValue(max);
+        }
     }
 
     setFixedWidth((m_numDigits + m_numDecimalPoints) * m_digitWidth + 2);
@@ -232,12 +265,17 @@ void ValueDial::paintEvent(QPaintEvent *)
         painter.drawRect(2 + m_hightlightedDigit * m_digitWidth, 1, m_digitWidth - 1, height() - 1);
     }
 
+    QColor secondaryForegroundColor = m_colorMapper.getSecondaryForegroundColor();
+    if (!isEnabled()) {
+        secondaryForegroundColor = secondaryForegroundColor.darker();
+    }
+
     if (m_animationState == 0)
     {
         for (int i = 0; i < m_text.length(); i++)
         {
             painter.setClipRect(1 + i * m_digitWidth, 1, m_digitWidth, m_digitHeight * 2);
-            painter.setPen(m_colorMapper.getSecondaryForegroundColor());
+            painter.setPen(secondaryForegroundColor);
             painter.drawText(QRect(1 + i * m_digitWidth, m_digitHeight * 0.6, m_digitWidth, m_digitHeight), Qt::AlignCenter, m_text.mid(i, 1));
 
             if (m_text[i] != m_groupSeparator)
@@ -253,7 +291,7 @@ void ValueDial::paintEvent(QPaintEvent *)
         if ((m_cursor >= 0) && (m_cursorState))
         {
             painter.setPen(Qt::NoPen);
-            painter.setBrush(m_colorMapper.getSecondaryForegroundColor());
+            painter.setBrush(secondaryForegroundColor);
             painter.drawRect(4 + m_cursor * m_digitWidth, 1 + m_digitHeight * 1.5, m_digitWidth - 5, m_digitHeight / 6);
         }
     }
@@ -264,7 +302,7 @@ void ValueDial::paintEvent(QPaintEvent *)
             if (m_text[i] == m_textNew[i])
             {
                 painter.setClipRect(1 + i * m_digitWidth, 1, m_digitWidth, m_digitHeight * 2);
-                painter.setPen(m_colorMapper.getSecondaryForegroundColor());
+                painter.setPen(secondaryForegroundColor);
                 painter.drawText(QRect(1 + i * m_digitWidth, m_digitHeight * 0.6, m_digitWidth, m_digitHeight), Qt::AlignCenter, m_text.mid(i, 1));
 
                 if (m_text[i] != m_groupSeparator)
@@ -278,7 +316,7 @@ void ValueDial::paintEvent(QPaintEvent *)
             {
                 int h = m_digitHeight * 0.6 + m_digitHeight * m_animationState / 2.0;
                 painter.setClipRect(1 + i * m_digitWidth, 1, m_digitWidth, m_digitHeight * 2);
-                painter.setPen(m_colorMapper.getSecondaryForegroundColor());
+                painter.setPen(secondaryForegroundColor);
                 painter.drawText(QRect(1 + i * m_digitWidth, h, m_digitWidth, m_digitHeight), Qt::AlignCenter, m_text.mid(i, 1));
 
                 if (m_text[i] != m_groupSeparator)
@@ -326,6 +364,11 @@ void ValueDial::mousePressEvent(QMouseEvent *event)
     }
     else if (mouseButton == Qt::LeftButton) // set cursor at current digit
     {
+		if (qApp->autoSipEnabled())
+		{
+			QGuiApplication::inputMethod()->show();
+		}
+
         m_cursor = i;
         m_cursorState = true;
         m_blinkTimer.start(400);
@@ -339,7 +382,7 @@ void ValueDial::mouseMoveEvent(QMouseEvent *event)
     int i;
     i = (event->x() - 1) / m_digitWidth;
 
-    if (m_text[i] == m_groupSeparator) {
+    if ((i >= m_text.size()) || (m_text[i] == m_groupSeparator)) {
         i = -1;
     }
 
@@ -353,7 +396,7 @@ void ValueDial::mouseMoveEvent(QMouseEvent *event)
 void ValueDial::wheelEvent(QWheelEvent *event)
 {
     int i;
-    i = (event->x() - 1) / m_digitWidth;
+    i = (event->position().x() - 1) / m_digitWidth;
 
     if (m_text[i] != m_groupSeparator) {
         m_hightlightedDigit = i;
@@ -372,7 +415,7 @@ void ValueDial::wheelEvent(QWheelEvent *event)
 
     if (m_animationState == 0)
     {
-        if (event->delta() < 0)
+        if (event->angleDelta().y() < 0)
         {
             if (event->modifiers() & Qt::ShiftModifier) {
                 e *= 5;
@@ -544,13 +587,13 @@ void ValueDial::keyPressEvent(QKeyEvent *value)
 
     if (c >= QChar('0') && (c <= QChar('9')))
     {
-        int d = c.toLatin1() - '0';
-        quint64 e = findExponent(m_cursor);
-        quint64 v = (m_value / e) % 10;
-
         if (m_animationState != 0) {
             m_value = m_valueNew;
         }
+
+        int d = c.toLatin1() - '0';
+        quint64 e = findExponent(m_cursor);
+        quint64 v = (m_value / e) % 10;
 
         v = m_value - v * e;
         v += d * e;
@@ -558,7 +601,7 @@ void ValueDial::keyPressEvent(QKeyEvent *value)
         emit changed(m_valueNew);
         m_cursor++;
 
-        if (m_text[m_cursor] == m_groupSeparator) {
+        if ((m_cursor >= 0) && (m_cursor < m_text.size()) && (m_text[m_cursor] == m_groupSeparator)) {
             m_cursor++;
         }
 

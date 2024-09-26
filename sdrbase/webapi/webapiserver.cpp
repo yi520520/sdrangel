@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2017, 2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // Swagger server adapter interface                                              //
 //                                                                               //
@@ -29,6 +31,7 @@ WebAPIServer::WebAPIServer(const QString& host, uint16_t port, WebAPIRequestMapp
 {
     m_settings.host = host;
     m_settings.port = port;
+    m_settings.maxRequestSize = 1<<23; // 8M
 }
 
 WebAPIServer::~WebAPIServer()
@@ -41,7 +44,7 @@ void WebAPIServer::start()
     if (!m_listener)
     {
         m_listener = new qtwebapp::HttpListener(m_settings, m_requestMapper, qApp);
-        qInfo("WebAPIServer::start: starting web API server at http://%s:%d", qPrintable(m_settings.host), m_settings.port);
+        qInfo("WebAPIServer::start: starting web API server at http://%s:%d", qPrintable(m_settings.host.isEmpty() ? "0.0.0.0" : m_settings.host), m_settings.port);
     }
 }
 
@@ -51,7 +54,7 @@ void WebAPIServer::stop()
     {
         delete m_listener;
         m_listener = 0;
-        qInfo("WebAPIServer::stop: stopped web API server at http://%s:%d", qPrintable(m_settings.host), m_settings.port);
+        qInfo("WebAPIServer::stop: stopped web API server at http://%s:%d", qPrintable(m_settings.host.isEmpty() ? "0.0.0.0" : m_settings.host), m_settings.port);
     }
 }
 

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,15 +24,17 @@
 #include "freqtrackergui.h"
 #endif
 #include "freqtracker.h"
+#include "freqtrackerwebapiadapter.h"
 #include "freqtrackerplugin.h"
 
 const PluginDescriptor FreqTrackerPlugin::m_pluginDescriptor = {
-	QString("Frequency Tracker"),
-	QString("4.7.0"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    FreqTracker::m_channelId,
+	QStringLiteral("Frequency Tracker"),
+    QStringLiteral("7.20.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 FreqTrackerPlugin::FreqTrackerPlugin(QObject* parent) :
@@ -52,27 +56,39 @@ void FreqTrackerPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI->registerRxChannel(FreqTracker::m_channelIdURI, FreqTracker::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* FreqTrackerPlugin::createRxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSink *rxChannel)
+void FreqTrackerPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		FreqTracker *instance = new FreqTracker(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* FreqTrackerPlugin::createRxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSink *rxChannel) const
+{
+	(void) deviceUISet;
+	(void) rxChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* FreqTrackerPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+ChannelGUI* FreqTrackerPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
 	return FreqTrackerGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 }
 #endif
 
-BasebandSampleSink* FreqTrackerPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* FreqTrackerPlugin::createChannelWebAPIAdapter() const
 {
-    return new FreqTracker(deviceAPI);
+	return new FreqTrackerWebAPIAdapter();
 }
-
-ChannelAPI* FreqTrackerPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new FreqTracker(deviceAPI);
-}
-

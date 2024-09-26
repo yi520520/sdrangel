@@ -1,18 +1,33 @@
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2017 Edouard Griffiths, F4EXB <f4exb06@gmail.com>                   //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                          //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 /*
  July 15, 2015
  Iowa Hills Software LLC
  http://www.iowahills.com
  */
 
-#include <math.h>
+#include <cmath>
 #include <new>
 #include <iostream>
 
 #include "wfir.h"
 
-#undef M_PI
-#define M_PI   3.14159265358979323846
-#define M_2PI  6.28318530717958647692
+#define M_2PI  (2*M_PI)
 
 // This first calculates the impulse response for a rectangular window.
 // It then applies the windowing function of choice to the impulse response.
@@ -355,7 +370,13 @@ void WFIR::WindowData(double *Data, int N, TWindowType WindowType, double Alpha,
     if (WindowType != wtKAISER && WindowType != wtFLATTOP)
     {
         for (j = M / 2; j < N - M / 2; j++)
+        {
+            if (j >= N + 2) {
+                break;
+            }
+
             WinCoeff[j] = 1.0;
+        }
     }
 
     // This will set the gain of the window to 1. Only the Flattop window has unity gain by design.

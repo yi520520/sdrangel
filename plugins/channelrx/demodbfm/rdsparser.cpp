@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2016 Ziga S <ziga.svetina@gmail.com>                            //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -262,7 +262,6 @@ void RDSParser::clearUpdateFlags()
 	m_g14_updated = false;
 	m_g14_data_available = false;
 	m_g15_updated = false;
-    radiotext_AB_flag = false;
     debug = false;
     log = false;
 }
@@ -468,7 +467,6 @@ void RDSParser::decode_type0(unsigned int *group, bool B)
 {
 	unsigned int af_code_1 = 0;
 	unsigned int af_code_2 = 0;
-	unsigned int  no_af    = 0;
 	double af_1            = 0;
 	double af_2            = 0;
 
@@ -535,7 +533,7 @@ void RDSParser::decode_type0(unsigned int *group, bool B)
             // @TODO: Find proper header or STL on OSX
 			auto res = m_g0_alt_freq.insert(af_1/1e3);
 			m_g0_af_updated = m_g0_af_updated || res.second;
-			no_af += 1;
+			// no_af += 1;
 		}
 
 		if (af_2)
@@ -543,7 +541,7 @@ void RDSParser::decode_type0(unsigned int *group, bool B)
             // @TODO: Find proper header or STL on OSX
             auto res = m_g0_alt_freq.insert(af_2/1e3);
             m_g0_af_updated = m_g0_af_updated || res.second;
-			no_af += 2;
+			// no_af += 2;
 		}
 
 		/*
@@ -697,15 +695,15 @@ void RDSParser::decode_type2(unsigned int *group, bool B)
 
 	m_g2_updated = true;
 	m_g2_count++;
+	bool radiotext_AB_flag = ((group[1] >> 4) & 0x01);
 
-	// when the A/B flag is toggled, flush your current radiotext
-	if (radiotext_AB_flag != ((group[1] >> 4) & 0x01))
+	// when the flag goes from B to A (false -> true), flush your current radiotext
+	if (!m_radiotext_AB_flag && radiotext_AB_flag)
 	{
+		// qDebug("RDSParser::decode_type2: ---------");
 		std::memset(m_g2_radiotext, ' ', sizeof(m_g2_radiotext));
 		m_g2_radiotext[sizeof(m_g2_radiotext) - 1] = '\0';
 	}
-
-	radiotext_AB_flag = (group[1] >> 4) & 0x01;
 
 	if (!B)
 	{
@@ -720,9 +718,8 @@ void RDSParser::decode_type2(unsigned int *group, bool B)
 		m_g2_radiotext[text_segment_address_code * 2 + 1] =  group[3]       & 0xff;
 	}
 
-	/*
-	qDebug() << "RDSParser::decode_type2: " << "Radio Text " << (radiotext_AB_flag ? 'B' : 'A')
-		<< ": " << std::string(m_g2_radiotext, sizeof(m_g2_radiotext)).c_str();*/
+	// qDebug("RDSParser::decode_type2: %x Radio Text %s: '%s'", group[1], radiotext_AB_flag ? "A" : "B", m_g2_radiotext);
+	m_radiotext_AB_flag = radiotext_AB_flag;
 }
 
 void RDSParser::decode_type3(unsigned int *group, bool B)

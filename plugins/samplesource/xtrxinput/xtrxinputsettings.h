@@ -1,4 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 // Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -56,7 +59,7 @@ struct XTRXInputSettings
     bool     m_extClock;     //!< True if external clock source
     uint32_t m_extClockFreq; //!< Frequency (Hz) of external clock source
     uint32_t m_pwrmode;
-    QString  m_fileRecordName;
+    bool     m_iqOrder;
     bool     m_useReverseAPI;
     QString  m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
@@ -66,6 +69,8 @@ struct XTRXInputSettings
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    void applySettings(const QStringList& settingsKeys, const XTRXInputSettings& settings);
+    QString getDebugString(const QStringList& settingsKeys, bool force=false) const;
 };
 
 #endif /* PLUGINS_SAMPLESOURCE_XTRXINPUT_XTRXINPUTSETTINGS_H_ */

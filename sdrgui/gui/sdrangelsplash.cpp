@@ -1,7 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB.                                  //
-//                                                                               //
-// Swagger server adapter interface                                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,11 +18,20 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
+#include <QScreen>
+
 #include "sdrangelsplash.h"
 
 SDRangelSplash::SDRangelSplash(const QPixmap& pixmap)
 {
-   QSplashScreen::setPixmap(pixmap);
+    int screenWidth = screen()->availableGeometry().width();
+    QPixmap pm;
+    if (pixmap.width() > screenWidth) {
+        pm = pixmap.scaledToWidth(screenWidth, Qt::SmoothTransformation);
+    } else {
+        pm = pixmap;
+    }
+    QSplashScreen::setPixmap(pm);
 };
 
 SDRangelSplash::~SDRangelSplash()

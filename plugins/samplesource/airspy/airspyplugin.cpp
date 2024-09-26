@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,24 +26,29 @@
 #else
 #include "airspygui.h"
 #endif
+#include "airspywebapiadapter.h"
 #include "airspyplugin.h"
 
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
+
+#ifdef ANDROID
+#include "util/android.h"
+#endif
 
 const int AirspyPlugin::m_maxDevices = 32;
 
 const PluginDescriptor AirspyPlugin::m_pluginDescriptor = {
-	QString("Airspy Input"),
-	QString("4.5.2"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("Airspy"),
+	QStringLiteral("Airspy Input"),
+    QStringLiteral("7.20.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString AirspyPlugin::m_hardwareID = "Airspy";
-const QString AirspyPlugin::m_deviceTypeID = AIRSPY_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "Airspy";
+static constexpr const char* const m_deviceTypeID = AIRSPY_DEVICE_TYPE_ID;
 
 AirspyPlugin::AirspyPlugin(QObject* parent) :
 	QObject(parent)
@@ -57,9 +65,35 @@ void AirspyPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleSource(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices AirspyPlugin::enumSampleSources()
+void AirspyPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
 {
-	SamplingDevices result;
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+#ifdef ANDROID
+
+    QStringList serialStrings = Android::listUSBDeviceSerials(0x1d50, 0x60a1);
+    int deviceNo = 0;
+    for (const auto serialString : serialStrings)
+    {
+        QString displayableName(QString("Airspy[%1] %2").arg(deviceNo).arg(serialString));
+
+        originDevices.append(OriginDevice(
+            displayableName,
+            m_hardwareID,
+            serialString,
+            deviceNo,
+            1,
+            0
+        ));
+        deviceNo++;
+    }
+
+    listedHwIds.append(m_hardwareID);
+
+#else
+
 	airspy_read_partid_serialno_t read_partid_serialno;
 	struct airspy_device *devinfo;
 	uint32_t serial_msb = 0;
@@ -71,7 +105,7 @@ PluginInterface::SamplingDevices AirspyPlugin::enumSampleSources()
 
 	if (rc != AIRSPY_SUCCESS)
 	{
-		qCritical("AirspyPlugin::enumSampleSources: failed to initiate Airspy library: %s", airspy_error_name(rc));
+		qCritical("AirspyPlugin::enumOriginDevices: failed to initiate Airspy library: %s", airspy_error_name(rc));
 	}
 
 	for (i=0; i < m_maxDevices; i++)
@@ -80,13 +114,13 @@ PluginInterface::SamplingDevices AirspyPlugin::enumSampleSources()
 
 		if (rc == AIRSPY_SUCCESS)
 		{
-			qDebug("AirspyPlugin::enumSampleSources: try to enumerate Airspy device #%d", i);
+			qDebug("AirspyPlugin::enumOriginDevices: try to enumerate Airspy device #%d", i);
 
 			rc = (airspy_error) airspy_board_partid_serialno_read(devinfo, &read_partid_serialno);
 
 			if (rc != AIRSPY_SUCCESS)
 			{
-				qDebug("AirspyPlugin::enumSampleSources: failed to read serial no: %s", airspy_error_name(rc));
+				qDebug("AirspyPlugin::enumOriginDevices: failed to read serial no: %s", airspy_error_name(rc));
 				airspy_close(devinfo);
 				continue; // next
 			}
@@ -98,38 +132,65 @@ PluginInterface::SamplingDevices AirspyPlugin::enumSampleSources()
 
 				QString serial_str = QString::number(serial_msb, 16) + QString::number(serial_lsb, 16);
 				//uint64_t serial_num = (((uint64_t) serial_msb)<<32) + serial_lsb;
-				QString displayedName(QString("Airspy[%1] %2").arg(i).arg(serial_str));
+				QString displayableName(QString("Airspy[%1] %2").arg(i).arg(serial_str));
 
-				result.append(SamplingDevice(displayedName,
-				        m_hardwareID,
-						m_deviceTypeID,
-						serial_str,
-						i,
-						PluginInterface::SamplingDevice::PhysicalDevice,
-						PluginInterface::SamplingDevice::StreamSingleRx,
-						1,
-						0));
+                originDevices.append(OriginDevice(
+                    displayableName,
+                    m_hardwareID,
+                    serial_str,
+                    i,
+                    1,
+                    0
+                ));
 
-				qDebug("AirspyPlugin::enumSampleSources: enumerated Airspy device #%d", i);
+				qDebug("AirspyPlugin::enumOriginDevices: enumerated Airspy device #%d", i);
 			}
 
 			airspy_close(devinfo);
 		}
 		else
 		{
-			qDebug("AirspyPlugin::enumSampleSources: enumerated %d Airspy devices %s", i, airspy_error_name(rc));
+			qDebug("AirspyPlugin::enumOriginDevices: enumerated %d Airspy devices %s", i, airspy_error_name(rc));
 			break; // finished
 		}
 	}
 
 	rc = (airspy_error) airspy_exit();
-	qDebug("AirspyPlugin::enumSampleSources: airspy_exit: %s", airspy_error_name(rc));
+	qDebug("AirspyPlugin::enumOriginDevices: airspy_exit: %s", airspy_error_name(rc));
+
+    listedHwIds.append(m_hardwareID);
+
+#endif
+}
+
+PluginInterface::SamplingDevices AirspyPlugin::enumSampleSources(const OriginDevices& originDevices)
+{
+	SamplingDevices result;
+
+	for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == m_hardwareID)
+        {
+            result.append(SamplingDevice(
+                it->displayableName,
+                m_hardwareID,
+                m_deviceTypeID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::PhysicalDevice,
+                PluginInterface::SamplingDevice::StreamSingleRx,
+                1,
+                0
+            ));
+            qDebug("AirspyPlugin::enumSampleSources: enumerated Airspy device #%d", it->sequence);
+        }
+    }
 
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* AirspyPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* AirspyPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -137,10 +198,10 @@ PluginInstanceGUI* AirspyPlugin::createSampleSourcePluginInstanceGUI(
     (void) sourceId;
     (void) widget;
     (void) deviceUISet;
-    return 0;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* AirspyPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* AirspyPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -153,7 +214,7 @@ PluginInstanceGUI* AirspyPlugin::createSampleSourcePluginInstanceGUI(
 	}
 	else
 	{
-		return 0;
+		return nullptr;
 	}
 }
 #endif
@@ -167,6 +228,11 @@ DeviceSampleSource *AirspyPlugin::createSampleSourcePluginInstance(const QString
     }
     else
     {
-        return 0;
+        return nullptr;
     }
+}
+
+DeviceWebAPIAdapter *AirspyPlugin::createDeviceWebAPIAdapter() const
+{
+    return new AirspyWebAPIAdapter();
 }

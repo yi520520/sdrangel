@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016, 2019-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,24 +23,24 @@
 #include <QString>
 #include <QTimer>
 
+#include "settings/serializableinterface.h"
 #include "export.h"
 
 class BasebandSampleSink;
-class ThreadedBasebandSampleSink;
-class ThreadedBasebandSampleSource;
+class BasebandSampleSource;
+class MIMOChannel;
 class ChannelAPI;
 class DeviceSampleSink;
 class DeviceSampleSource;
 class DeviceSampleMIMO;
 class MessageQueue;
 class PluginInterface;
-class PluginInstanceGUI;
 class DSPDeviceSourceEngine;
 class DSPDeviceSinkEngine;
 class DSPDeviceMIMOEngine;
 class Preset;
 
-class SDRBASE_API DeviceAPI : public QObject {
+class SDRBASE_API DeviceAPI : public QObject, public SerializableInterface {
     Q_OBJECT
 public:
     enum StreamType //!< This is the same enum as in PluginInterface
@@ -64,27 +65,23 @@ public:
         DSPDeviceSinkEngine *deviceSinkEngine,
         DSPDeviceMIMOEngine *deviceMIMOEngine
     );
-    ~DeviceAPI();
+    ~DeviceAPI() override;
 
-    // MIMO Engine baseband / channel lists management
-    void addSourceStream(bool connect);
-    void removeLastSourceStream();
-    void addSinkStream(bool connect);
-    void removeLastSinkStream();
-
-    void addAncillarySink(BasebandSampleSink* sink, unsigned int index = 0);       //!< Adds a sink to receive full baseband and that is not a channel (e.g. spectrum)
-    void removeAncillarySink(BasebandSampleSink* sink, unsigned int index = 0);    //!< Removes it
     void setSpectrumSinkInput(bool sourceElseSink = true, unsigned int index = 0); //!< Used in the MIMO case to select which stream is used as input to main spectrum
 
-    void addChannelSink(ThreadedBasebandSampleSink* sink, int streamIndex = 0);        //!< Add a channel sink (Rx)
-    void removeChannelSink(ThreadedBasebandSampleSink* sink, int streamIndex = 0);     //!< Remove a channel sink (Rx)
-    void addChannelSource(ThreadedBasebandSampleSource* sink, int streamIndex = 0);    //!< Add a channel source (Tx)
-    void removeChannelSource(ThreadedBasebandSampleSource* sink, int streamIndex = 0); //!< Remove a channel source (Tx)
+    void addChannelSink(BasebandSampleSink* sink, int streamIndex = 0);                //!< Add a channel sink (Rx)
+    void removeChannelSink(BasebandSampleSink* sink, int streamIndex = 0);             //!< Remove a channel sink (Rx)
+    void addChannelSource(BasebandSampleSource* sink, int streamIndex = 0);            //!< Add a channel source (Tx)
+    void removeChannelSource(BasebandSampleSource* sink, int streamIndex = 0);         //!< Remove a channel source (Tx)
+    void addMIMOChannel(MIMOChannel* channel);   //!< Add a MIMO channel (n Rx and m Tx combination)
+    void removeMIMOChannel(MIMOChannel* channel); //!< Remove a MIMO channel (n Rx and m Tx combination)
 
-    void addChannelSinkAPI(ChannelAPI* channelAPI, int streamIndex = 0);
-    void removeChannelSinkAPI(ChannelAPI* channelAPI, int streamIndex = 0);
-    void addChannelSourceAPI(ChannelAPI* channelAPI, int streamIndex = 0);
-    void removeChannelSourceAPI(ChannelAPI* channelAPI, int streamIndex = 0);
+    void addChannelSinkAPI(ChannelAPI* channelAPI);
+    void removeChannelSinkAPI(ChannelAPI* channelAPI);
+    void addChannelSourceAPI(ChannelAPI* channelAPI);
+    void removeChannelSourceAPI(ChannelAPI* channelAPI);
+    void addMIMOChannelAPI(ChannelAPI* channelAPI);
+    void removeMIMOChannelAPI(ChannelAPI* channelAPI);
 
     void setSampleSource(DeviceSampleSource* source); //!< Set the device sample source (single Rx)
     void setSampleSink(DeviceSampleSink* sink);       //!< Set the device sample sink (single Tx)
@@ -93,11 +90,11 @@ public:
     DeviceSampleSink *getSampleSink();                //!< Return pointer to the device sample sink (single Tx) or nullptr
     DeviceSampleMIMO *getSampleMIMO();                //!< Return pointer to the device sample MIMO or nullptr
 
-    bool initDeviceEngine();    //!< Init the device engine corresponding to the stream type
-    bool startDeviceEngine();   //!< Start the device engine corresponding to the stream type
-    void stopDeviceEngine();    //!< Stop the device engine corresponding to the stream type
-    EngineState state() const;  //!< Return the state of the device engine corresponding to the stream type
-    QString errorMessage();     //!< Last error message from the device engine
+    bool initDeviceEngine(int subsystemIndex = 0);    //!< Init the device engine corresponding to the stream type
+    bool startDeviceEngine(int subsystemIndex = 0);   //!< Start the device engine corresponding to the stream type
+    void stopDeviceEngine(int subsystemIndex = 0);    //!< Stop the device engine corresponding to the stream type
+    EngineState state(int subsystemIndex = 0) const;  //!< Return the state of the device engine corresponding to the stream type
+    QString errorMessage(int subsystemIndex = 0) const;     //!< Last error message from the device engine
     uint getDeviceUID() const;  //!< Return the current device engine unique ID
 
     MessageQueue *getDeviceEngineInputMessageQueue();   //!< Device engine message queue
@@ -114,7 +111,6 @@ public:
     void setSamplingDeviceSequence(int sequence) { m_samplingDeviceSequence = sequence; }
     void setHardwareUserArguments(const QString& userArguments) { m_hardwareUserArguments = userArguments; }
     void setSamplingDevicePluginInterface(PluginInterface *iface);
-    void setSamplingDevicePluginInstanceGUI(PluginInstanceGUI *gui);
 
     const QString& getHardwareId() const { return m_hardwareId; }
     const QString& getSamplingDeviceId() const { return m_samplingDeviceId; }
@@ -123,40 +119,44 @@ public:
     uint32_t getSamplingDeviceSequence() const { return m_samplingDeviceSequence; }
     const QString& getHardwareUserArguments() const { return m_hardwareUserArguments; }
 
+    void setWorkspaceIndex(int index) { m_workspaceIndex = index; }
+    int getWorkspaceIndex() const { return m_workspaceIndex; }
+
     void setDeviceNbItems(uint32_t nbItems);
     void setDeviceItemIndex(uint32_t index);
     uint32_t getDeviceNbItems() const { return m_deviceNbItems; }
     uint32_t getDeviceItemIndex() const { return m_deviceItemIndex; }
 
     int getDeviceSetIndex() const { return m_deviceTabIndex; }
+    void setDeviceSetIndex(int deviceSetIndex);
     PluginInterface *getPluginInterface() { return m_pluginInterface; }
 
-    PluginInstanceGUI *getSamplingDevicePluginInstanceGUI() { return m_samplingDevicePluginInstanceUI; }
-    // PluginInstanceGUI *getSampleSourcePluginInstanceGUI() { return m_sampleSourcePluginInstanceUI; }
-    // PluginInstanceGUI *getSampleSinkPluginInstanceGUI() { return m_sampleSinkPluginInstanceUI; }
+    void getDeviceEngineStateStr(QString& state, int subsystemIndex = 0) const;
 
-    void getDeviceEngineStateStr(QString& state);
-
-    ChannelAPI *getChanelSinkAPIAt(int index, int streamIndex = 0);
-    ChannelAPI *getChanelSourceAPIAt(int index, int streamIndex = 0);
+    ChannelAPI *getChanelSinkAPIAt(int index);
+    ChannelAPI *getChanelSourceAPIAt(int index);
+    ChannelAPI *getMIMOChannelAPIAt(int index);
 
     int getNbSourceChannels() const { return m_channelSourceAPIs.size(); }
     int getNbSinkChannels() const { return m_channelSinkAPIs.size(); }
+    int getNbMIMOChannels() const { return m_mimoChannelAPIs.size(); }
 
     void loadSamplingDeviceSettings(const Preset* preset);
-    // void loadSourceSettings(const Preset* preset);
-    // void loadSinkSettings(const Preset* preset);
     void saveSamplingDeviceSettings(Preset* preset);
-    // void saveSourceSettings(Preset* preset);
-    // void saveSinkSettings(Preset* preset);
+
+    QByteArray serialize() const override;
+    bool deserialize(const QByteArray& data) override;
+
+    // List of one frequency for Single Rx / Tx or one frequency per stream for MIMO
+    QList<quint64> getCenterFrequency() const;
+    void setCenterFrequency(QList<quint64> centerFrequency);
 
     DSPDeviceSourceEngine *getDeviceSourceEngine() { return m_deviceSourceEngine; }
     DSPDeviceSinkEngine *getDeviceSinkEngine() { return m_deviceSinkEngine; }
+    DSPDeviceMIMOEngine *getDeviceMIMOEngine() { return m_deviceMIMOEngine; }
 
-    void addSourceBuddy(DeviceAPI* buddy);
-    void addSinkBuddy(DeviceAPI* buddy);
-    void removeSourceBuddy(DeviceAPI* buddy);
-    void removeSinkBuddy(DeviceAPI* buddy);
+    void addBuddy(DeviceAPI* buddy);
+    void removeBuddy(DeviceAPI* buddy);
     void clearBuddiesLists();
     void *getBuddySharedPtr() const { return m_buddySharedPtr; }
     void setBuddySharedPtr(void *ptr) { m_buddySharedPtr = ptr; }
@@ -172,7 +172,7 @@ public:
 
     const QTimer& getMasterTimer() const { return m_masterTimer; } //!< This is the DSPEngine master timer
 
-protected:
+private:
     // common
 
     StreamType m_streamType;
@@ -189,7 +189,7 @@ protected:
     QString m_samplingDeviceDisplayName; //!< The human readable name identifying this instance
     uint32_t m_samplingDeviceSequence;   //!< The device sequence. >0 when more than one device of the same type is connected
     QString m_hardwareUserArguments;     //!< User given arguments to be used at hardware level i.e. for the hardware device and device sequence
-    PluginInstanceGUI* m_samplingDevicePluginInstanceUI;
+    int m_workspaceIndex;                //!< Used only by the GUI but accessible via web API
 
     // Buddies (single Rx or single Tx)
 
@@ -211,8 +211,14 @@ protected:
     // MIMO
 
     DSPDeviceMIMOEngine *m_deviceMIMOEngine;
+    QList<ChannelAPI*> m_mimoChannelAPIs;
 
-private:
     void renumerateChannels();
+
+private slots:
+    void engineStateChanged();
+
+signals:
+    void stateChanged(DeviceAPI *deviceAPI);
 };
 #endif // SDRBASE_DEVICE_DEVICEAPI_H_

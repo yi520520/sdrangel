@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017, 2018 Edouard Griffiths, F4EXB                             //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 // Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -33,7 +36,6 @@ class QNetworkReply;
 class DeviceAPI;
 class XTRXInputThread;
 struct DeviceXTRXParams;
-class FileRecord;
 
 class XTRXInput : public DeviceSampleSource
 {
@@ -42,22 +44,24 @@ public:
     class MsgConfigureXTRX : public Message {
         MESSAGE_CLASS_DECLARATION
 
-        public:
-            const XTRXInputSettings& getSettings() const { return m_settings; }
+    public:
+        const XTRXInputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureXTRX* create(const XTRXInputSettings& settings, bool force)
-        {
-            return new MsgConfigureXTRX(settings, force);
+        static MsgConfigureXTRX* create(const XTRXInputSettings& settings, const QList<QString>& settingsKeys, bool force) {
+            return new MsgConfigureXTRX(settings, settingsKeys, force);
         }
 
     private:
         XTRXInputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureXTRX(const XTRXInputSettings& settings, bool force) :
+        MsgConfigureXTRX(const XTRXInputSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
@@ -171,25 +175,6 @@ public:
         { }
     };
 
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-        public:
-            bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
-        { }
-    };
-
     XTRXInput(DeviceAPI *deviceAPI);
     virtual ~XTRXInput();
     virtual void destroy();
@@ -238,6 +223,15 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const XTRXInputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            XTRXInputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     std::size_t getChannelIndex();
     void getLORange(float& minF, float& maxF, float& stepF) const;
     void getSRRange(float& minF, float& maxF, float& stepF) const;
@@ -259,8 +253,6 @@ private:
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
-
     bool openDevice();
     void closeDevice();
     XTRXInputThread *findThread();
@@ -268,10 +260,9 @@ private:
 
     void suspendTxThread();
     void resumeTxThread();
-    bool applySettings(const XTRXInputSettings& settings, bool force = false, bool forceNCOFrequency = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const XTRXInputSettings& settings);
+    bool applySettings(const XTRXInputSettings& settings, const QList<QString>& settingsKeys, bool force = false, bool forceNCOFrequency = false);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const XTRXInputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const XTRXInputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

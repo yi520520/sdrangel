@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,18 +18,21 @@
 #include <errno.h>
 #include <algorithm>
 
-#include "limesdrinputsettings.h"
+#include "dsp/replaybuffer.h"
 #include "limesdrinputthread.h"
 
-LimeSDRInputThread::LimeSDRInputThread(lms_stream_t* stream, SampleSinkFifo* sampleFifo, QObject* parent) :
+LimeSDRInputThread::LimeSDRInputThread(lms_stream_t* stream, SampleSinkFifo* sampleFifo,
+        ReplayBuffer<qint16> *replayBuffer, QObject* parent) :
     QThread(parent),
     m_running(false),
     m_stream(stream),
-    m_convertBuffer(LIMESDR_BLOCKSIZE),
+    m_convertBuffer(DeviceLimeSDR::blockSize),
     m_sampleFifo(sampleFifo),
-    m_log2Decim(0)
+    m_replayBuffer(replayBuffer),
+    m_log2Decim(0),
+    m_iqOrder(true)
 {
-    std::fill(m_buf, m_buf + 2*LIMESDR_BLOCKSIZE, 0);
+    std::fill(m_buf, m_buf + 2*DeviceLimeSDR::blockSize, 0);
 }
 
 LimeSDRInputThread::~LimeSDRInputThread()
@@ -88,50 +91,133 @@ void LimeSDRInputThread::run()
 
     while (m_running)
     {
-        if ((res = LMS_RecvStream(m_stream, (void *) m_buf, LIMESDR_BLOCKSIZE, &metadata, 1000)) < 0)
+        if ((res = LMS_RecvStream(m_stream, (void *) m_buf, DeviceLimeSDR::blockSize, &metadata, 1000)) < 0)
         {
             qCritical("LimeSDRInputThread::run read error: %s", strerror(errno));
             break;
         }
 
-        callback(m_buf, 2 * res);
+        if (m_iqOrder) {
+            callbackIQ(m_buf, 2 * res);
+        } else {
+            callbackQI(m_buf, 2 * res);
+        }
     }
 
     m_running = false;
 }
 
 //  Decimate according to specified log2 (ex: log2=4 => decim=16)
-void LimeSDRInputThread::callback(const qint16* buf, qint32 len)
+void LimeSDRInputThread::callbackIQ(const qint16* inBuf, qint32 len)
 {
     SampleVector::iterator it = m_convertBuffer.begin();
 
-    switch (m_log2Decim)
-    {
-    case 0:
-        m_decimators.decimate1(&it, buf, len);
-        break;
-    case 1:
-        m_decimators.decimate2_cen(&it, buf, len);
-        break;
-    case 2:
-        m_decimators.decimate4_cen(&it, buf, len);
-        break;
-    case 3:
-        m_decimators.decimate8_cen(&it, buf, len);
-        break;
-    case 4:
-        m_decimators.decimate16_cen(&it, buf, len);
-        break;
-    case 5:
-        m_decimators.decimate32_cen(&it, buf, len);
-        break;
-    case 6:
-        m_decimators.decimate64_cen(&it, buf, len);
-        break;
-    default:
-        break;
+    // Save data to replay buffer
+    m_replayBuffer->lock();
+    bool replayEnabled = m_replayBuffer->getSize() > 0;
+    if (replayEnabled) {
+        m_replayBuffer->write(inBuf, len);
     }
+
+    const qint16* buf = inBuf;
+    qint32 remaining = len;
+
+    while (remaining > 0)
+    {
+        // Choose between live data or replayed data
+        if (replayEnabled && m_replayBuffer->useReplay()) {
+            len = m_replayBuffer->read(remaining, buf);
+        } else {
+            len = remaining;
+        }
+        remaining -= len;
+
+        switch (m_log2Decim)
+        {
+        case 0:
+            m_decimatorsIQ.decimate1(&it, buf, len);
+            break;
+        case 1:
+            m_decimatorsIQ.decimate2_cen(&it, buf, len);
+            break;
+        case 2:
+            m_decimatorsIQ.decimate4_cen(&it, buf, len);
+            break;
+        case 3:
+            m_decimatorsIQ.decimate8_cen(&it, buf, len);
+            break;
+        case 4:
+            m_decimatorsIQ.decimate16_cen(&it, buf, len);
+            break;
+        case 5:
+            m_decimatorsIQ.decimate32_cen(&it, buf, len);
+            break;
+        case 6:
+            m_decimatorsIQ.decimate64_cen(&it, buf, len);
+            break;
+        default:
+            break;
+        }
+    }
+
+    m_replayBuffer->unlock();
 
     m_sampleFifo->write(m_convertBuffer.begin(), it);
 }
 
+void LimeSDRInputThread::callbackQI(const qint16* inBuf, qint32 len)
+{
+    SampleVector::iterator it = m_convertBuffer.begin();
+
+    // Save data to replay buffer
+    m_replayBuffer->lock();
+    bool replayEnabled = m_replayBuffer->getSize() > 0;
+    if (replayEnabled) {
+        m_replayBuffer->write(inBuf, len);
+    }
+
+    const qint16* buf = inBuf;
+    qint32 remaining = len;
+
+    while (remaining > 0)
+    {
+        // Choose between live data or replayed data
+        if (replayEnabled && m_replayBuffer->useReplay()) {
+            len = m_replayBuffer->read(remaining, buf);
+        } else {
+            len = remaining;
+        }
+        remaining -= len;
+
+        switch (m_log2Decim)
+        {
+        case 0:
+            m_decimatorsQI.decimate1(&it, buf, len);
+            break;
+        case 1:
+            m_decimatorsQI.decimate2_cen(&it, buf, len);
+            break;
+        case 2:
+            m_decimatorsQI.decimate4_cen(&it, buf, len);
+            break;
+        case 3:
+            m_decimatorsQI.decimate8_cen(&it, buf, len);
+            break;
+        case 4:
+            m_decimatorsQI.decimate16_cen(&it, buf, len);
+            break;
+        case 5:
+            m_decimatorsQI.decimate32_cen(&it, buf, len);
+            break;
+        case 6:
+            m_decimatorsQI.decimate64_cen(&it, buf, len);
+            break;
+        default:
+            break;
+        }
+    }
+
+    m_replayBuffer->unlock();
+
+    m_sampleFifo->write(m_convertBuffer.begin(), it);
+}

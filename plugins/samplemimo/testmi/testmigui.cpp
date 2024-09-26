@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,29 +22,27 @@
 #include <QDateTime>
 #include <QString>
 #include <QMessageBox>
+#include <QFileDialog>
 
-#include "plugin/pluginapi.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 #include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
-#include "dsp/dspdevicemimoengine.h"
+#include "gui/dialpopup.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
 #include "util/db.h"
-
-#include "mainwindow.h"
 
 #include "ui_testmigui.h"
 #include "testmigui.h"
 
 TestMIGui::TestMIGui(DeviceUISet *deviceUISet, QWidget* parent) :
-    QWidget(parent),
+    DeviceGUI(parent),
     ui(new Ui::TestMIGui),
-    m_deviceUISet(deviceUISet),
     m_settings(),
+    m_streamIndex(0),
+    m_spectrumStreamIndex(0),
     m_doApplySettings(true),
     m_forceSettings(true),
     m_sampleMIMO(nullptr),
@@ -51,6 +50,13 @@ TestMIGui::TestMIGui(DeviceUISet *deviceUISet, QWidget* parent) :
     m_lastEngineState(DeviceAPI::StNotStarted)
 {
     qDebug("TestMIGui::TestMIGui");
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
+    m_helpURL = "plugins/samplemimo/testmi/readme.md";
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#TestMIGui { background-color: rgb(64, 64, 64); }");
+
     m_sampleMIMO = m_deviceUISet->m_deviceAPI->getSampleMIMO();
     m_streamIndex = 0;
     m_deviceCenterFrequencies.push_back(m_settings.m_streams[0].m_centerFrequency);
@@ -58,11 +64,10 @@ TestMIGui::TestMIGui(DeviceUISet *deviceUISet, QWidget* parent) :
     m_deviceSampleRates.push_back(m_settings.m_streams[0].m_sampleRate / (1<<m_settings.m_streams[0].m_log2Decim));
     m_deviceSampleRates.push_back(m_settings.m_streams[1].m_sampleRate / (1<<m_settings.m_streams[1].m_log2Decim));
 
-    ui->setupUi(this);
     ui->spectrumSource->addItem("0");
     ui->spectrumSource->addItem("1");
     ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-    ui->centerFrequency->setValueRange(7, 0, 9999999);
+    ui->centerFrequency->setValueRange(9, 0, 999999999);
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
     ui->sampleRate->setValueRange(7, 48000, 9999999);
     ui->frequencyShift->setColorMapper(ColorMapper(ColorMapper::GrayGold));
@@ -78,8 +83,11 @@ TestMIGui::TestMIGui(DeviceUISet *deviceUISet, QWidget* parent) :
     connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
     m_sampleMIMO->setMessageQueueToGUI(&m_inputMessageQueue);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+
+    makeUIConnections();
+    DialPopup::addPopupsToChildDials(this);
+    m_resizer.enableChildMouseTracking();
 }
 
 TestMIGui::~TestMIGui()
@@ -92,31 +100,9 @@ void TestMIGui::destroy()
     delete this;
 }
 
-void TestMIGui::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString TestMIGui::getName() const
-{
-    return objectName();
-}
-
 void TestMIGui::resetToDefaults()
 {
     m_settings.resetToDefaults();
-    displaySettings();
-    sendSettings();
-}
-
-qint64 TestMIGui::getCenterFrequency() const
-{
-    return m_settings.m_streams[m_streamIndex].m_centerFrequency;
-}
-
-void TestMIGui::setCenterFrequency(qint64 centerFrequency)
-{
-    m_settings.m_streams[m_streamIndex].m_centerFrequency = centerFrequency;
     displaySettings();
     sendSettings();
 }
@@ -161,7 +147,6 @@ void TestMIGui::on_streamIndex_currentIndexChanged(int index)
     }
 
     m_streamIndex = index;
-    updateFileRecordStatus();
     updateSampleRateAndFrequency();
     displaySettings();
 }
@@ -179,7 +164,6 @@ void TestMIGui::on_spectrumSource_currentIndexChanged(int index)
         ui->streamIndex->setCurrentIndex(index);
         ui->streamIndex->blockSignals(false);
         m_streamIndex = index;
-        updateFileRecordStatus();
         displaySettings();
     }
 }
@@ -331,18 +315,6 @@ void TestMIGui::on_phaseImbalance_valueChanged(int value)
     sendSettings();
 }
 
-void TestMIGui::on_record_toggled(bool checked)
-{
-    if (checked) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
-
-    TestMI::MsgFileRecord* message = TestMI::MsgFileRecord::create(checked, m_streamIndex);
-    m_sampleMIMO->getInputMessageQueue()->push(message);
-}
-
 void TestMIGui::displayAmplitude()
 {
     int amplitudeInt = ui->amplitudeCoarse->value() * 100 + ui->amplitudeFine->value();
@@ -418,15 +390,6 @@ void TestMIGui::updateFrequencyShiftLimit()
     qint64 sampleRate = ui->sampleRate->getValueNew();
     ui->frequencyShift->setValueRange(false, 7, -sampleRate, sampleRate);
     ui->frequencyShift->setValue(m_settings.m_streams[m_streamIndex].m_frequencyShift);
-}
-
-void TestMIGui::updateFileRecordStatus()
-{
-    if (((TestMI*) m_sampleMIMO)->isRecording(m_streamIndex)) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
 }
 
 void TestMIGui::displaySettings()
@@ -587,19 +550,50 @@ void TestMIGui::updateSampleRateAndFrequency()
 
 void TestMIGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void TestMIGui::makeUIConnections()
+{
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &TestMIGui::on_startStop_toggled);
+    QObject::connect(ui->streamIndex, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TestMIGui::on_streamIndex_currentIndexChanged);
+    QObject::connect(ui->spectrumSource, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TestMIGui::on_spectrumSource_currentIndexChanged);
+    QObject::connect(ui->streamLock, &QToolButton::toggled, this, &TestMIGui::on_streamLock_toggled);
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &TestMIGui::on_centerFrequency_changed);
+    QObject::connect(ui->autoCorr, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TestMIGui::on_autoCorr_currentIndexChanged);
+    QObject::connect(ui->frequencyShift, &ValueDialZ::changed, this, &TestMIGui::on_frequencyShift_changed);
+    QObject::connect(ui->decimation, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TestMIGui::on_decimation_currentIndexChanged);
+    QObject::connect(ui->fcPos, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TestMIGui::on_fcPos_currentIndexChanged);
+    QObject::connect(ui->sampleRate, &ValueDial::changed, this, &TestMIGui::on_sampleRate_changed);
+    QObject::connect(ui->sampleSize, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TestMIGui::on_sampleSize_currentIndexChanged);
+    QObject::connect(ui->amplitudeCoarse, &QSlider::valueChanged, this, &TestMIGui::on_amplitudeCoarse_valueChanged);
+    QObject::connect(ui->amplitudeFine, &QSlider::valueChanged, this, &TestMIGui::on_amplitudeFine_valueChanged);
+    QObject::connect(ui->modulation, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &TestMIGui::on_modulation_currentIndexChanged);
+    QObject::connect(ui->modulationFrequency, &QDial::valueChanged, this, &TestMIGui::on_modulationFrequency_valueChanged);
+    QObject::connect(ui->amModulation, &QDial::valueChanged, this, &TestMIGui::on_amModulation_valueChanged);
+    QObject::connect(ui->fmDeviation, &QDial::valueChanged, this, &TestMIGui::on_fmDeviation_valueChanged);
+    QObject::connect(ui->dcBias, &QSlider::valueChanged, this, &TestMIGui::on_dcBias_valueChanged);
+    QObject::connect(ui->iBias, &QSlider::valueChanged, this, &TestMIGui::on_iBias_valueChanged);
+    QObject::connect(ui->qBias, &QSlider::valueChanged, this, &TestMIGui::on_qBias_valueChanged);
+    QObject::connect(ui->phaseImbalance, &QSlider::valueChanged, this, &TestMIGui::on_phaseImbalance_valueChanged);
 }

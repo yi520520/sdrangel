@@ -1,5 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // Remote sink channel (Rx) data blocks queue                                    //
 //                                                                               //
@@ -26,22 +31,22 @@
 #define CHANNEL_REMOTEDATAQUEUE_H_
 
 #include <QObject>
-#include <QMutex>
+#include <QRecursiveMutex>
 #include <QQueue>
 
 #include "export.h"
 
-class RemoteDataBlock;
+class RemoteDataFrame;
 
 class SDRBASE_API RemoteDataQueue : public QObject {
     Q_OBJECT
 
 public:
-    RemoteDataQueue(QObject* parent = NULL);
+    RemoteDataQueue(QObject* parent = nullptr);
     ~RemoteDataQueue();
 
-    void push(RemoteDataBlock* dataBlock, bool emitSignal = true);  //!< Push daa block onto queue
-    RemoteDataBlock* pop(); //!< Pop message from queue
+    void push(RemoteDataFrame* dataFrame, bool emitSignal = true);  //!< Push data frame onto queue
+    RemoteDataFrame* pop(); //!< Pop frame from queue
 
     int size(); //!< Returns queue size
     void clear(); //!< Empty queue
@@ -50,8 +55,8 @@ signals:
     void dataBlockEnqueued();
 
 private:
-    QMutex m_lock;
-    QQueue<RemoteDataBlock*> m_queue;
+    QRecursiveMutex m_lock;
+    QQueue<RemoteDataFrame*> m_queue;
 };
 
 #endif /* CHANNEL_REMOTEDATAQUEUE_H_ */

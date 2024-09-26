@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,14 +28,17 @@
 #include "localsinkgui.h"
 #endif
 #include "localsink.h"
+#include "localsinkwebapiadapter.h"
+#include "localsinkplugin.h"
 
 const PluginDescriptor LocalSinkPlugin::m_pluginDescriptor = {
-    QString("Local channel sink"),
-    QString("4.6.0"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    LocalSink::m_channelId,
+    QStringLiteral("Local channel sink"),
+    QStringLiteral("7.20.0"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 LocalSinkPlugin::LocalSinkPlugin(QObject* parent) :
@@ -53,26 +60,39 @@ void LocalSinkPlugin::initPlugin(PluginAPI* pluginAPI)
     m_pluginAPI->registerRxChannel(LocalSink::m_channelIdURI, LocalSink::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* LocalSinkPlugin::createRxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSink *rxChannel)
+void LocalSinkPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		LocalSink *instance = new LocalSink(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* LocalSinkPlugin::createRxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSink *rxChannel) const
+{
+	(void) deviceUISet;
+	(void) rxChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* LocalSinkPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+ChannelGUI* LocalSinkPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
     return LocalSinkGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 }
 #endif
 
-BasebandSampleSink* LocalSinkPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* LocalSinkPlugin::createChannelWebAPIAdapter() const
 {
-    return new LocalSink(deviceAPI);
-}
-
-ChannelAPI* LocalSinkPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new LocalSink(deviceAPI);
+	return new LocalSinkWebAPIAdapter();
 }

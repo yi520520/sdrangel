@@ -1,17 +1,23 @@
 project(localsource)
 
 set(localsource_SOURCES
-	localsource.cpp
-	localsourcethread.cpp
+    localsource.cpp
+    localsourcebaseband.cpp
+    localsourcesource.cpp
+	localsourceworker.cpp
 	localsourceplugin.cpp
-	localsourcesettings.cpp
+    localsourcesettings.cpp
+    localsourcewebapiadapter.cpp
 )
 
 set(localsource_HEADERS
-	localsource.h
-	localsourcethread.h
+    localsource.h
+    localsourcebaseband.h
+    localsourcesource.h
+	localsourceworker.h
 	localsourceplugin.h
-	localsourcesettings.h
+    localsourcesettings.h
+    localsourcewebapiadapter.h
 )
 
 include_directories(
@@ -31,23 +37,29 @@ if(NOT SERVER_MODE)
         localsourcegui.h
     )
 
-    set(TARGET_NAME localsource)
-    set(TARGET_LIB "Qt5::Widgets")
+    set(TARGET_NAME ${PLUGINS_PREFIX}localsource)
+    set(TARGET_LIB "Qt::Widgets")
     set(TARGET_LIB_GUI "sdrgui")
     set(INSTALL_FOLDER ${INSTALL_PLUGINS_DIR})
 else()
-    set(TARGET_NAME localsourcesrv)
+    set(TARGET_NAME ${PLUGINSSRV_PREFIX}localsourcesrv)
     set(TARGET_LIB "")
     set(TARGET_LIB_GUI "")
     set(INSTALL_FOLDER ${INSTALL_PLUGINSSRV_DIR})
 endif()
 
-add_library(${TARGET_NAME} SHARED
-	${localsource_SOURCES}
-)
+if(NOT Qt6_FOUND)
+    add_library(${TARGET_NAME} ${localsource_SOURCES})
+else()
+    qt_add_plugin(${TARGET_NAME} CLASS_NAME LocalSourcePlugin ${localsource_SOURCES})
+endif()
 
-target_link_libraries(${TARGET_NAME}
-        Qt5::Core
+if(NOT BUILD_SHARED_LIBS)
+    set_property(GLOBAL APPEND PROPERTY STATIC_PLUGINS_PROPERTY ${TARGET_NAME})
+endif()
+
+target_link_libraries(${TARGET_NAME} PRIVATE
+        Qt::Core
         ${TARGET_LIB}
 	sdrbase
 	${TARGET_LIB_GUI}
@@ -55,3 +67,8 @@ target_link_libraries(${TARGET_NAME}
 )
 
 install(TARGETS ${TARGET_NAME} DESTINATION ${INSTALL_FOLDER})
+
+# Install debug symbols
+if (WIN32)
+    install(FILES $<TARGET_PDB_FILE:${TARGET_NAME}> CONFIGURATIONS Debug RelWithDebInfo DESTINATION ${INSTALL_FOLDER} )
+endif()

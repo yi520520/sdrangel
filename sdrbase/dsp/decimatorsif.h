@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -26,32 +27,10 @@
 template<uint InputBits>
 struct decimation_scale
 {
-    static const float scaleIn;
+    static constexpr float scaleIn = 1.0f / (1 << (InputBits - 1));
 };
 
-template<uint InputBits>
-const float decimation_scale<InputBits>::scaleIn = 1.0;
-
-template<>
-struct decimation_scale<8>
-{
-    static const float scaleIn;
-};
-
-template<>
-struct decimation_scale<12>
-{
-    static const float scaleIn;
-};
-
-template<>
-struct decimation_scale<16>
-{
-    static const float scaleIn;
-};
-
-
-template<typename T, uint InputBits>
+template<typename T, uint InputBits, bool IQOrder>
 class DecimatorsIF {
 public:
     // interleaved I/Q input buffer
@@ -75,73 +54,74 @@ public:
     void decimate64_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ);
     void decimate64_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ);
 
-    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER> m_decimator2;  // 1st stages
-    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER> m_decimator4;  // 2nd stages
-    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER> m_decimator8;  // 3rd stages
-    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER> m_decimator16; // 4th stages
-    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER> m_decimator32; // 5th stages
-    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER> m_decimator64; // 6th stages
+    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER, IQOrder> m_decimator2;  // 1st stages
+    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER, true> m_decimator2s; // 1st stages - straight
+    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER, true> m_decimator4;  // 2nd stages
+    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER, true> m_decimator8;  // 3rd stages
+    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER, true> m_decimator16; // 4th stages
+    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER, true> m_decimator32; // 5th stages
+    IntHalfbandFilterEOF<DECIMATORS_IF_FILTER_ORDER, true> m_decimator64; // 6th stages
 };
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate1(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate1(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal, yimag;
 
     for (int pos = 0; pos < nbIAndQ - 1; pos += 2)
     {
-        xreal = buf[pos+0] * decimation_scale<InputBits>::scaleIn;
-        yimag = buf[pos+1] * decimation_scale<InputBits>::scaleIn;
+        xreal = (IQOrder ? buf[pos+0] : buf[pos+1]) * decimation_scale<InputBits>::scaleIn;
+        yimag = (IQOrder ? buf[pos+1] : buf[pos+0]) * decimation_scale<InputBits>::scaleIn;
         (**it).setReal(xreal);
         (**it).setImag(yimag);
         ++(*it); // Valgrind optim (comment not repeated)
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate2_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate2_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal, yimag;
 
     for (int pos = 0; pos < nbIAndQ - 7; pos += 8)
     {
-        xreal = (buf[pos+0] - buf[pos+3]) * decimation_scale<InputBits>::scaleIn;
-        yimag = (buf[pos+1] + buf[pos+2]) * decimation_scale<InputBits>::scaleIn;
+        xreal = (IQOrder ? (buf[pos+0] - buf[pos+3]) : (buf[pos+1] + buf[pos+2])) * decimation_scale<InputBits>::scaleIn;
+        yimag = (IQOrder ? (buf[pos+1] + buf[pos+2]) : (buf[pos+0] - buf[pos+3])) * decimation_scale<InputBits>::scaleIn;
         (**it).setReal(xreal);
         (**it).setImag(yimag);
         ++(*it);
 
-        xreal = (buf[pos+7] - buf[pos+4]) * decimation_scale<InputBits>::scaleIn;
-        yimag = (- buf[pos+5] - buf[pos+6]) * decimation_scale<InputBits>::scaleIn;
+        xreal = (IQOrder ? (buf[pos+7] - buf[pos+4]) : (- buf[pos+5] - buf[pos+6])) * decimation_scale<InputBits>::scaleIn;
+        yimag = (IQOrder ? (- buf[pos+5] - buf[pos+6]) : (buf[pos+7] - buf[pos+4])) * decimation_scale<InputBits>::scaleIn;
         (**it).setReal(xreal);
         (**it).setImag(yimag);
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate2_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate2_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal, yimag;
 
     for (int pos = 0; pos < nbIAndQ - 7; pos += 8)
     {
-        xreal = (buf[pos+1] - buf[pos+2]) * decimation_scale<InputBits>::scaleIn;
-        yimag = (- buf[pos+0] - buf[pos+3]) * decimation_scale<InputBits>::scaleIn;
+        xreal = (IQOrder ? (buf[pos+1] - buf[pos+2]) : (- buf[pos+0] - buf[pos+3])) * decimation_scale<InputBits>::scaleIn;
+        yimag = (IQOrder ? (- buf[pos+0] - buf[pos+3]) : (buf[pos+1] - buf[pos+2])) * decimation_scale<InputBits>::scaleIn;
         (**it).setReal(xreal);
         (**it).setImag(yimag);
         ++(*it);
 
-        xreal = (buf[pos+6] - buf[pos+5]) * decimation_scale<InputBits>::scaleIn;
-        yimag = (buf[pos+4] + buf[pos+7]) * decimation_scale<InputBits>::scaleIn;
+        xreal = (IQOrder ? (buf[pos+6] - buf[pos+5]) : (buf[pos+4] + buf[pos+7])) * decimation_scale<InputBits>::scaleIn;
+        yimag = (IQOrder ? (buf[pos+4] + buf[pos+7]) : (buf[pos+6] - buf[pos+5])) * decimation_scale<InputBits>::scaleIn;
         (**it).setReal(xreal);
         (**it).setImag(yimag);
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate2_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate2_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float intbuf[2];
 
@@ -163,15 +143,19 @@ void DecimatorsIF<T, InputBits>::decimate2_cen(FSampleVector::iterator* it, cons
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate4_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate4_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal, yimag;
 
     for (int pos = 0; pos < nbIAndQ - 7; pos += 8)
     {
-        xreal = (buf[pos+0] - buf[pos+3] + buf[pos+7] - buf[pos+4]) * decimation_scale<InputBits>::scaleIn;
-        yimag = (buf[pos+1] - buf[pos+5] + buf[pos+2] - buf[pos+6]) * decimation_scale<InputBits>::scaleIn;
+        xreal = IQOrder ?
+            (buf[pos+0] - buf[pos+3] + buf[pos+7] - buf[pos+4]) * decimation_scale<InputBits>::scaleIn :
+            (buf[pos+1] - buf[pos+5] + buf[pos+2] - buf[pos+6]) * decimation_scale<InputBits>::scaleIn;
+        yimag = IQOrder ?
+            (buf[pos+1] - buf[pos+5] + buf[pos+2] - buf[pos+6]) * decimation_scale<InputBits>::scaleIn :
+            (buf[pos+0] - buf[pos+3] + buf[pos+7] - buf[pos+4]) * decimation_scale<InputBits>::scaleIn;
 
         (**it).setReal(xreal);
         (**it).setImag(yimag);
@@ -180,15 +164,19 @@ void DecimatorsIF<T, InputBits>::decimate4_inf(FSampleVector::iterator* it, cons
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate4_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate4_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal, yimag;
 
     for (int pos = 0; pos < nbIAndQ - 7; pos += 8)
     {
-        xreal = (buf[pos+1] - buf[pos+2] - buf[pos+5] + buf[pos+6]) * decimation_scale<InputBits>::scaleIn;
-        yimag = (- buf[pos+0] - buf[pos+3] + buf[pos+4] + buf[pos+7]) * decimation_scale<InputBits>::scaleIn;
+        xreal = IQOrder ?
+            (buf[pos+1] - buf[pos+2] - buf[pos+5] + buf[pos+6]) * decimation_scale<InputBits>::scaleIn :
+            (- buf[pos+0] - buf[pos+3] + buf[pos+4] + buf[pos+7]) * decimation_scale<InputBits>::scaleIn;
+        yimag = IQOrder ?
+            (- buf[pos+0] - buf[pos+3] + buf[pos+4] + buf[pos+7]) * decimation_scale<InputBits>::scaleIn :
+            (buf[pos+1] - buf[pos+2] - buf[pos+5] + buf[pos+6]) * decimation_scale<InputBits>::scaleIn;
 
         (**it).setReal(xreal);
         (**it).setImag(yimag);
@@ -197,8 +185,8 @@ void DecimatorsIF<T, InputBits>::decimate4_sup(FSampleVector::iterator* it, cons
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate4_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate4_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float intbuf[4];
 
@@ -232,8 +220,8 @@ void DecimatorsIF<T, InputBits>::decimate4_cen(FSampleVector::iterator* it, cons
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate8_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate8_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[2], yimag[2];
 
@@ -246,17 +234,17 @@ void DecimatorsIF<T, InputBits>::decimate8_inf(FSampleVector::iterator* it, cons
         xreal[1] = (buf[pos+0] - buf[pos+3] + buf[pos+7] - buf[pos+4]);
         yimag[1] = (buf[pos+1] - buf[pos+5] + buf[pos+2] - buf[pos+6]);
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
 
-        (**it).setReal(xreal[1] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[1] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[1] : yimag[1]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[1] : xreal[1]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate8_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate8_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[2], yimag[2];
 
@@ -269,17 +257,17 @@ void DecimatorsIF<T, InputBits>::decimate8_sup(FSampleVector::iterator* it, cons
         xreal[1] = (buf[pos+1] - buf[pos+2] - buf[pos+5] + buf[pos+6]);
         yimag[1] = (- buf[pos+0] - buf[pos+3] + buf[pos+4] + buf[pos+7]);
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
 
-        (**it).setReal(xreal[1] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[1] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[1] : yimag[1]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[1] : xreal[1]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate8_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate8_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float intbuf[8];
 
@@ -338,8 +326,8 @@ void DecimatorsIF<T, InputBits>::decimate8_cen(FSampleVector::iterator* it, cons
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate16_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate16_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[4], yimag[4];
 
@@ -352,20 +340,20 @@ void DecimatorsIF<T, InputBits>::decimate16_inf(FSampleVector::iterator* it, con
             pos += 8;
         }
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
-        m_decimator2.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
 
         m_decimator4.myDecimate(xreal[1], yimag[1], &xreal[3], &yimag[3]);
 
-        (**it).setReal(xreal[3] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[3] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[3] : yimag[3]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[3] : xreal[3]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate16_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate16_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[4], yimag[4];
 
@@ -378,20 +366,20 @@ void DecimatorsIF<T, InputBits>::decimate16_sup(FSampleVector::iterator* it, con
             pos += 8;
         }
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
-        m_decimator2.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
 
         m_decimator4.myDecimate(xreal[1], yimag[1], &xreal[3], &yimag[3]);
 
-        (**it).setReal(xreal[3] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[3] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[3] : yimag[3]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[3] : xreal[3]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate16_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate16_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float intbuf[16];
 
@@ -499,8 +487,8 @@ void DecimatorsIF<T, InputBits>::decimate16_cen(FSampleVector::iterator* it, con
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate32_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate32_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[8], yimag[8];
 
@@ -513,25 +501,25 @@ void DecimatorsIF<T, InputBits>::decimate32_inf(FSampleVector::iterator* it, con
             pos += 8;
         }
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
-        m_decimator2.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
-        m_decimator2.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
-        m_decimator2.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
+        m_decimator2s.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
+        m_decimator2s.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
 
         m_decimator4.myDecimate(xreal[1], yimag[1], &xreal[3], &yimag[3]);
         m_decimator4.myDecimate(xreal[5], yimag[5], &xreal[7], &yimag[7]);
 
         m_decimator8.myDecimate(xreal[3], yimag[3], &xreal[7], &yimag[7]);
 
-        (**it).setReal(xreal[7] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[7] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[7] : yimag[7]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[7] : xreal[7]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate32_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate32_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[8], yimag[8];
 
@@ -544,25 +532,25 @@ void DecimatorsIF<T, InputBits>::decimate32_sup(FSampleVector::iterator* it, con
             pos += 8;
         }
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
-        m_decimator2.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
-        m_decimator2.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
-        m_decimator2.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
+        m_decimator2s.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
+        m_decimator2s.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
 
         m_decimator4.myDecimate(xreal[1], yimag[1], &xreal[3], &yimag[3]);
         m_decimator4.myDecimate(xreal[5], yimag[5], &xreal[7], &yimag[7]);
 
         m_decimator8.myDecimate(xreal[3], yimag[3], &xreal[7], &yimag[7]);
 
-        (**it).setReal(xreal[7] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[7] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[7] : yimag[7]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[7] : xreal[7]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate32_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate32_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float intbuf[32];
 
@@ -767,8 +755,8 @@ void DecimatorsIF<T, InputBits>::decimate32_cen(FSampleVector::iterator* it, con
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate64_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate64_inf(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[16], yimag[16];
 
@@ -781,14 +769,14 @@ void DecimatorsIF<T, InputBits>::decimate64_inf(FSampleVector::iterator* it, con
             pos += 8;
         }
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
-        m_decimator2.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
-        m_decimator2.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
-        m_decimator2.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
-        m_decimator2.myDecimate(xreal[8], yimag[8], &xreal[9], &yimag[9]);
-        m_decimator2.myDecimate(xreal[10], yimag[10], &xreal[11], &yimag[11]);
-        m_decimator2.myDecimate(xreal[12], yimag[12], &xreal[13], &yimag[13]);
-        m_decimator2.myDecimate(xreal[14], yimag[14], &xreal[15], &yimag[15]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
+        m_decimator2s.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
+        m_decimator2s.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
+        m_decimator2s.myDecimate(xreal[8], yimag[8], &xreal[9], &yimag[9]);
+        m_decimator2s.myDecimate(xreal[10], yimag[10], &xreal[11], &yimag[11]);
+        m_decimator2s.myDecimate(xreal[12], yimag[12], &xreal[13], &yimag[13]);
+        m_decimator2s.myDecimate(xreal[14], yimag[14], &xreal[15], &yimag[15]);
 
         m_decimator4.myDecimate(xreal[1], yimag[1], &xreal[3], &yimag[3]);
         m_decimator4.myDecimate(xreal[5], yimag[5], &xreal[7], &yimag[7]);
@@ -800,15 +788,15 @@ void DecimatorsIF<T, InputBits>::decimate64_inf(FSampleVector::iterator* it, con
 
         m_decimator16.myDecimate(xreal[7], yimag[7], &xreal[15], &yimag[15]);
 
-        (**it).setReal(xreal[15] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[15] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[15] : yimag[15]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[15] : xreal[15]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate64_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate64_sup(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float xreal[16], yimag[16];
 
@@ -821,14 +809,14 @@ void DecimatorsIF<T, InputBits>::decimate64_sup(FSampleVector::iterator* it, con
             pos += 8;
         }
 
-        m_decimator2.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
-        m_decimator2.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
-        m_decimator2.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
-        m_decimator2.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
-        m_decimator2.myDecimate(xreal[8], yimag[8], &xreal[9], &yimag[9]);
-        m_decimator2.myDecimate(xreal[10], yimag[10], &xreal[11], &yimag[11]);
-        m_decimator2.myDecimate(xreal[12], yimag[12], &xreal[13], &yimag[13]);
-        m_decimator2.myDecimate(xreal[14], yimag[14], &xreal[15], &yimag[15]);
+        m_decimator2s.myDecimate(xreal[0], yimag[0], &xreal[1], &yimag[1]);
+        m_decimator2s.myDecimate(xreal[2], yimag[2], &xreal[3], &yimag[3]);
+        m_decimator2s.myDecimate(xreal[4], yimag[4], &xreal[5], &yimag[5]);
+        m_decimator2s.myDecimate(xreal[6], yimag[6], &xreal[7], &yimag[7]);
+        m_decimator2s.myDecimate(xreal[8], yimag[8], &xreal[9], &yimag[9]);
+        m_decimator2s.myDecimate(xreal[10], yimag[10], &xreal[11], &yimag[11]);
+        m_decimator2s.myDecimate(xreal[12], yimag[12], &xreal[13], &yimag[13]);
+        m_decimator2s.myDecimate(xreal[14], yimag[14], &xreal[15], &yimag[15]);
 
         m_decimator4.myDecimate(xreal[1], yimag[1], &xreal[3], &yimag[3]);
         m_decimator4.myDecimate(xreal[5], yimag[5], &xreal[7], &yimag[7]);
@@ -840,15 +828,15 @@ void DecimatorsIF<T, InputBits>::decimate64_sup(FSampleVector::iterator* it, con
 
         m_decimator16.myDecimate(xreal[7], yimag[7], &xreal[15], &yimag[15]);
 
-        (**it).setReal(xreal[15] * decimation_scale<InputBits>::scaleIn);
-        (**it).setImag(yimag[15] * decimation_scale<InputBits>::scaleIn);
+        (**it).setReal((IQOrder ? xreal[15] : yimag[15]) * decimation_scale<InputBits>::scaleIn);
+        (**it).setImag((IQOrder ? yimag[15] : xreal[15]) * decimation_scale<InputBits>::scaleIn);
 
         ++(*it);
     }
 }
 
-template<typename T, uint InputBits>
-void DecimatorsIF<T, InputBits>::decimate64_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
+template<typename T, uint InputBits, bool IQOrder>
+void DecimatorsIF<T, InputBits, IQOrder>::decimate64_cen(FSampleVector::iterator* it, const T* buf, qint32 nbIAndQ)
 {
     float intbuf[64];
 

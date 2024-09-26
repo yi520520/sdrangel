@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // OpenGL interface modernization.                                               //
 // See: http://doc.qt.io/qt-5/qopenglshaderprogram.html                          //
@@ -23,6 +26,8 @@
 #define SDRGUI_GUI_SAMPLINGDEVICEDIALOG_H_
 
 #include <QDialog>
+#include <QProgressDialog>
+
 #include <vector>
 
 #include "export.h"
@@ -31,23 +36,54 @@ namespace Ui {
     class SamplingDeviceDialog;
 }
 
+class SDRGUI_API SamplingDeviceDialogWorker : public QObject {
+    Q_OBJECT
+
+public:
+    SamplingDeviceDialogWorker(int deviceType) :
+        m_deviceType(deviceType)
+    {
+    }
+    void enumerateDevices();
+
+signals:
+    void finishedWork();
+
+private slots:
+
+private:
+    int m_deviceType;
+};
+
 class SDRGUI_API SamplingDeviceDialog : public QDialog {
     Q_OBJECT
 
 public:
-    explicit SamplingDeviceDialog(int deviceType, int deviceTabIndex, QWidget* parent = 0);
+    explicit SamplingDeviceDialog(int deviceType, QWidget* parent = nullptr);
     ~SamplingDeviceDialog();
     int getSelectedDeviceIndex() const { return m_selectedDeviceIndex; }
+    void setSelectedDeviceIndex(int deviceIndex);
+    void getDeviceId(QString& id) const;
+    int exec();
+    bool hasChanged() const { return m_hasChanged; }
 
 private:
     Ui::SamplingDeviceDialog* ui;
     int m_deviceType;
-    int m_deviceTabIndex;
     int m_selectedDeviceIndex;
     std::vector<int> m_deviceIndexes;
+    bool m_hasChanged;
+    QProgressDialog *m_progressDialog;
+
+    void displayDevices();
 
 private slots:
+    void on_deviceSelect_currentIndexChanged(int index);
+    void on_refreshDevices_clicked();
     void accept();
+    void reject();
+    void enumeratingDevice(const QString &deviceId);
 };
 
 #endif /* SDRGUI_GUI_SAMPLINGDEVICEDIALOG_H_ */
+

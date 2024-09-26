@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Vort                                                       //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Vort <vvort@yandex.ru>                                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,13 +26,61 @@
 #include <QtWebSockets/QtWebSockets>
 
 #include "dsp/samplesinkfifo.h"
+#include "util/message.h"
+
+class MessageQueue;
 
 class KiwiSDRWorker : public QObject {
 	Q_OBJECT
 
 public:
+	class MsgReportSampleRate : public Message {
+		MESSAGE_CLASS_DECLARATION
+
+	public:
+		int getSampleRate() const { return m_sampleRate; }
+
+		static MsgReportSampleRate* create(int sampleRate) {
+			return new MsgReportSampleRate(sampleRate);
+		}
+
+	private:
+		int m_sampleRate;
+
+		MsgReportSampleRate(int sampleRate) :
+			Message(),
+			m_sampleRate(sampleRate)
+		{ }
+	};
+
+	class MsgReportPosition : public Message {
+		MESSAGE_CLASS_DECLARATION
+
+	public:
+		float getLatitude() const { return m_latitude; }
+		float getLongitude() const { return m_longitude; }
+		float getAltitude() const { return m_altitude; }
+
+		static MsgReportPosition* create(float latitude, float longitude, float altitude) {
+			return new MsgReportPosition(latitude, longitude, altitude);
+		}
+
+	private:
+		float m_latitude;
+		float m_longitude;
+		float m_altitude;
+
+		MsgReportPosition(float latitude, float longitude, float altitude) :
+			Message(),
+			m_latitude(latitude),
+			m_longitude(longitude),
+			m_altitude(altitude)
+		{ }
+	};
+
 	KiwiSDRWorker(SampleSinkFifo* sampleFifo);
     int getStatus() const { return m_status; }
+    void setInputMessageQueue(MessageQueue *messageQueue) { m_inputMessageQueue = messageQueue; }
 
 private:
 	QTimer m_timer;
@@ -39,6 +91,8 @@ private:
 
 	QString m_serverAddress;
 	uint64_t m_centerFrequency;
+    int m_sampleRate;
+    MessageQueue *m_inputMessageQueue;
 
 	uint32_t m_gain;
 	bool m_useAGC;

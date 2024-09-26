@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,14 +21,14 @@
 #ifndef INCLUDE_DSDDEMODGUI_H
 #define INCLUDE_DSDDEMODGUI_H
 
-#include <plugin/plugininstancegui.h>
 #include <QMenu>
 
-#include "gui/rollupwidget.h"
+#include "channel/channelgui.h"
 #include "dsp/dsptypes.h"
 #include "dsp/channelmarker.h"
 #include "dsp/movingaverage.h"
 #include "util/messagequeue.h"
+#include "settings/rollupstate.h"
 
 #include "dsddemodsettings.h"
 #include "dsdstatustextdialog.h"
@@ -34,7 +36,6 @@
 class PluginAPI;
 class DeviceUISet;
 class BasebandSampleSink;
-class ScopeVis;
 class ScopeVisXY;
 class DSDDemod;
 
@@ -42,23 +43,28 @@ namespace Ui {
 	class DSDDemodGUI;
 }
 
-class DSDDemodGUI : public RollupWidget, public PluginInstanceGUI {
+class DSDDemodGUI : public ChannelGUI {
 	Q_OBJECT
 
 public:
 	static DSDDemodGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel);
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
-
 	void resetToDefaults();
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
+    virtual void setWorkspaceIndex(int index) { m_settings.m_workspaceIndex = index; };
+    virtual int getWorkspaceIndex() const { return m_settings.m_workspaceIndex; };
+    virtual void setGeometryBytes(const QByteArray& blob) { m_settings.m_geometryBytes = blob; };
+    virtual QByteArray getGeometryBytes() const { return m_settings.m_geometryBytes; };
+    virtual QString getTitle() const { return m_settings.m_title; };
+    virtual QColor getTitleColor() const  { return m_settings.m_rgbColor; };
+    virtual void zetHidden(bool hidden) { m_settings.m_hidden = hidden; }
+    virtual bool getHidden() const { return m_settings.m_hidden; }
+    virtual ChannelMarker& getChannelMarker() { return m_channelMarker; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
+    virtual void setStreamIndex(int streamIndex) { m_settings.m_streamIndex = streamIndex; }
 
 public slots:
 	void channelMarkerChangedByCursor();
@@ -78,8 +84,12 @@ private:
 	PluginAPI* m_pluginAPI;
 	DeviceUISet* m_deviceUISet;
 	ChannelMarker m_channelMarker;
+	RollupState m_rollupState;
 	DSDDemodSettings m_settings;
+    qint64 m_deviceCenterFrequency;
+    int m_basebandSampleRate;
 	bool m_doApplySettings;
+    QList<DSDDemodSettings::AvailableAMBEFeature> m_availableAMBEFeatures;
 
     ScopeVisXY* m_scopeVisXY;
 
@@ -91,6 +101,7 @@ private:
     bool m_tdmaStereo;
     bool m_audioMute;
 	bool m_squelchOpen;
+    int  m_audioSampleRate;
 	uint32_t m_tickCount;
 
 	float m_myLatitude;
@@ -106,10 +117,14 @@ private:
 	void blockApplySettings(bool block);
 	void applySettings(bool force = false);
     void displaySettings();
+    void updateAMBEFeaturesList();
 	void updateMyPosition();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
+    void updateAbsoluteCenterFrequency();
 
 	void leaveEvent(QEvent*);
-	void enterEvent(QEvent*);
+	void enterEvent(EnterEventType*);
 
 private slots:
     void on_deltaFrequency_changed(qint64 value);
@@ -131,11 +146,13 @@ private slots:
     void on_highPassFilter_toggled(bool checked);
     void on_audioMute_toggled(bool checked);
     void on_symbolPLLLock_toggled(bool checked);
+    void on_ambeSupport_clicked(bool checked);
+    void on_ambeFeatures_currentIndexChanged(int index);
     void onWidgetRolled(QWidget* widget, bool rollDown);
     void onMenuDialogCalled(const QPoint& p);
     void on_viewStatusLog_clicked();
     void handleInputMessages();
-    void audioSelect();
+    void audioSelect(const QPoint& p);
     void tick();
 };
 

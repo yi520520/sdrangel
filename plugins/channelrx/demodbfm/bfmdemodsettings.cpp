@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,7 +20,7 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 
@@ -29,8 +32,9 @@ const int BFMDemodSettings::m_rfBW[] = {
 };
 
 BFMDemodSettings::BFMDemodSettings() :
-    m_channelMarker(0),
-    m_spectrumGUI(0)
+    m_channelMarker(nullptr),
+    m_spectrumGUI(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -49,11 +53,14 @@ void BFMDemodSettings::resetToDefaults()
     m_rgbColor = QColor(80, 120, 228).rgb();
     m_title = "Broadcast FM Demod";
     m_audioDeviceName = AudioDeviceManager::m_defaultDeviceName;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray BFMDemodSettings::serialize() const
@@ -84,6 +91,16 @@ QByteArray BFMDemodSettings::serialize() const
     s.writeU32(16, m_reverseAPIPort);
     s.writeU32(17, m_reverseAPIDeviceIndex);
     s.writeU32(18, m_reverseAPIChannelIndex);
+    s.writeS32(19, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(20, m_rollupState->serialize());
+    }
+
+    s.writeBool(21, m_rdsActive);
+    s.writeS32(22, m_workspaceIndex);
+    s.writeBlob(23, m_geometryBytes);
+    s.writeBool(24, m_hidden);
 
     return s.final();
 }
@@ -117,18 +134,19 @@ bool BFMDemodSettings::deserialize(const QByteArray& data)
         m_squelch = tmp;
         d.readU32(7, &m_rgbColor);
 
-        d.readBlob(8, &bytetmp);
 
-        if (m_spectrumGUI) {
+        if (m_spectrumGUI)
+        {
+            d.readBlob(8, &bytetmp);
             m_spectrumGUI->deserialize(bytetmp);
         }
 
         d.readBool(9, &m_audioStereo, false);
         d.readBool(10, &m_lsbStereo, false);
 
-        d.readBlob(11, &bytetmp);
-
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
+            d.readBlob(11, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
 
@@ -148,6 +166,18 @@ bool BFMDemodSettings::deserialize(const QByteArray& data)
         m_reverseAPIDeviceIndex = utmp > 99 ? 99 : utmp;
         d.readU32(18, &utmp, 0);
         m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
+        d.readS32(19, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(20, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readBool(21, &m_rdsActive, false);
+        d.readS32(22, &m_workspaceIndex, 0);
+        d.readBlob(23, &m_geometryBytes);
+        d.readBool(24, &m_hidden, false);
 
         return true;
     }

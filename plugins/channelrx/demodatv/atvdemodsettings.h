@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -39,88 +40,67 @@ struct ATVDemodSettings
     {
         ATVStdPAL625,
         ATVStdPAL525,
-        ATVStd405,
+        ATVStd819,
         ATVStdShortInterleaved,
         ATVStdShort,
         ATVStdHSkip
     };
 
-    // Added fields that correspond directly to UI inputs
-    int m_lineTimeFactor;     //!< added: +/- 100 something
-    int m_topTimeFactor;      //!< added: +/-  30 something
-    int m_fpsIndex;           //!< added: FPS list index
-    bool m_halfImage;         //!< added: true => m_fltRatioOfRowsToDisplay = 0.5, false => m_fltRatioOfRowsToDisplay = 1.0
-    int m_RFBandwidthFactor;  //!< added: [1:100]
-    int m_OppBandwidthFactor; //!< added: [0:100]
-    int m_nbLinesIndex;       //!< added: #lines list index
+    // RF settings
+    qint64        m_inputFrequencyOffset; //!< Offset from baseband center frequency
+    int           m_bfoFrequency;         //!< BFO frequency (Hz)
+    ATVModulation m_atvModulation;        //!< RF modulation type
+    float         m_fmDeviation;          //!< Expected FM deviation
+    int           m_amScalingFactor;      //!< Factor in % to apply to detected signal scale
+    int           m_amOffsetFactor;       //!< Factor in % to apply to adjusted signal scale
+    bool          m_fftFiltering;         //!< Toggle FFT filter
+    unsigned int  m_fftOppBandwidth;      //!< FFT filter lower frequency cutoff (Hz)
+    unsigned int  m_fftBandwidth;         //!< FFT filter high frequency cutoff (Hz)
 
-    // Former RF
-    int           m_intFrequencyOffset;
-    ATVModulation m_enmModulation;
-    float         m_fltRFBandwidth;
-    float         m_fltRFOppBandwidth;
-    bool          m_blnFFTFiltering;
-    bool          m_blndecimatorEnable;
-    float         m_fltBFOFrequency;
-    float         m_fmDeviation;
+    // ATV settings
+    int           m_nbLines;              //!< Number of lines per full frame
+    int           m_fps;                  //!< Number of frames per second
+    ATVStd        m_atvStd;               //!< Standard
+    bool          m_hSync;                //!< Enable/disable horizontal sybchronization
+    bool          m_vSync;                //!< Enable/disable vertical synchronization
+    bool          m_invertVideo;          //!< Toggle invert video
+    bool          m_halfFrames;           //!< Toggle half frames processing
+    float         m_levelSynchroTop;      //!< Horizontal synchronization top level (0.0 to 1.0 scale)
+    float         m_levelBlack;           //!< Black level (0.0 to 1.0 scale)
 
-    // Former <none>
-    int m_intSampleRate;
-    ATVStd m_enmATVStandard;
-    int m_intNumberOfLines;
-    float m_fltLineDuration;
-    float m_fltTopDuration;
-    float m_fltFramePerS;
-    float m_fltRatioOfRowsToDisplay;
-    float m_fltVoltLevelSynchroTop;
-    float m_fltVoltLevelSynchroBlack;
-    bool m_blnHSync;
-    bool m_blnVSync;
-    bool m_blnInvertVideo;
-    int m_intVideoTabIndex;
-
-    // Former private
-    int m_intTVSampleRate;
-    int m_intNumberSamplePerLine;
-
-    // new
+    // common channel settings
     quint32 m_rgbColor;
     QString m_title;
     QString m_udpAddress;
     uint16_t m_udpPort;
     Serializable *m_channelMarker;
+    int m_streamIndex;
+    bool m_useReverseAPI;
+    QString m_reverseAPIAddress;
+    uint16_t m_reverseAPIPort;
+    uint16_t m_reverseAPIDeviceIndex;
+    uint16_t m_reverseAPIChannelIndex;
+    Serializable *m_rollupState;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
 
     ATVDemodSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
 
-    int getEffectiveSampleRate();
-    float getLineTime();
-    int getLineTimeFactor();
-    float getTopTime();
-    int getTopTimeFactor();
-    int getRFSliderDivisor();
+    int getRFSliderDivisor(unsigned int sampleRate);
 
-    void convertFromUIValues();
-    void convertToUIValues();
-
-    static float getFps(int fpsIndex);
+    static int getFps(int fpsIndex);
+    static int getFpsIndex(int fps);
     static int getNumberOfLines(int nbLinesIndex);
-    static int getFpsIndex(float fps);
     static int getNumberOfLinesIndex(int nbLines);
-    static float getNominalLineTime(int nbLinesIndex, int fpsIndex);
-
-private:
-    void lineTimeUpdate();
-    void topTimeUpdate();
-
-    float m_fltLineTimeMultiplier;
-    float m_fltTopTimeMultiplier;
-    int m_rfSliderDivisor;
+    static float getNominalLineTime(int nbLines, int fps);
+    static float getRFBandwidthDivisor(ATVModulation modulation);
+    static void getBaseValues(int sampleRate, int linesPerSecond, uint32_t& nbPointsPerLine);
 };
-
-
 
 #endif /* PLUGINS_CHANNELRX_DEMODATV_ATVDEMODSETTINGS_H_ */

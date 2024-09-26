@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2018-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,7 +19,7 @@
 #include "audioselectdialog.h"
 #include "ui_audioselectdialog.h"
 
-AudioSelectDialog::AudioSelectDialog(AudioDeviceManager* audioDeviceManager, const QString& deviceName, bool input, QWidget* parent) :
+AudioSelectDialog::AudioSelectDialog(const AudioDeviceManager* audioDeviceManager, const QString& deviceName, bool input, QWidget* parent) :
     QDialog(parent),
     m_selected(false),
     ui(new Ui::AudioSelectDialog),
@@ -33,7 +33,6 @@ AudioSelectDialog::AudioSelectDialog(AudioDeviceManager* audioDeviceManager, con
 
     // panel
 
-    QAudioDeviceInfo defaultDeviceInfo = input ? QAudioDeviceInfo::defaultInputDevice() : QAudioDeviceInfo::defaultOutputDevice();
     defaultItem = new QTreeWidgetItem(ui->audioTree);
     defaultItem->setText(1, AudioDeviceManager::m_defaultDeviceName);
     bool deviceFound = getDeviceInfos(input, AudioDeviceManager::m_defaultDeviceName, systemDefault, sampleRate);
@@ -41,9 +40,9 @@ AudioSelectDialog::AudioSelectDialog(AudioDeviceManager* audioDeviceManager, con
     defaultItem->setText(2, tr("%1").arg(sampleRate));
     defaultItem->setTextAlignment(2, Qt::AlignRight);
 
-    QList<QAudioDeviceInfo> devices = input ? m_audioDeviceManager->getInputDevices() : m_audioDeviceManager->getOutputDevices();
+    const QList<AudioDeviceInfo> &devices = input ? AudioDeviceInfo::availableInputDevices() : AudioDeviceInfo::availableOutputDevices();
 
-    for(QList<QAudioDeviceInfo>::const_iterator it = devices.begin(); it != devices.end(); ++it)
+    for(QList<AudioDeviceInfo>::const_iterator it = devices.begin(); it != devices.end(); ++it)
     {
         treeItem = new QTreeWidgetItem(ui->audioTree);
         treeItem->setText(1, it->deviceName());
@@ -113,7 +112,7 @@ bool AudioSelectDialog::getDeviceInfos(bool input, const QString& deviceName, bo
     {
         AudioDeviceManager::InputDeviceInfo inDeviceInfo;
         found = m_audioDeviceManager->getInputDeviceInfo(deviceName, inDeviceInfo);
-        systemDefault = deviceName == QAudioDeviceInfo::defaultInputDevice().deviceName();
+        systemDefault = deviceName == AudioDeviceInfo::defaultInputDevice().deviceName();
 
         if (found) {
             sampleRate = inDeviceInfo.sampleRate;
@@ -125,7 +124,7 @@ bool AudioSelectDialog::getDeviceInfos(bool input, const QString& deviceName, bo
     {
         AudioDeviceManager::OutputDeviceInfo outDeviceInfo;
         found = m_audioDeviceManager->getOutputDeviceInfo(deviceName, outDeviceInfo);
-        systemDefault = deviceName == QAudioDeviceInfo::defaultOutputDevice().deviceName();
+        systemDefault = deviceName == AudioDeviceInfo::defaultOutputDevice().deviceName();
 
         if (found) {
             sampleRate = outDeviceInfo.sampleRate;

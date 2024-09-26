@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,15 +24,17 @@
 #include "udpsinkgui.h"
 #endif
 #include "udpsink.h"
+#include "udpsinkwebapiadapter.h"
 #include "udpsinkplugin.h"
 
 const PluginDescriptor UDPSinkPlugin::m_pluginDescriptor = {
-	QString("UDP Channel Sink"),
-	QString("4.5.2"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    UDPSink::m_channelId,
+	QStringLiteral("UDP Channel Sink"),
+    QStringLiteral("7.20.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 UDPSinkPlugin::UDPSinkPlugin(QObject* parent) :
@@ -53,27 +56,39 @@ void UDPSinkPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI->registerRxChannel(UDPSink::m_channelIdURI, UDPSink::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* UDPSinkPlugin::createRxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSink *rxChannel)
+void UDPSinkPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		UDPSink *instance = new UDPSink(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* UDPSinkPlugin::createRxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSink *rxChannel) const
+{
+	(void) deviceUISet;
+	(void) rxChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* UDPSinkPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+ChannelGUI* UDPSinkPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
 	return UDPSinkGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 }
 #endif
 
-BasebandSampleSink* UDPSinkPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* UDPSinkPlugin::createChannelWebAPIAdapter() const
 {
-    return new UDPSink(deviceAPI);
+	return new UDPSinkWebAPIAdapter();
 }
-
-ChannelAPI* UDPSinkPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new UDPSink(deviceAPI);
-}
-

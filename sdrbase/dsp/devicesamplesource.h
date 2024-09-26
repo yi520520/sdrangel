@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -32,6 +33,7 @@ namespace SWGSDRangel
     class SWGDeviceSettings;
     class SWGDeviceState;
     class SWGDeviceReport;
+    class SWGDeviceActions;
 }
 
 class SDRBASE_API DeviceSampleSource : public QObject {
@@ -117,6 +119,17 @@ public:
         return 501;
     }
 
+    virtual int webapiActionsPost(
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceActions& actions,
+            QString& errorMessage)
+    {
+        (void) deviceSettingsKeys;
+        (void) actions;
+        errorMessage = "Not implemented";
+        return 501;
+    }
+
 	MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
 	virtual void setMessageQueueToGUI(MessageQueue *queue) = 0; // pure virtual so that child classes must have to deal with this
 	MessageQueue *getMessageQueueToGUI() { return m_guiMessageQueue; }
@@ -151,6 +164,10 @@ public:
 
 protected slots:
 	void handleInputMessages();
+
+signals:
+    void positionChanged(float latitude, float longitude, float altitude);
+    void directionChanged(bool isotropic, float azimuth, float elevation);
 
 protected:
     SampleSinkFifo m_sampleFifo;

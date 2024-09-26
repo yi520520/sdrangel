@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -25,12 +29,12 @@
 #include <QNetworkRequest>
 
 #include "dsp/devicesamplesource.h"
+#include "dsp/replaybuffer.h"
 #include "limesdr/devicelimesdrshared.h"
 #include "limesdrinputsettings.h"
 
 class DeviceAPI;
 class LimeSDRInputThread;
-class FileRecord;
 class QNetworkAccessManager;
 class QNetworkReply;
 
@@ -43,20 +47,22 @@ public:
 
     public:
         const LimeSDRInputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureLimeSDR* create(const LimeSDRInputSettings& settings, bool force)
-        {
-            return new MsgConfigureLimeSDR(settings, force);
+        static MsgConfigureLimeSDR* create(const LimeSDRInputSettings& settings, const QList<QString>& settingsKeys, bool force) {
+            return new MsgConfigureLimeSDR(settings, settingsKeys, force);
         }
 
     private:
         LimeSDRInputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureLimeSDR(const LimeSDRInputSettings& settings, bool force) :
+        MsgConfigureLimeSDR(const LimeSDRInputSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
@@ -166,25 +172,6 @@ public:
         { }
     };
 
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
-        { }
-    };
-
     class MsgStartStop : public Message {
         MESSAGE_CLASS_DECLARATION
 
@@ -204,7 +191,45 @@ public:
         { }
     };
 
-    LimeSDRInput(DeviceAPI *deviceAPI);
+    class MsgCalibrationResult : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        bool getSuccess() const { return m_success; }
+
+        static MsgCalibrationResult* create(bool success) {
+            return new MsgCalibrationResult(success);
+        }
+
+    protected:
+        bool m_success;
+
+        MsgCalibrationResult(bool success) :
+            Message(),
+            m_success(success)
+        { }
+    };
+
+   class MsgSaveReplay : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        QString getFilename() const { return m_filename; }
+
+        static MsgSaveReplay* create(const QString& filename) {
+            return new MsgSaveReplay(filename);
+        }
+
+    protected:
+        QString m_filename;
+
+        MsgSaveReplay(const QString& filename) :
+            Message(),
+            m_filename(filename)
+        { }
+    };
+
+   LimeSDRInput(DeviceAPI *deviceAPI);
     virtual ~LimeSDRInput();
     virtual void destroy();
 
@@ -247,6 +272,15 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const LimeSDRInputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            LimeSDRInputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     std::size_t getChannelIndex();
     void getLORange(float& minF, float& maxF) const;
     void getSRRange(float& minF, float& maxF) const;
@@ -256,7 +290,7 @@ public:
 
 private:
     DeviceAPI *m_deviceAPI;
-    QMutex m_mutex;
+    QRecursiveMutex m_mutex;
     LimeSDRInputSettings m_settings;
     LimeSDRInputThread* m_limeSDRInputThread;
     QString m_deviceDescription;
@@ -264,9 +298,9 @@ private:
     DeviceLimeSDRShared m_deviceShared;
     bool m_channelAcquired;
     lms_stream_t m_streamId;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
+    ReplayBuffer<qint16> m_replayBuffer;
 
     bool openDevice();
     void closeDevice();
@@ -276,10 +310,9 @@ private:
     void resumeRxBuddies();
     void suspendTxBuddies();
     void resumeTxBuddies();
-    bool applySettings(const LimeSDRInputSettings& settings, bool force = false, bool forceNCOFrequency = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const LimeSDRInputSettings& settings);
+    bool applySettings(const LimeSDRInputSettings& settings, const QList<QString>& settingsKeys, bool force = false, bool forceNCOFrequency = false);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const LimeSDRInputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const LimeSDRInputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

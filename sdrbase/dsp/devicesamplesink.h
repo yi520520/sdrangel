@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016-2019 F4EXB                                                 //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -31,6 +32,7 @@ namespace SWGSDRangel
     class SWGDeviceSettings;
     class SWGDeviceState;
     class SWGDeviceReport;
+    class SWGDeviceActions;
 }
 
 class SDRBASE_API DeviceSampleSink : public QObject {
@@ -107,6 +109,17 @@ public:
             QString& errorMessage)
     {
         (void) response;
+        errorMessage = "Not implemented";
+        return 501;
+    }
+
+    virtual int webapiActionsPost(
+            const QStringList& deviceActionsKeys,
+            SWGSDRangel::SWGDeviceActions& actions,
+            QString& errorMessage)
+    {
+        (void) deviceActionsKeys;
+        (void) actions;
         errorMessage = "Not implemented";
         return 501;
     }

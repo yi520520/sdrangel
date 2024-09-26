@@ -1,4 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 // Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -43,7 +46,7 @@ void XTRXInputSettings::resetToDefaults()
     m_extClock = false;
     m_extClockFreq = 0; // Auto
     m_pwrmode = 1;
-    m_fileRecordName = "";
+    m_iqOrder = true;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
@@ -71,11 +74,11 @@ QByteArray XTRXInputSettings::serialize() const
     s.writeBool(18, m_extClock);
     s.writeU32(19, m_extClockFreq);
     s.writeU32(20, m_pwrmode);
-    s.writeString(21, m_fileRecordName);
     s.writeBool(22, m_useReverseAPI);
     s.writeString(23, m_reverseAPIAddress);
     s.writeU32(24, m_reverseAPIPort);
     s.writeU32(25, m_reverseAPIDeviceIndex);
+    s.writeBool(26, m_iqOrder);
 
     return s.final();
 }
@@ -114,7 +117,6 @@ bool XTRXInputSettings::deserialize(const QByteArray& data)
         d.readBool(18, &m_extClock, false);
         d.readU32(19, &m_extClockFreq, 0);
         d.readU32(20, &m_pwrmode, 2);
-        d.readString(21, &m_fileRecordName, "");
         d.readBool(22, &m_useReverseAPI, false);
         d.readString(23, &m_reverseAPIAddress, "127.0.0.1");
         d.readU32(24, &uintval, 0);
@@ -127,6 +129,7 @@ bool XTRXInputSettings::deserialize(const QByteArray& data)
 
         d.readU32(25, &uintval, 0);
         m_reverseAPIDeviceIndex = uintval > 99 ? 99 : uintval;
+        d.readBool(26, &m_iqOrder, true);
 
         return true;
     }
@@ -136,4 +139,154 @@ bool XTRXInputSettings::deserialize(const QByteArray& data)
         return false;
     }
 
+}
+
+void XTRXInputSettings::applySettings(const QStringList& settingsKeys, const XTRXInputSettings& settings)
+{
+    if (settingsKeys.contains("centerFrequency")) {
+        m_centerFrequency = settings.m_centerFrequency;
+    }
+    if (settingsKeys.contains("devSampleRate")) {
+        m_devSampleRate = settings.m_devSampleRate;
+    }
+    if (settingsKeys.contains("log2HardDecim")) {
+        m_log2HardDecim = settings.m_log2HardDecim;
+    }
+    if (settingsKeys.contains("dcBlock")) {
+        m_dcBlock = settings.m_dcBlock;
+    }
+    if (settingsKeys.contains("iqCorrection")) {
+        m_iqCorrection = settings.m_iqCorrection;
+    }
+    if (settingsKeys.contains("log2SoftDecim")) {
+        m_log2SoftDecim = settings.m_log2SoftDecim;
+    }
+    if (settingsKeys.contains("lpfBW")) {
+        m_lpfBW = settings.m_lpfBW;
+    }
+    if (settingsKeys.contains("gain")) {
+        m_gain = settings.m_gain;
+    }
+    if (settingsKeys.contains("ncoEnable")) {
+        m_ncoEnable = settings.m_ncoEnable;
+    }
+    if (settingsKeys.contains("ncoFrequency")) {
+        m_ncoFrequency = settings.m_ncoFrequency;
+    }
+    if (settingsKeys.contains("antennaPath")) {
+        m_antennaPath = settings.m_antennaPath;
+    }
+    if (settingsKeys.contains("gainMode")) {
+        m_gainMode = settings.m_gainMode;
+    }
+    if (settingsKeys.contains("lnaGain")) {
+        m_lnaGain = settings.m_lnaGain;
+    }
+    if (settingsKeys.contains("tiaGain")) {
+        m_tiaGain = settings.m_tiaGain;
+    }
+    if (settingsKeys.contains("pgaGain")) {
+        m_pgaGain = settings.m_pgaGain;
+    }
+    if (settingsKeys.contains("extClock")) {
+        m_extClock = settings.m_extClock;
+    }
+    if (settingsKeys.contains("extClockFreq")) {
+        m_extClockFreq = settings.m_extClockFreq;
+    }
+    if (settingsKeys.contains("pwrmode")) {
+        m_pwrmode = settings.m_pwrmode;
+    }
+    if (settingsKeys.contains("iqOrder")) {
+        m_iqOrder = settings.m_iqOrder;
+    }
+    if (settingsKeys.contains("useReverseAPI")) {
+        m_useReverseAPI = settings.m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress")) {
+        m_reverseAPIAddress = settings.m_reverseAPIAddress;
+    }
+    if (settingsKeys.contains("reverseAPIPort")) {
+        m_reverseAPIPort = settings.m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex")) {
+        m_reverseAPIDeviceIndex = settings.m_reverseAPIDeviceIndex;
+    }
+}
+
+QString XTRXInputSettings::getDebugString(const QStringList& settingsKeys, bool force) const
+{
+    std::ostringstream ostr;
+
+    if (settingsKeys.contains("centerFrequency") || force) {
+        ostr << " m_centerFrequency: " << m_centerFrequency;
+    }
+    if (settingsKeys.contains("devSampleRate") || force) {
+        ostr << " m_devSampleRate: " << m_devSampleRate;
+    }
+    if (settingsKeys.contains("log2HardDecim") || force) {
+        ostr << " m_log2HardDecim: " << m_log2HardDecim;
+    }
+    if (settingsKeys.contains("dcBlock") || force) {
+        ostr << " m_dcBlock: " << m_dcBlock;
+    }
+    if (settingsKeys.contains("iqCorrection") || force) {
+        ostr << " m_iqCorrection: " << m_iqCorrection;
+    }
+    if (settingsKeys.contains("log2SoftDecim") || force) {
+        ostr << " m_log2SoftDecim: " << m_log2SoftDecim;
+    }
+    if (settingsKeys.contains("lpfBW") || force) {
+        ostr << " m_lpfBW: " << m_lpfBW;
+    }
+    if (settingsKeys.contains("gain") || force) {
+        ostr << " m_gain: " << m_gain;
+    }
+    if (settingsKeys.contains("ncoEnable") || force) {
+        ostr << " m_ncoEnable: " << m_ncoEnable;
+    }
+    if (settingsKeys.contains("ncoFrequency") || force) {
+        ostr << " m_ncoFrequency: " << m_ncoFrequency;
+    }
+    if (settingsKeys.contains("antennaPath") || force) {
+        ostr << " m_antennaPath: " << m_antennaPath;
+    }
+    if (settingsKeys.contains("gainMode") || force) {
+        ostr << " m_gainMode: " << m_gainMode;
+    }
+    if (settingsKeys.contains("lnaGain") || force) {
+        ostr << " m_lnaGain: " << m_lnaGain;
+    }
+    if (settingsKeys.contains("tiaGain") || force) {
+        ostr << " m_tiaGain: " << m_tiaGain;
+    }
+    if (settingsKeys.contains("pgaGain") || force) {
+        ostr << " m_pgaGain: " << m_pgaGain;
+    }
+    if (settingsKeys.contains("extClock") || force) {
+        ostr << " m_extClock: " << m_extClock;
+    }
+    if (settingsKeys.contains("extClockFreq") || force) {
+        ostr << " m_extClockFreq: " << m_extClockFreq;
+    }
+    if (settingsKeys.contains("pwrmode") || force) {
+        ostr << " m_pwrmode: " << m_pwrmode;
+    }
+    if (settingsKeys.contains("iqOrder") || force) {
+        ostr << " m_iqOrder: " << m_iqOrder;
+    }
+    if (settingsKeys.contains("useReverseAPI") || force) {
+        ostr << " m_useReverseAPI: " << m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress") || force) {
+        ostr << " m_reverseAPIAddress: " << m_reverseAPIAddress.toStdString();
+    }
+    if (settingsKeys.contains("reverseAPIPort") || force) {
+        ostr << " m_reverseAPIPort: " << m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex") || force) {
+        ostr << " m_reverseAPIDeviceIndex: " << m_reverseAPIDeviceIndex;
+    }
+
+    return QString(ostr.str().c_str());
 }

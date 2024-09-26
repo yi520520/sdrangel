@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -141,8 +143,7 @@ public:
     ThreadInterface     *m_thread;       //!< holds the thread address if started else 0
     bool                m_threadWasRunning; //!< flag to know if thread needs to be resumed after suspend
 
-    static const float  m_sampleFifoLengthInSeconds;
-    static const int    m_sampleFifoMinSize;
+    static const unsigned int m_sampleFifoMinRate;
 
     DeviceXTRXShared();
     ~DeviceXTRXShared();

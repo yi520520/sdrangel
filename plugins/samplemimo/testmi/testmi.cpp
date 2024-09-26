@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,6 +23,7 @@
 #include <QNetworkReply>
 #include <QNetworkAccessManager>
 #include <QBuffer>
+#include <QThread>
 
 #include "SWGDeviceSettings.h"
 #include "SWGDeviceState.h"
@@ -29,55 +31,47 @@
 
 #include "device/deviceapi.h"
 #include "dsp/dspcommands.h"
-#include "dsp/dspengine.h"
-#include "dsp/dspdevicemimoengine.h"
 #include "dsp/devicesamplesource.h"
-#include "dsp/filerecord.h"
 
-#include "testmithread.h"
+#include "testmiworker.h"
 #include "testmi.h"
 
 MESSAGE_CLASS_DEFINITION(TestMI::MsgConfigureTestSource, Message)
-MESSAGE_CLASS_DEFINITION(TestMI::MsgFileRecord, Message)
 MESSAGE_CLASS_DEFINITION(TestMI::MsgStartStop, Message)
 
 
 TestMI::TestMI(DeviceAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
 	m_settings(),
-	m_deviceDescription(),
+	m_deviceDescription("TestMI"),
 	m_running(false),
 	m_masterTimer(deviceAPI->getMasterTimer())
 {
+    m_mimoType = MIMOAsynchronous;
+    m_sampleMIFifo.init(2, 96000 * 4);
     m_deviceAPI->setNbSourceStreams(2);
-    m_deviceAPI->addSourceStream(true); // Add a new source stream data set in the engine - asynchronous handling of FIFOs
-    m_deviceAPI->addSourceStream(true); // Add a new source stream data set in the engine - asynchronous handling of FIFOs
-    m_sampleSinkFifos.push_back(SampleSinkFifo(96000 * 4));
-    m_sampleSinkFifos.push_back(SampleSinkFifo(96000 * 4));
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &TestMI::networkManagerFinished
+    );
 }
 
 TestMI::~TestMI()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &TestMI::networkManagerFinished
+    );
     delete m_networkManager;
 
     if (m_running) {
-        stop();
+        stopRx();
     }
-
-    std::vector<FileRecord*>::iterator it = m_fileSinks.begin();
-    int istream = 0;
-
-    for (; it != m_fileSinks.end(); ++it, istream++)
-    {
-        m_deviceAPI->removeAncillarySink(*it, istream);
-        delete *it;
-    }
-
-    m_deviceAPI->removeLastSourceStream(); // Remove the last source stream data set in the engine
-    m_deviceAPI->removeLastSourceStream(); // Remove the last source stream data set in the engine
 }
 
 void TestMI::destroy()
@@ -87,54 +81,89 @@ void TestMI::destroy()
 
 void TestMI::init()
 {
-    m_fileSinks.push_back(new FileRecord(QString("test_0_%1.sdriq").arg(m_deviceAPI->getDeviceUID())));
-    m_fileSinks.push_back(new FileRecord(QString("test_1_%1.sdriq").arg(m_deviceAPI->getDeviceUID())));
-    m_deviceAPI->addAncillarySink(m_fileSinks[0], 0);
-    m_deviceAPI->addAncillarySink(m_fileSinks[1], 1);
-
     applySettings(m_settings, true);
 }
 
-bool TestMI::start()
+bool TestMI::startRx()
 {
-    qDebug("TestMI::start");
 	QMutexLocker mutexLocker(&m_mutex);
 
     if (m_running) {
-        stop();
+        return true;
     }
 
-    m_testSourceThreads.push_back(new TestMIThread(&m_sampleSinkFifos[0], 0));
-	m_testSourceThreads.back()->setSamplerate(m_settings.m_streams[0].m_sampleRate);
-	m_testSourceThreads.back()->startStop(true);
+    qDebug("TestMI::startRx");
+    m_testSourceWorkers.push_back(new TestMIWorker(&m_sampleMIFifo, 0));
+    m_testSourceWorkerThreads.push_back(new QThread());
+    m_testSourceWorkers.back()->moveToThread(m_testSourceWorkerThreads.back());
+	m_testSourceWorkers.back()->setSamplerate(m_settings.m_streams[0].m_sampleRate);
 
-    m_testSourceThreads.push_back(new TestMIThread(&m_sampleSinkFifos[1], 1));
-	m_testSourceThreads.back()->setSamplerate(m_settings.m_streams[1].m_sampleRate);
-	m_testSourceThreads.back()->startStop(true);
+    m_testSourceWorkers.push_back(new TestMIWorker(&m_sampleMIFifo, 1));
+    m_testSourceWorkerThreads.push_back(new QThread());
+    m_testSourceWorkers.back()->moveToThread(m_testSourceWorkerThreads.back());
+	m_testSourceWorkers.back()->setSamplerate(m_settings.m_streams[1].m_sampleRate);
 
+    startWorkers();
+	m_running = true;
 	mutexLocker.unlock();
 
 	applySettings(m_settings, true);
-	m_running = true;
 
 	return true;
 }
 
-void TestMI::stop()
+bool TestMI::startTx()
 {
-    qDebug("TestMI::stop");
+    qDebug("TestMI::startTx");
+    return false;
+}
+
+void TestMI::stopRx()
+{
 	QMutexLocker mutexLocker(&m_mutex);
 
-    std::vector<TestMIThread*>::iterator it = m_testSourceThreads.begin();
-
-    for (; it != m_testSourceThreads.end(); ++it)
-    {
-        (*it)->startStop(false);
-        (*it)->deleteLater();
+    if (!m_running) {
+        return;
     }
 
-    m_testSourceThreads.clear();
-	m_running = false;
+    qDebug("TestMI::stopRx");
+    m_running = false;
+    stopWorkers();
+
+    m_testSourceWorkers.clear();
+    m_testSourceWorkerThreads.clear();
+}
+
+void TestMI::stopTx()
+{
+    qDebug("TestMI::stopTx");
+}
+
+void TestMI::startWorkers()
+{
+    std::vector<TestMIWorker*>::iterator itW = m_testSourceWorkers.begin();
+    std::vector<QThread*>::iterator itT = m_testSourceWorkerThreads.begin();
+
+    for (; (itW != m_testSourceWorkers.end()) && (itT != m_testSourceWorkerThreads.end()); ++itW, ++itT)
+    {
+        QObject::connect(*itT, &QThread::finished, *itW, &QObject::deleteLater);
+        QObject::connect(*itT, &QThread::finished, *itT, &QThread::deleteLater);
+        (*itW)->startWork();
+        (*itT)->start();
+    }
+}
+
+void TestMI::stopWorkers()
+{
+    std::vector<TestMIWorker*>::iterator itW = m_testSourceWorkers.begin();
+    std::vector<QThread*>::iterator itT = m_testSourceWorkerThreads.begin();
+
+    for (; (itW != m_testSourceWorkers.end()) && (itT != m_testSourceWorkerThreads.end()); ++itW, ++itT)
+    {
+        (*itW)->stopWork();
+        (*itT)->quit();
+        (*itT)->wait();
+    }
 }
 
 QByteArray TestMI::serialize() const
@@ -222,29 +251,6 @@ bool TestMI::handleMessage(const Message& message)
 
         return true;
     }
-    else if (MsgFileRecord::match(message))
-    {
-        MsgFileRecord& conf = (MsgFileRecord&) message;
-        qDebug() << "TestMI::handleMessage: MsgFileRecord: " << conf.getStartStop();
-        int istream = conf.getStreamIndex();
-
-        if (conf.getStartStop())
-        {
-            if (m_settings.m_fileRecordName.size() != 0) {
-                m_fileSinks[istream]->setFileName(m_settings.m_fileRecordName + "_0.sdriq");
-            } else {
-                m_fileSinks[istream]->genUniqueFileName(m_deviceAPI->getDeviceUID(), istream);
-            }
-
-            m_fileSinks[istream]->startRecording();
-        }
-        else
-        {
-            m_fileSinks[istream]->stopRecording();
-        }
-
-        return true;
-    }
     else if (MsgStartStop::match(message))
     {
         MsgStartStop& cmd = (MsgStartStop&) message;
@@ -279,7 +285,6 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
     DeviceSettingsKeys deviceSettingsKeys;
 
     qDebug() << "TestMI::applySettings: common: "
-        << " m_fileRecordName: " << settings.m_fileRecordName
         << " m_useReverseAPI: " << settings.m_useReverseAPI
         << " m_reverseAPIAddress: " << settings.m_reverseAPIAddress
         << " m_reverseAPIPort: " << settings.m_reverseAPIPort
@@ -331,9 +336,9 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("sampleRate");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream]))
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream]))
             {
-                m_testSourceThreads[istream]->setSamplerate(settings.m_streams[istream].m_sampleRate);
+                m_testSourceWorkers[istream]->setSamplerate(settings.m_streams[istream].m_sampleRate);
                 qDebug("TestMI::applySettings: thread on stream: %u sample rate set to %d",
                     istream, settings.m_streams[istream].m_sampleRate);
             }
@@ -343,9 +348,9 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("log2Decim");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream]))
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream]))
             {
-                m_testSourceThreads[istream]->setLog2Decimation(settings.m_streams[istream].m_log2Decim);
+                m_testSourceWorkers[istream]->setLog2Decimation(settings.m_streams[istream].m_log2Decim);
                 qDebug("TestMI::applySettings: thread on stream: %u set decimation to %d",
                     istream, (1<<settings.m_streams[istream].m_log2Decim));
             }
@@ -382,10 +387,10 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
                         DeviceSampleSource::FSHIFT_STD);
             }
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream]))
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream]))
             {
-                m_testSourceThreads[istream]->setFcPos((int) settings.m_streams[istream].m_fcPos);
-                m_testSourceThreads[istream]->setFrequencyShift(frequencyShift);
+                m_testSourceWorkers[istream]->setFcPos((int) settings.m_streams[istream].m_fcPos);
+                m_testSourceWorkers[istream]->setFrequencyShift(frequencyShift);
                 qDebug() << "TestMI::applySettings:"
                         << " thread on istream: " << istream
                         << " center freq: " << settings.m_streams[istream].m_centerFrequency << " Hz"
@@ -400,8 +405,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("amplitudeBits");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setAmplitudeBits(settings.m_streams[istream].m_amplitudeBits);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setAmplitudeBits(settings.m_streams[istream].m_amplitudeBits);
             }
         }
 
@@ -409,8 +414,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("dcFactor");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setDCFactor(settings.m_streams[istream].m_dcFactor);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setDCFactor(settings.m_streams[istream].m_dcFactor);
             }
         }
 
@@ -418,8 +423,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("iFactor");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setIFactor(settings.m_streams[istream].m_iFactor);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setIFactor(settings.m_streams[istream].m_iFactor);
             }
         }
 
@@ -427,8 +432,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("qFactor");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setQFactor(settings.m_streams[istream].m_qFactor);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setQFactor(settings.m_streams[istream].m_qFactor);
             }
         }
 
@@ -436,8 +441,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("phaseImbalance");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setPhaseImbalance(settings.m_streams[istream].m_phaseImbalance);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setPhaseImbalance(settings.m_streams[istream].m_phaseImbalance);
             }
         }
 
@@ -445,8 +450,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("sampleSizeIndex");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setBitSize(settings.m_streams[istream].m_sampleSizeIndex);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setBitSize(settings.m_streams[istream].m_sampleSizeIndex);
             }
         }
 
@@ -456,8 +461,6 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
             || (m_settings.m_streams[istream].m_fcPos != settings.m_streams[istream].m_fcPos) || force)
         {
             int sampleRate = settings.m_streams[istream].m_sampleRate/(1<<settings.m_streams[istream].m_log2Decim);
-            DSPSignalNotification notif(sampleRate, settings.m_streams[istream].m_centerFrequency);
-            m_fileSinks[istream]->handleMessage(notif); // forward to file sink
             DSPMIMOSignalNotification *engineNotif = new DSPMIMOSignalNotification(
                 sampleRate, settings.m_streams[istream].m_centerFrequency, true, istream);
             m_deviceAPI->getDeviceEngineInputMessageQueue()->push(engineNotif);
@@ -467,8 +470,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("modulationTone");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setToneFrequency(settings.m_streams[istream].m_modulationTone * 10);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setToneFrequency(settings.m_streams[istream].m_modulationTone * 10);
             }
         }
 
@@ -476,16 +479,16 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("modulation");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream]))
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream]))
             {
-                m_testSourceThreads[istream]->setModulation(settings.m_streams[istream].m_modulation);
+                m_testSourceWorkers[istream]->setModulation(settings.m_streams[istream].m_modulation);
 
                 if (settings.m_streams[istream].m_modulation == TestMIStreamSettings::ModulationPattern0) {
-                    m_testSourceThreads[istream]->setPattern0();
+                    m_testSourceWorkers[istream]->setPattern0();
                 } else if (settings.m_streams[istream].m_modulation == TestMIStreamSettings::ModulationPattern1) {
-                    m_testSourceThreads[istream]->setPattern1();
+                    m_testSourceWorkers[istream]->setPattern1();
                 } else if (settings.m_streams[istream].m_modulation == TestMIStreamSettings::ModulationPattern2) {
-                    m_testSourceThreads[istream]->setPattern2();
+                    m_testSourceWorkers[istream]->setPattern2();
                 }
             }
         }
@@ -494,8 +497,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("amModulation");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setAMModulation(settings.m_streams[istream].m_amModulation / 100.0f);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setAMModulation(settings.m_streams[istream].m_amModulation / 100.0f);
             }
         }
 
@@ -503,8 +506,8 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
         {
             reverseAPIKeys.append("fmDeviation");
 
-            if ((istream < m_testSourceThreads.size()) && (m_testSourceThreads[istream])) {
-                m_testSourceThreads[istream]->setFMDeviation(settings.m_streams[istream].m_fmDeviation * 100.0f);
+            if ((istream < m_testSourceWorkers.size()) && (m_testSourceWorkers[istream])) {
+                m_testSourceWorkers[istream]->setFMDeviation(settings.m_streams[istream].m_fmDeviation * 100.0f);
             }
         }
     } // for each stream index
@@ -524,31 +527,48 @@ bool TestMI::applySettings(const TestMISettings& settings, bool force)
 }
 
 int TestMI::webapiRunGet(
+        int subsystemIndex,
         SWGSDRangel::SWGDeviceState& response,
         QString& errorMessage)
 {
-    (void) errorMessage;
-    m_deviceAPI->getDeviceEngineStateStr(*response.getState());
-    return 200;
+    if (subsystemIndex == 0)
+    {
+        m_deviceAPI->getDeviceEngineStateStr(*response.getState()); // Rx only
+        return 200;
+    }
+    else
+    {
+        errorMessage = QString("Subsystem index invalid: expect 0 (Rx) only");
+        return 404;
+    }
 }
 
 int TestMI::webapiRun(
         bool run,
+        int subsystemIndex,
         SWGSDRangel::SWGDeviceState& response,
         QString& errorMessage)
 {
-    (void) errorMessage;
-    m_deviceAPI->getDeviceEngineStateStr(*response.getState());
-    MsgStartStop *message = MsgStartStop::create(run);
-    m_inputMessageQueue.push(message);
-
-    if (m_guiMessageQueue) // forward to GUI if any
+    if (subsystemIndex == 0)
     {
-        MsgStartStop *msgToGUI = MsgStartStop::create(run);
-        m_guiMessageQueue->push(msgToGUI);
+        m_deviceAPI->getDeviceEngineStateStr(*response.getState()); // Rx only
+        MsgStartStop *message = MsgStartStop::create(run);
+        m_inputMessageQueue.push(message);
+
+        if (m_guiMessageQueue) // forward to GUI if any
+        {
+            MsgStartStop *msgToGUI = MsgStartStop::create(run);
+            m_guiMessageQueue->push(msgToGUI);
+        }
+
+        return 200;
+    }
+    else
+    {
+        errorMessage = QString("Subsystem index invalid: expect 0 (Rx) only");
+        return 404;
     }
 
-    return 200;
 }
 
 int TestMI::webapiSettingsGet(
@@ -570,91 +590,7 @@ int TestMI::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     TestMISettings settings = m_settings;
-
-    if (deviceSettingsKeys.contains("streams"))
-    {
-        QList<SWGSDRangel::SWGTestMiStreamSettings*> *streamsSettings = response.getTestMiSettings()->getStreams();
-        QList<SWGSDRangel::SWGTestMiStreamSettings*>::const_iterator it = streamsSettings->begin();
-
-        for (; it != streamsSettings->end(); ++it)
-        {
-            int istream = (*it)->getStreamIndex();
-
-            if (deviceSettingsKeys.contains(tr("streams[%1].centerFrequency").arg(istream))) {
-                settings.m_streams[istream].m_centerFrequency = (*it)->getCenterFrequency();
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].frequencyShift").arg(istream))) {
-                settings.m_streams[istream].m_frequencyShift = (*it)->getFrequencyShift();
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].sampleRate").arg(istream))) {
-                settings.m_streams[istream].m_sampleRate = (*it)->getSampleRate();
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].log2Decim").arg(istream))) {
-                settings.m_streams[istream].m_log2Decim = (*it)->getLog2Decim();
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].fcPos").arg(istream))) {
-                int fcPos = (*it)->getFcPos();
-                fcPos = fcPos < 0 ? 0 : fcPos > 2 ? 2 : fcPos;
-                settings.m_streams[istream].m_fcPos = (TestMIStreamSettings::fcPos_t) fcPos;
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].sampleSizeIndex").arg(istream))) {
-                int sampleSizeIndex = (*it)->getSampleSizeIndex();
-                sampleSizeIndex = sampleSizeIndex < 0 ? 0 : sampleSizeIndex > 1 ? 2 : sampleSizeIndex;
-                settings.m_streams[istream].m_sampleSizeIndex = sampleSizeIndex;
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].amplitudeBits").arg(istream))) {
-                settings.m_streams[istream].m_amplitudeBits = (*it)->getAmplitudeBits();
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].autoCorrOptions").arg(istream))) {
-                int autoCorrOptions = (*it)->getAutoCorrOptions();
-                autoCorrOptions = autoCorrOptions < 0 ? 0 : autoCorrOptions >= TestMIStreamSettings::AutoCorrLast ? TestMIStreamSettings::AutoCorrLast-1 : autoCorrOptions;
-                settings.m_streams[istream].m_sampleSizeIndex = (TestMIStreamSettings::AutoCorrOptions) autoCorrOptions;
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].modulation").arg(istream))) {
-                int modulation = (*it)->getModulation();
-                modulation = modulation < 0 ? 0 : modulation >= TestMIStreamSettings::ModulationLast ? TestMIStreamSettings::ModulationLast-1 : modulation;
-                settings.m_streams[istream].m_modulation = (TestMIStreamSettings::Modulation) modulation;
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].modulationTone").arg(istream))) {
-                settings.m_streams[istream].m_modulationTone = (*it)->getModulationTone();
-            }
-            if (deviceSettingsKeys.contains(tr("streams[%1].amModulation").arg(istream))) {
-                settings.m_streams[istream].m_amModulation = (*it)->getAmModulation();
-            };
-            if (deviceSettingsKeys.contains(tr("streams[%1].fmDeviation").arg(istream))) {
-                settings.m_streams[istream].m_fmDeviation = (*it)->getFmDeviation();
-            };
-            if (deviceSettingsKeys.contains(tr("streams[%1].dcFactor").arg(istream))) {
-                settings.m_streams[istream].m_dcFactor = (*it)->getDcFactor();
-            };
-            if (deviceSettingsKeys.contains(tr("streams[%1].iFactor").arg(istream))) {
-                settings.m_streams[istream].m_iFactor = (*it)->getIFactor();
-            };
-            if (deviceSettingsKeys.contains(tr("streams[%1].qFactor").arg(istream))) {
-                settings.m_streams[istream].m_qFactor = (*it)->getQFactor();
-            };
-            if (deviceSettingsKeys.contains(tr("streams[%1].phaseImbalance").arg(istream))) {
-                settings.m_streams[istream].m_phaseImbalance = (*it)->getPhaseImbalance();
-            };
-        }
-
-    }
-
-    if (deviceSettingsKeys.contains("fileRecordName")) {
-        settings.m_fileRecordName = *response.getTestMiSettings()->getFileRecordName();
-    }
-    if (deviceSettingsKeys.contains("useReverseAPI")) {
-        settings.m_useReverseAPI = response.getTestMiSettings()->getUseReverseApi() != 0;
-    }
-    if (deviceSettingsKeys.contains("reverseAPIAddress")) {
-        settings.m_reverseAPIAddress = *response.getTestMiSettings()->getReverseApiAddress();
-    }
-    if (deviceSettingsKeys.contains("reverseAPIPort")) {
-        settings.m_reverseAPIPort = response.getTestMiSettings()->getReverseApiPort();
-    }
-    if (deviceSettingsKeys.contains("reverseAPIDeviceIndex")) {
-        settings.m_reverseAPIDeviceIndex = response.getTestMiSettings()->getReverseApiDeviceIndex();
-    }
+    webapiUpdateDeviceSettings(settings, deviceSettingsKeys, response);
 
     MsgConfigureTestSource *msg = MsgConfigureTestSource::create(settings, force);
     m_inputMessageQueue.push(msg);
@@ -667,6 +603,94 @@ int TestMI::webapiSettingsPutPatch(
 
     webapiFormatDeviceSettings(response, settings);
     return 200;
+}
+
+void TestMI::webapiUpdateDeviceSettings(
+        TestMISettings& settings,
+        const QStringList& deviceSettingsKeys,
+        SWGSDRangel::SWGDeviceSettings& response)
+{
+    if (deviceSettingsKeys.contains("streams"))
+    {
+        QList<SWGSDRangel::SWGTestMiStreamSettings*> *streamsSettings = response.getTestMiSettings()->getStreams();
+        QList<SWGSDRangel::SWGTestMiStreamSettings*>::const_iterator it = streamsSettings->begin();
+
+        for (; it != streamsSettings->end(); ++it)
+        {
+            int istream = (*it)->getStreamIndex();
+
+            if (deviceSettingsKeys.contains(QString("streams[%1].centerFrequency").arg(istream))) {
+                settings.m_streams[istream].m_centerFrequency = (*it)->getCenterFrequency();
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].frequencyShift").arg(istream))) {
+                settings.m_streams[istream].m_frequencyShift = (*it)->getFrequencyShift();
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].sampleRate").arg(istream))) {
+                settings.m_streams[istream].m_sampleRate = (*it)->getSampleRate();
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].log2Decim").arg(istream))) {
+                settings.m_streams[istream].m_log2Decim = (*it)->getLog2Decim();
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].fcPos").arg(istream))) {
+                int fcPos = (*it)->getFcPos();
+                fcPos = fcPos < 0 ? 0 : fcPos > 2 ? 2 : fcPos;
+                settings.m_streams[istream].m_fcPos = (TestMIStreamSettings::fcPos_t) fcPos;
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].sampleSizeIndex").arg(istream))) {
+                int sampleSizeIndex = (*it)->getSampleSizeIndex();
+                sampleSizeIndex = sampleSizeIndex < 0 ? 0 : sampleSizeIndex > 1 ? 2 : sampleSizeIndex;
+                settings.m_streams[istream].m_sampleSizeIndex = sampleSizeIndex;
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].amplitudeBits").arg(istream))) {
+                settings.m_streams[istream].m_amplitudeBits = (*it)->getAmplitudeBits();
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].autoCorrOptions").arg(istream))) {
+                int autoCorrOptions = (*it)->getAutoCorrOptions();
+                autoCorrOptions = autoCorrOptions < 0 ? 0 : autoCorrOptions >= TestMIStreamSettings::AutoCorrLast ? TestMIStreamSettings::AutoCorrLast-1 : autoCorrOptions;
+                settings.m_streams[istream].m_sampleSizeIndex = (TestMIStreamSettings::AutoCorrOptions) autoCorrOptions;
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].modulation").arg(istream))) {
+                int modulation = (*it)->getModulation();
+                modulation = modulation < 0 ? 0 : modulation >= TestMIStreamSettings::ModulationLast ? TestMIStreamSettings::ModulationLast-1 : modulation;
+                settings.m_streams[istream].m_modulation = (TestMIStreamSettings::Modulation) modulation;
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].modulationTone").arg(istream))) {
+                settings.m_streams[istream].m_modulationTone = (*it)->getModulationTone();
+            }
+            if (deviceSettingsKeys.contains(QString("streams[%1].amModulation").arg(istream))) {
+                settings.m_streams[istream].m_amModulation = (*it)->getAmModulation();
+            };
+            if (deviceSettingsKeys.contains(QString("streams[%1].fmDeviation").arg(istream))) {
+                settings.m_streams[istream].m_fmDeviation = (*it)->getFmDeviation();
+            };
+            if (deviceSettingsKeys.contains(QString("streams[%1].dcFactor").arg(istream))) {
+                settings.m_streams[istream].m_dcFactor = (*it)->getDcFactor();
+            };
+            if (deviceSettingsKeys.contains(QString("streams[%1].iFactor").arg(istream))) {
+                settings.m_streams[istream].m_iFactor = (*it)->getIFactor();
+            };
+            if (deviceSettingsKeys.contains(QString("streams[%1].qFactor").arg(istream))) {
+                settings.m_streams[istream].m_qFactor = (*it)->getQFactor();
+            };
+            if (deviceSettingsKeys.contains(QString("streams[%1].phaseImbalance").arg(istream))) {
+                settings.m_streams[istream].m_phaseImbalance = (*it)->getPhaseImbalance();
+            };
+        }
+
+    }
+
+    if (deviceSettingsKeys.contains("useReverseAPI")) {
+        settings.m_useReverseAPI = response.getTestMiSettings()->getUseReverseApi() != 0;
+    }
+    if (deviceSettingsKeys.contains("reverseAPIAddress")) {
+        settings.m_reverseAPIAddress = *response.getTestMiSettings()->getReverseApiAddress();
+    }
+    if (deviceSettingsKeys.contains("reverseAPIPort")) {
+        settings.m_reverseAPIPort = response.getTestMiSettings()->getReverseApiPort();
+    }
+    if (deviceSettingsKeys.contains("reverseAPIDeviceIndex")) {
+        settings.m_reverseAPIDeviceIndex = response.getTestMiSettings()->getReverseApiDeviceIndex();
+    }
 }
 
 void TestMI::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const TestMISettings& settings)
@@ -696,12 +720,6 @@ void TestMI::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response
         streams->back()->setIFactor(it->m_iFactor);
         streams->back()->setQFactor(it->m_qFactor);
         streams->back()->setPhaseImbalance(it->m_phaseImbalance);
-    }
-
-    if (response.getTestMiSettings()->getFileRecordName()) {
-        *response.getTestMiSettings()->getFileRecordName() = settings.m_fileRecordName;
-    } else {
-        response.getTestMiSettings()->setFileRecordName(new QString(settings.m_fileRecordName));
     }
 
     response.getTestMiSettings()->setUseReverseApi(settings.m_useReverseAPI ? 1 : 0);
@@ -791,10 +809,6 @@ void TestMI::webapiReverseSendSettings(const DeviceSettingsKeys& deviceSettingsK
         }
     }
 
-    if (deviceSettingsKeys.m_commonSettingsKeys.contains("fileRecordName") || force) {
-        swgTestMISettings->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
-
     QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/device/settings")
             .arg(settings.m_reverseAPIAddress)
             .arg(settings.m_reverseAPIPort)
@@ -802,13 +816,14 @@ void TestMI::webapiReverseSendSettings(const DeviceSettingsKeys& deviceSettingsK
     m_networkRequest.setUrl(QUrl(channelSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
 
     // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
 
     delete swgDeviceSettings;
 }
@@ -827,17 +842,19 @@ void TestMI::webapiReverseSendStartStop(bool start)
     m_networkRequest.setUrl(QUrl(channelSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
+    QNetworkReply *reply;
 
     if (start) {
-        m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
     } else {
-        m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
     }
 
+    buffer->setParent(reply);
     delete swgDeviceSettings;
 }
 
@@ -851,19 +868,13 @@ void TestMI::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("TestMI::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("TestMI::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
-}
-
-bool TestMI::isRecording(unsigned int istream) const
-{
-    if (istream < m_fileSinks.size()) {
-        return m_fileSinks[istream]->isRecording();
-    } else {
-        return false;
-    }
+    reply->deleteLater();
 }

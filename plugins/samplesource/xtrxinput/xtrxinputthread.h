@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017, 2018 Edouard Griffiths, F4EXB                             //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 // Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -47,6 +50,7 @@ public:
     unsigned int getLog2Decimation(unsigned int channel) const;
     void setFifo(unsigned int channel, SampleSinkFifo *sampleFifo);
     SampleSinkFifo *getFifo(unsigned int channel);
+    void setIQOrder(bool iqOrder) { m_iqOrder = iqOrder; }
 
 private:
     struct Channel
@@ -54,7 +58,8 @@ private:
         SampleVector m_convertBuffer;
         SampleSinkFifo* m_sampleFifo;
         unsigned int m_log2Decim;
-        Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12> m_decimators;
+        Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12, true> m_decimatorsIQ;
+        Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12, false> m_decimatorsQI;
 
         Channel() :
             m_sampleFifo(0),
@@ -73,10 +78,12 @@ private:
     Channel *m_channels; //!< Array of channels dynamically allocated for the given number of Rx channels
     unsigned int m_nbChannels;
     unsigned int m_uniqueChannelIndex;
+    bool m_iqOrder;
 
     void run();
     unsigned int getNbFifos();
-    void callbackSI(const qint16* buf, qint32 len);
+    void callbackSIQI(const qint16* buf, qint32 len);
+    void callbackSIIQ(const qint16* buf, qint32 len);
     void callbackMI(const qint16* buf0, const qint16* buf1, qint32 len);
 };
 

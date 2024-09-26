@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2017-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,6 +23,7 @@
 #include "util/messagequeue.h"
 #include "dsp/dspcommands.h"
 
+#include <QThread>
 #include <QDataStream>
 #include <QSet>
 #include <QDebug>
@@ -50,7 +53,9 @@ QDataStream& operator<<(QDataStream& ds, const AudioDeviceManager::OutputDeviceI
         << info.udpUseRTP
         << (int) info.udpChannelMode
         << (int) info.udpChannelCodec
-        << info.udpDecimationFactor;
+        << info.udpDecimationFactor
+        << info.fileRecordName
+        << info.recordSilenceTime;
     return ds;
 }
 
@@ -66,35 +71,67 @@ QDataStream& operator>>(QDataStream& ds, AudioDeviceManager::OutputDeviceInfo& i
         >> info.udpUseRTP
         >> intChannelMode
         >> intChannelCodec
-        >> info.udpDecimationFactor;
-    info.udpChannelMode = (AudioOutput::UDPChannelMode) intChannelMode;
-    info.udpChannelCodec = (AudioOutput::UDPChannelCodec) intChannelCodec;
+        >> info.udpDecimationFactor
+        >> info.fileRecordName
+        >> info.recordSilenceTime;
+    info.udpChannelMode = (AudioOutputDevice::UDPChannelMode) intChannelMode;
+    info.udpChannelCodec = (AudioOutputDevice::UDPChannelCodec) intChannelCodec;
     return ds;
 }
 
 AudioDeviceManager::AudioDeviceManager()
 {
     qDebug("AudioDeviceManager::AudioDeviceManager: scan input devices");
-    m_inputDevicesInfo = QAudioDeviceInfo::availableDevices(QAudio::AudioInput);
+    {
+        auto &devicesInfo = AudioDeviceInfo::availableInputDevices();
 
-    for (int i = 0; i < m_inputDevicesInfo.size(); i++) {
-        qDebug("AudioDeviceManager::AudioDeviceManager: input device #%d: %s", i, qPrintable(m_inputDevicesInfo[i].deviceName()));
+        for (int i = 0; i < devicesInfo.size(); i++) {
+            qDebug("AudioDeviceManager::AudioDeviceManager: input device #%d: %s", i, qPrintable(devicesInfo[i].deviceName()));
+        }
     }
-
     qDebug("AudioDeviceManager::AudioDeviceManager: scan output devices");
-    m_outputDevicesInfo = QAudioDeviceInfo::availableDevices(QAudio::AudioOutput);
 
-    for (int i = 0; i < m_outputDevicesInfo.size(); i++) {
-        qDebug("AudioDeviceManager::AudioDeviceManager: output device #%d: %s", i, qPrintable(m_outputDevicesInfo[i].deviceName()));
+    {
+        auto &devicesInfo = AudioDeviceInfo::availableOutputDevices();
+
+        for (int i = 0; i < devicesInfo.size(); i++) {
+            qDebug("AudioDeviceManager::AudioDeviceManager: output device #%d: %s", i, qPrintable(devicesInfo[i].deviceName()));
+        }
     }
+    m_defaultInputStarted = false;
+    m_defaultOutputStarted = false;
+
+    connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 }
 
 AudioDeviceManager::~AudioDeviceManager()
 {
-    QMap<int, AudioOutput*>::iterator it = m_audioOutputs.begin();
+    QMap<int, AudioOutputDevice*>::iterator aoit = m_audioOutputs.begin();
 
-    for (; it != m_audioOutputs.end(); ++it) {
-        delete(*it);
+    for (; aoit != m_audioOutputs.end(); ++aoit) {
+        (*aoit)->getInputMessageQueue()->push(AudioOutputDevice::MsgStop::create());
+    }
+
+    QMap<int, QThread*>::iterator otit = m_audioOutputThreads.begin();
+
+    for (; otit != m_audioOutputThreads.end(); ++otit)
+    {
+        (*otit)->exit();
+        (*otit)->wait();
+    }
+
+    QMap<int, AudioInputDevice*>::iterator aiit = m_audioInputs.begin();
+
+    for (; aiit != m_audioInputs.end(); ++aiit) {
+        (*aiit)->getInputMessageQueue()->push(AudioInputDevice::MsgStop::create());
+    }
+
+    QMap<int, QThread*>::iterator itit = m_audioInputThreads.begin();
+
+    for (; itit != m_audioInputThreads.end(); ++itit)
+    {
+        (*itit)->exit();
+        (*itit)->wait();
     }
 }
 
@@ -107,9 +144,9 @@ bool AudioDeviceManager::getOutputDeviceName(int outputDeviceIndex, QString &dev
     }
     else
     {
-        if (outputDeviceIndex < m_outputDevicesInfo.size())
+        if (outputDeviceIndex < AudioDeviceInfo::availableOutputDevices().size())
         {
-            deviceName = m_outputDevicesInfo[outputDeviceIndex].deviceName();
+            deviceName = AudioDeviceInfo::availableOutputDevices()[outputDeviceIndex].deviceName();
             return true;
         }
         else
@@ -128,9 +165,9 @@ bool AudioDeviceManager::getInputDeviceName(int inputDeviceIndex, QString &devic
     }
     else
     {
-        if (inputDeviceIndex < m_inputDevicesInfo.size())
+        if (inputDeviceIndex < AudioDeviceInfo::availableInputDevices().size())
         {
-            deviceName = m_inputDevicesInfo[inputDeviceIndex].deviceName();
+            deviceName = AudioDeviceInfo::availableInputDevices()[inputDeviceIndex].deviceName();
             return true;
         }
         else
@@ -142,10 +179,10 @@ bool AudioDeviceManager::getInputDeviceName(int inputDeviceIndex, QString &devic
 
 int AudioDeviceManager::getOutputDeviceIndex(const QString &deviceName) const
 {
-    for (int i = 0; i < m_outputDevicesInfo.size(); i++)
+    for (int i = 0; i < AudioDeviceInfo::availableOutputDevices().size(); i++)
     {
-        //qDebug("AudioDeviceManager::getOutputDeviceIndex: %d: %s|%s", i, qPrintable(deviceName), qPrintable(m_outputDevicesInfo[i].deviceName()));
-        if (deviceName == m_outputDevicesInfo[i].deviceName()) {
+        //qDebug("AudioDeviceManager::getOutputDeviceIndex: %d: %s|%s", i, qPrintable(deviceName), qPrintable(AudioDeviceInfo::availableOutputDevices()[i].deviceName()));
+        if (deviceName == AudioDeviceInfo::availableOutputDevices()[i].deviceName()) {
             return i;
         }
     }
@@ -155,10 +192,10 @@ int AudioDeviceManager::getOutputDeviceIndex(const QString &deviceName) const
 
 int AudioDeviceManager::getInputDeviceIndex(const QString &deviceName) const
 {
-    for (int i = 0; i < m_inputDevicesInfo.size(); i++)
+    for (int i = 0; i < AudioDeviceInfo::availableInputDevices().size(); i++)
     {
-        //qDebug("AudioDeviceManager::getInputDeviceIndex: %d: %s|%s", i, qPrintable(deviceName), qPrintable(m_inputDevicesInfo[i].deviceName()));
-        if (deviceName == m_inputDevicesInfo[i].deviceName()) {
+        //qDebug("AudioDeviceManager::getInputDeviceIndex: %d: %s|%s", i, qPrintable(deviceName), qPrintable(AudioDeviceInfo::availableInputDevices()[i].deviceName()));
+        if (deviceName == AudioDeviceInfo::availableInputDevices()[i].deviceName()) {
             return i;
         }
     }
@@ -250,11 +287,42 @@ void AudioDeviceManager::addAudioSink(AudioFifo* audioFifo, MessageQueue *sample
 {
     qDebug("AudioDeviceManager::addAudioSink: %d: %p", outputDeviceIndex, audioFifo);
 
-    if (m_audioOutputs.find(outputDeviceIndex) == m_audioOutputs.end()) {
-        m_audioOutputs[outputDeviceIndex] = new AudioOutput();
+    if (m_audioOutputs.find(outputDeviceIndex) == m_audioOutputs.end())
+    {
+        QThread *thread = new QThread();
+        AudioOutputDevice *audioOutputDevice = new AudioOutputDevice();
+        m_audioOutputs[outputDeviceIndex] = audioOutputDevice;
+        m_audioOutputThreads[outputDeviceIndex] = thread;
+
+        if (outputDeviceIndex < 0) {
+            audioOutputDevice->setDeviceName("System default");
+        } else {
+            audioOutputDevice->setDeviceName(AudioDeviceInfo::availableOutputDevices()[outputDeviceIndex].deviceName());
+        }
+
+        qDebug("AudioDeviceManager::addAudioSink: new AudioOutputDevice on thread: %p", thread);
+        audioOutputDevice->setManagerMessageQueue(&m_inputMessageQueue);
+        audioOutputDevice->moveToThread(thread);
+
+        QObject::connect(
+            thread,
+            &QThread::finished,
+            audioOutputDevice,
+            &QObject::deleteLater
+        );
+        QObject::connect(
+            thread,
+            &QThread::finished,
+            thread,
+            &QThread::deleteLater
+        );
+
+        thread->start();
     }
 
-    if (m_audioOutputs[outputDeviceIndex]->getNbFifos() == 0) {
+    if ((m_audioOutputs[outputDeviceIndex]->getNbFifos() == 0) &&
+       ((outputDeviceIndex != -1) || !m_defaultOutputStarted))
+    {
         startAudioOutput(outputDeviceIndex);
     }
 
@@ -271,11 +339,17 @@ void AudioDeviceManager::addAudioSink(AudioFifo* audioFifo, MessageQueue *sample
 
         if (audioOutputDeviceIndex != outputDeviceIndex) // change of audio device
         {
-            removeAudioSink(audioFifo); // remove from current
+            // remove from current
+            m_audioOutputs[audioOutputDeviceIndex]->removeFifo(audioFifo);
+            if ((audioOutputDeviceIndex != -1) && (m_audioOutputs[audioOutputDeviceIndex]->getNbFifos() == 0)) {
+                stopAudioOutput(audioOutputDeviceIndex);
+            }
+
             m_audioOutputs[outputDeviceIndex]->addFifo(audioFifo); // add to new
             m_audioSinkFifos[audioFifo] = outputDeviceIndex; // new index
-            m_outputDeviceSinkMessageQueues[audioOutputDeviceIndex].removeOne(sampleSinkMessageQueue);
+            m_outputDeviceSinkMessageQueues[audioOutputDeviceIndex].removeOne(m_audioFifoToSinkMessageQueues[audioFifo]);
             m_outputDeviceSinkMessageQueues[outputDeviceIndex].append(sampleSinkMessageQueue);
+            m_audioFifoToSinkMessageQueues[audioFifo] = sampleSinkMessageQueue;
         }
     }
 }
@@ -293,7 +367,7 @@ void AudioDeviceManager::removeAudioSink(AudioFifo* audioFifo)
     int audioOutputDeviceIndex = m_audioSinkFifos[audioFifo];
     m_audioOutputs[audioOutputDeviceIndex]->removeFifo(audioFifo);
 
-    if (m_audioOutputs[audioOutputDeviceIndex]->getNbFifos() == 0) {
+    if ((audioOutputDeviceIndex != -1) && (m_audioOutputs[audioOutputDeviceIndex]->getNbFifos() == 0)) {
         stopAudioOutput(audioOutputDeviceIndex);
     }
 
@@ -306,17 +380,51 @@ void AudioDeviceManager::addAudioSource(AudioFifo* audioFifo, MessageQueue *samp
 {
     qDebug("AudioDeviceManager::addAudioSource: %d: %p", inputDeviceIndex, audioFifo);
 
-    if (m_audioInputs.find(inputDeviceIndex) == m_audioInputs.end()) {
-        m_audioInputs[inputDeviceIndex] = new AudioInput();
+    if (m_audioInputs.find(inputDeviceIndex) == m_audioInputs.end())
+    {
+        QThread *thread = new QThread();
+        AudioInputDevice *audioInputDevice = new AudioInputDevice();
+        m_audioInputs[inputDeviceIndex] = audioInputDevice;
+        m_audioInputThreads[inputDeviceIndex] = thread;
+
+        if (inputDeviceIndex < 0) {
+            audioInputDevice->setDeviceName("System default");
+        } else {
+            audioInputDevice->setDeviceName(AudioDeviceInfo::availableOutputDevices()[inputDeviceIndex].deviceName());
+        }
+
+        qDebug("AudioDeviceManager::addAudioSource: new AudioInputDevice on thread: %p", thread);
+        audioInputDevice->setManagerMessageQueue(&m_inputMessageQueue);
+        audioInputDevice->moveToThread(thread);
+
+        QObject::connect(
+            thread,
+            &QThread::finished,
+            audioInputDevice,
+            &QObject::deleteLater
+        );
+        QObject::connect(
+            thread,
+            &QThread::finished,
+            thread,
+            &QThread::deleteLater
+        );
+
+        thread->start();
     }
 
-    if (m_audioInputs[inputDeviceIndex]->getNbFifos() == 0) {
+    if ((m_audioInputs[inputDeviceIndex]->getNbFifos() == 0) &&
+       ((inputDeviceIndex != -1) || !m_defaultInputStarted))
+    {
         startAudioInput(inputDeviceIndex);
     }
 
     if (m_audioSourceFifos.find(audioFifo) == m_audioSourceFifos.end()) // new FIFO
     {
         m_audioInputs[inputDeviceIndex]->addFifo(audioFifo);
+        m_audioSourceFifos[audioFifo] = inputDeviceIndex; // register audio FIFO
+        m_audioFifoToSourceMessageQueues[audioFifo] = sampleSourceMessageQueue;
+        m_inputDeviceSourceMessageQueues[inputDeviceIndex].append(sampleSourceMessageQueue);
     }
     else
     {
@@ -324,14 +432,19 @@ void AudioDeviceManager::addAudioSource(AudioFifo* audioFifo, MessageQueue *samp
 
         if (audioInputDeviceIndex != inputDeviceIndex) // change of audio device
         {
-            removeAudioSource(audioFifo); // remove from current
+            // remove from current
+            m_audioInputs[audioInputDeviceIndex]->removeFifo(audioFifo);
+            if ((audioInputDeviceIndex != -1) && (m_audioInputs[audioInputDeviceIndex]->getNbFifos() == 0)) {
+                stopAudioInput(audioInputDeviceIndex);
+            }
+
             m_audioInputs[inputDeviceIndex]->addFifo(audioFifo); // add to new
+            m_audioSourceFifos[audioFifo] = inputDeviceIndex; // new index
+            m_outputDeviceSinkMessageQueues[audioInputDeviceIndex].removeOne(m_audioFifoToSourceMessageQueues[audioFifo]);
+            m_inputDeviceSourceMessageQueues[inputDeviceIndex].append(sampleSourceMessageQueue);
+            m_audioFifoToSourceMessageQueues[audioFifo] = sampleSourceMessageQueue;
         }
     }
-
-    m_audioSourceFifos[audioFifo] = inputDeviceIndex; // register audio FIFO
-    m_audioFifoToSourceMessageQueues[audioFifo] = sampleSourceMessageQueue;
-    m_outputDeviceSinkMessageQueues[inputDeviceIndex].append(sampleSourceMessageQueue);
 }
 
 void AudioDeviceManager::removeAudioSource(AudioFifo* audioFifo)
@@ -347,7 +460,7 @@ void AudioDeviceManager::removeAudioSource(AudioFifo* audioFifo)
     int audioInputDeviceIndex = m_audioSourceFifos[audioFifo];
     m_audioInputs[audioInputDeviceIndex]->removeFifo(audioFifo);
 
-    if (m_audioInputs[audioInputDeviceIndex]->getNbFifos() == 0) {
+    if ((audioInputDeviceIndex != -1) && (m_audioInputs[audioInputDeviceIndex]->getNbFifos() == 0)) {
         stopAudioInput(audioInputDeviceIndex);
     }
 
@@ -363,8 +476,8 @@ void AudioDeviceManager::startAudioOutput(int outputDeviceIndex)
     quint16 udpPort;
     bool copyAudioToUDP;
     bool udpUseRTP;
-    AudioOutput::UDPChannelMode udpChannelMode;
-    AudioOutput::UDPChannelCodec udpChannelCodec;
+    AudioOutputDevice::UDPChannelMode udpChannelMode;
+    AudioOutputDevice::UDPChannelCodec udpChannelCodec;
     uint32_t decimationFactor;
     QString deviceName;
 
@@ -377,8 +490,8 @@ void AudioDeviceManager::startAudioOutput(int outputDeviceIndex)
             udpPort = m_defaultUDPPort;
             copyAudioToUDP = false;
             udpUseRTP = false;
-            udpChannelMode = AudioOutput::UDPChannelLeft;
-            udpChannelCodec = AudioOutput::UDPCodecL16;
+            udpChannelMode = AudioOutputDevice::UDPChannelLeft;
+            udpChannelCodec = AudioOutputDevice::UDPCodecL16;
             decimationFactor = 1;
         }
         else
@@ -393,8 +506,9 @@ void AudioDeviceManager::startAudioOutput(int outputDeviceIndex)
             decimationFactor = m_audioOutputInfos[deviceName].udpDecimationFactor;
         }
 
-        m_audioOutputs[outputDeviceIndex]->start(outputDeviceIndex, sampleRate);
-        m_audioOutputInfos[deviceName].sampleRate = m_audioOutputs[outputDeviceIndex]->getRate(); // update with actual rate
+        AudioOutputDevice::MsgStart *msg = AudioOutputDevice::MsgStart::create(outputDeviceIndex, sampleRate);
+        m_audioOutputs[outputDeviceIndex]->getInputMessageQueue()->push(msg);
+
         m_audioOutputInfos[deviceName].udpAddress = udpAddress;
         m_audioOutputInfos[deviceName].udpPort = udpPort;
         m_audioOutputInfos[deviceName].copyToUDP = copyAudioToUDP;
@@ -402,6 +516,7 @@ void AudioDeviceManager::startAudioOutput(int outputDeviceIndex)
         m_audioOutputInfos[deviceName].udpChannelMode = udpChannelMode;
         m_audioOutputInfos[deviceName].udpChannelCodec = udpChannelCodec;
         m_audioOutputInfos[deviceName].udpDecimationFactor = decimationFactor;
+        m_defaultOutputStarted |= (outputDeviceIndex == -1);
     }
     else
     {
@@ -411,7 +526,8 @@ void AudioDeviceManager::startAudioOutput(int outputDeviceIndex)
 
 void AudioDeviceManager::stopAudioOutput(int outputDeviceIndex)
 {
-    m_audioOutputs[outputDeviceIndex]->stop();
+    AudioOutputDevice::MsgStop *msg = AudioOutputDevice::MsgStop::create();
+    m_audioOutputs[outputDeviceIndex]->getInputMessageQueue()->push(msg);
 }
 
 void AudioDeviceManager::startAudioInput(int inputDeviceIndex)
@@ -433,10 +549,12 @@ void AudioDeviceManager::startAudioInput(int inputDeviceIndex)
             volume = m_audioInputInfos[deviceName].volume;
         }
 
-        m_audioInputs[inputDeviceIndex]->start(inputDeviceIndex, sampleRate);
+        AudioInputDevice::MsgStart *msg = AudioInputDevice::MsgStart::create(inputDeviceIndex, sampleRate);
+        m_audioInputs[inputDeviceIndex]->getInputMessageQueue()->push(msg);
+
         m_audioInputs[inputDeviceIndex]->setVolume(volume);
-        m_audioInputInfos[deviceName].sampleRate = m_audioInputs[inputDeviceIndex]->getRate();
         m_audioInputInfos[deviceName].volume = volume;
+        m_defaultInputStarted |= (inputDeviceIndex == -1);
     }
     else
     {
@@ -446,7 +564,8 @@ void AudioDeviceManager::startAudioInput(int inputDeviceIndex)
 
 void AudioDeviceManager::stopAudioInput(int inputDeviceIndex)
 {
-    m_audioInputs[inputDeviceIndex]->stop();
+    AudioInputDevice::MsgStop *msg = AudioInputDevice::MsgStop::create();
+    m_audioInputs[inputDeviceIndex]->getInputMessageQueue()->push(msg);
 }
 
 bool AudioDeviceManager::getInputDeviceInfo(const QString& deviceName, InputDeviceInfo& deviceInfo) const
@@ -494,7 +613,15 @@ int AudioDeviceManager::getInputSampleRate(int inputDeviceIndex)
     }
     else
     {
-        return deviceInfo.sampleRate;
+        if (deviceInfo.sampleRate > 0)
+        {
+            return deviceInfo.sampleRate;
+        }
+        else
+        {
+            qDebug("AudioDeviceManager::getInputSampleRate: device %s has invalid sample rate", qPrintable(deviceName));
+            return m_defaultAudioSampleRate;
+        }
     }
 }
 
@@ -517,7 +644,15 @@ int AudioDeviceManager::getOutputSampleRate(int outputDeviceIndex)
     }
     else
     {
-        return deviceInfo.sampleRate;
+        if (deviceInfo.sampleRate > 0)
+        {
+            return deviceInfo.sampleRate;
+        }
+        else
+        {
+            qDebug("AudioDeviceManager::getOutputSampleRate: device %s has invalid sample rate", qPrintable(deviceName));
+            return m_defaultAudioSampleRate;
+        }
     }
 }
 
@@ -545,22 +680,15 @@ void AudioDeviceManager::setInputDeviceInfo(int inputDeviceIndex, const InputDev
         return;
     }
 
-    AudioInput *audioInput = m_audioInputs[inputDeviceIndex];
+    AudioInputDevice *audioInput = m_audioInputs[inputDeviceIndex];
 
     if (oldDeviceInfo.sampleRate != deviceInfo.sampleRate)
     {
-        audioInput->stop();
-        audioInput->start(inputDeviceIndex, deviceInfo.sampleRate);
-        m_audioInputInfos[deviceName].sampleRate = audioInput->getRate(); // store actual sample rate
+        AudioInputDevice::MsgStop *msgStop = AudioInputDevice::MsgStop::create();
+        audioInput->getInputMessageQueue()->push(msgStop);
 
-        // send message to attached channels
-        QList<MessageQueue *>::const_iterator it = m_inputDeviceSourceMessageQueues[inputDeviceIndex].begin();
-
-        for (; it != m_inputDeviceSourceMessageQueues[inputDeviceIndex].end(); ++it)
-        {
-            DSPConfigureAudio *msg = new DSPConfigureAudio(m_audioInputInfos[deviceName].sampleRate, DSPConfigureAudio::AudioInput);
-            (*it)->push(msg);
-        }
+        AudioInputDevice::MsgStart *msgStart = AudioInputDevice::MsgStart::create(inputDeviceIndex, deviceInfo.sampleRate);
+        audioInput->getInputMessageQueue()->push(msgStart);
     }
 
     audioInput->setVolume(deviceInfo.volume);
@@ -592,30 +720,26 @@ void AudioDeviceManager::setOutputDeviceInfo(int outputDeviceIndex, const Output
         return;
     }
 
-    AudioOutput *audioOutput = m_audioOutputs[outputDeviceIndex];
+    AudioOutputDevice *audioOutput = m_audioOutputs[outputDeviceIndex];
 
     if (oldDeviceInfo.sampleRate != deviceInfo.sampleRate)
     {
-        audioOutput->stop();
-        audioOutput->start(outputDeviceIndex, deviceInfo.sampleRate);
-        m_audioOutputInfos[deviceName].sampleRate = audioOutput->getRate(); // store actual sample rate
+        AudioOutputDevice::MsgStop *msgStop = AudioOutputDevice::MsgStop::create();
+        audioOutput->getInputMessageQueue()->push(msgStop);
 
-        // send message to attached channels
-        QList<MessageQueue *>::const_iterator it = m_outputDeviceSinkMessageQueues[outputDeviceIndex].begin();
-
-        for (; it != m_outputDeviceSinkMessageQueues[outputDeviceIndex].end(); ++it)
-        {
-            DSPConfigureAudio *msg = new DSPConfigureAudio(m_audioOutputInfos[deviceName].sampleRate, DSPConfigureAudio::AudioOutput);
-            (*it)->push(msg);
-        }
+        AudioOutputDevice::MsgStart *msgStart = AudioOutputDevice::MsgStart::create(outputDeviceIndex, deviceInfo.sampleRate);
+        audioOutput->getInputMessageQueue()->push(msgStart);
     }
 
     audioOutput->setUdpCopyToUDP(deviceInfo.copyToUDP);
     audioOutput->setUdpDestination(deviceInfo.udpAddress, deviceInfo.udpPort);
     audioOutput->setUdpUseRTP(deviceInfo.udpUseRTP);
     audioOutput->setUdpChannelMode(deviceInfo.udpChannelMode);
-    audioOutput->setUdpChannelFormat(deviceInfo.udpChannelCodec, deviceInfo.udpChannelMode == AudioOutput::UDPChannelStereo, deviceInfo.sampleRate);
+    audioOutput->setUdpChannelFormat(deviceInfo.udpChannelCodec, deviceInfo.udpChannelMode == AudioOutputDevice::UDPChannelStereo, deviceInfo.sampleRate);
     audioOutput->setUdpDecimation(deviceInfo.udpDecimationFactor);
+    audioOutput->setFileRecordName(deviceInfo.fileRecordName);
+    audioOutput->setRecordToFile(deviceInfo.recordToFile);
+    audioOutput->setRecordSilenceTime(deviceInfo.recordSilenceTime);
 
     qDebug("AudioDeviceManager::setOutputDeviceInfo: index: %d device: %s updated",
             outputDeviceIndex, qPrintable(deviceName));
@@ -647,18 +771,6 @@ void AudioDeviceManager::unsetOutputDeviceInfo(int outputDeviceIndex)
 
     stopAudioOutput(outputDeviceIndex);
     startAudioOutput(outputDeviceIndex);
-
-    if (oldDeviceInfo.sampleRate != m_audioOutputInfos[deviceName].sampleRate)
-    {
-        // send message to attached channels
-        QList<MessageQueue *>::const_iterator it = m_outputDeviceSinkMessageQueues[outputDeviceIndex].begin();
-
-        for (; it != m_outputDeviceSinkMessageQueues[outputDeviceIndex].end(); ++it)
-        {
-            DSPConfigureAudio *msg = new DSPConfigureAudio(m_audioOutputInfos[deviceName].sampleRate, DSPConfigureAudio::AudioOutput);
-            (*it)->push(msg);
-        }
-    }
 }
 
 void AudioDeviceManager::unsetInputDeviceInfo(int inputDeviceIndex)
@@ -687,27 +799,15 @@ void AudioDeviceManager::unsetInputDeviceInfo(int inputDeviceIndex)
 
     stopAudioInput(inputDeviceIndex);
     startAudioInput(inputDeviceIndex);
-
-    if (oldDeviceInfo.sampleRate != m_audioInputInfos[deviceName].sampleRate)
-    {
-        // send message to attached channels
-        QList<MessageQueue *>::const_iterator it = m_inputDeviceSourceMessageQueues[inputDeviceIndex].begin();
-
-        for (; it != m_inputDeviceSourceMessageQueues[inputDeviceIndex].end(); ++it)
-        {
-            DSPConfigureAudio *msg = new DSPConfigureAudio(m_audioInputInfos[deviceName].sampleRate, DSPConfigureAudio::AudioInput);
-            (*it)->push(msg);
-        }
-    }
 }
 
 void AudioDeviceManager::inputInfosCleanup()
 {
     QSet<QString> deviceNames;
     deviceNames.insert(m_defaultDeviceName);
-    QList<QAudioDeviceInfo>::const_iterator itd = m_inputDevicesInfo.begin();
+    QList<AudioDeviceInfo>::const_iterator itd = AudioDeviceInfo::availableInputDevices().begin();
 
-    for (; itd != m_inputDevicesInfo.end(); ++itd)
+    for (; itd != AudioDeviceInfo::availableInputDevices().end(); ++itd)
     {
         qDebug("AudioDeviceManager::inputInfosCleanup: device: %s", qPrintable(itd->deviceName()));
         deviceNames.insert(itd->deviceName());
@@ -733,9 +833,9 @@ void AudioDeviceManager::outputInfosCleanup()
 {
     QSet<QString> deviceNames;
     deviceNames.insert(m_defaultDeviceName);
-    QList<QAudioDeviceInfo>::const_iterator itd = m_outputDevicesInfo.begin();
+    QList<AudioDeviceInfo>::const_iterator itd = AudioDeviceInfo::availableOutputDevices().begin();
 
-    for (; itd != m_outputDevicesInfo.end(); ++itd)
+    for (; itd != AudioDeviceInfo::availableOutputDevices().end(); ++itd)
     {
         qDebug("AudioDeviceManager::outputInfosCleanup: device: %s", qPrintable(itd->deviceName()));
         deviceNames.insert(itd->deviceName());
@@ -755,6 +855,27 @@ void AudioDeviceManager::outputInfosCleanup()
             ++itm;
         }
     }
+}
+
+bool AudioDeviceManager::setInputDeviceVolume(float volume, int inputDeviceIndex)
+{
+    if (m_audioInputs.find(inputDeviceIndex) == m_audioInputs.end()) { // no FIFO registered yet hence no audio input has been allocated yet
+        return false;
+    }
+
+    m_audioInputs[inputDeviceIndex]->setVolume(volume);
+    return true;
+}
+
+bool AudioDeviceManager::setOutputDeviceVolume(float volume, int outputDeviceIndex)
+{
+    if (m_audioOutputs.find(outputDeviceIndex) == m_audioOutputs.end()) { // no FIFO registered yet hence no audio output has been allocated yet
+        return false;
+    }
+
+    m_audioOutputs[outputDeviceIndex]->setVolume(volume);
+    return true;
+
 }
 
 void AudioDeviceManager::debugAudioInputInfos() const
@@ -787,4 +908,60 @@ void AudioDeviceManager::debugAudioOutputInfos() const
                 << " udpChannelCodec: " << (int) it.value().udpChannelCodec
                 << " decimationFactor: " << it.value().udpDecimationFactor;
     }
+}
+
+bool AudioDeviceManager::handleMessage(const Message& msg)
+{
+    if (AudioOutputDevice::MsgReportSampleRate::match(msg))
+    {
+        AudioOutputDevice::MsgReportSampleRate& report = (AudioOutputDevice::MsgReportSampleRate&) msg;
+        int deviceIndex = report.getDeviceIndex();
+        const QString& deviceName = report.getDeviceName();
+        int sampleRate = report.getSampleRate();
+        qDebug("AudioDeviceManager::handleMessage: AudioOutputDevice::MsgReportSampleRate: device(%d) %s: rate: %d",
+            deviceIndex, qPrintable(deviceName), sampleRate);
+        m_audioOutputInfos[deviceName].sampleRate = sampleRate;
+
+        // send message to attached channels
+        for (auto& messageQueue : m_outputDeviceSinkMessageQueues[deviceIndex])
+        {
+            DSPConfigureAudio *msg = new DSPConfigureAudio(m_audioOutputInfos[deviceName].sampleRate, DSPConfigureAudio::AudioOutput);
+            messageQueue->push(msg);
+        }
+
+        return true;
+    }
+    else if (AudioInputDevice::MsgReportSampleRate::match(msg))
+    {
+        AudioInputDevice::MsgReportSampleRate& report = (AudioInputDevice::MsgReportSampleRate&) msg;
+        int deviceIndex = report.getDeviceIndex();
+        const QString& deviceName = report.getDeviceName();
+        int sampleRate = report.getSampleRate();
+        qDebug("AudioDeviceManager::handleMessage: AudioInputDevice::MsgReportSampleRate: device(%d) %s: rate: %d",
+            deviceIndex, qPrintable(deviceName), sampleRate);
+        m_audioInputInfos[deviceName].sampleRate = sampleRate;
+
+        // send message to attached channels
+        for (auto& messageQueue : m_inputDeviceSourceMessageQueues[deviceIndex])
+        {
+            DSPConfigureAudio *msg = new DSPConfigureAudio(m_audioInputInfos[deviceName].sampleRate, DSPConfigureAudio::AudioInput);
+            messageQueue->push(msg);
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+void AudioDeviceManager::handleInputMessages()
+{
+	Message* message;
+
+	while ((message = m_inputMessageQueue.pop()) != nullptr)
+	{
+		if (handleMessage(*message)) {
+			delete message;
+		}
+	}
 }

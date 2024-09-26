@@ -8,13 +8,15 @@ SoapySDR is a [C/C++ API](https://github.com/pothosware/SoapySDR/blob/master/inc
 
 SoapySDR devices appear in the list of available devices in the order they are listed in the API call to SoapySDR. If more than one device controlled by SoapySDR is listed then its sequence number is incremented like:
 
-  - SoapySDR[0:0] HackRF One...
-  - SoapySDR[1:0] HackRF One...
+  - SoapySDR[0:0] hackrf: HackRF One...
+  - SoapySDR[1:0] hackrf: HackRF One...
+
+The SoapySDR driver name appears right before the column
 
 If the same device exposes several channels they appear as distinct devices with the channel number incremented like:
 
-  - SoapySDR[1:0] LimeSDR...
-  - SoapySDR[1:1] LimeSDR...
+  - SoapySDR[1:0] lime: LimeSDR...
+  - SoapySDR[1:1] lime: LimeSDR...
 
 This works similarly to LimeSDR USB or BladeRF 2.0 micro
 
@@ -27,6 +29,8 @@ The binary distributions provide only the SoapySDR base library. It is your resp
 Occasionally some devices may require to have the user specifying keyword parameters in order to open the device correctly. Most noticeably the Red Pitaya (driver `redpitaya`) needs the IP address of the board specified as a `addr=x.x.x.x` key value pair as it does not get scanned automatically.
 
 In such a case you will use the device user arguments (Preferences -> Devices -> User arguments) with the dialog as described [here](../../../sdrgui/deviceuserargs.md)
+
+If you use Soapy Remote make sure you read [this Wiki page](https://github.com/f4exb/sdrangel/wiki/Soapy-Remote) first as user arguments are mandatory.
 
 <h2>SoapySDR API implementation</h2>
 
@@ -63,6 +67,8 @@ When installed the Red Pitaya SoapySDR plugin lists a Red Pitaya device even if 
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![SoapySDR input plugin GUI](../../../doc/img/SoapySDROutput_plugin1.png)
 
 The top part described by number tags is common for all devices. The bottom part under the "A" tag depends on the SoapySDR device implementation. The corresponding widgets are stacked vertically inside a scrollable area as there may be many controls depending on how the device interface is implemented in SoapySDR. Move the slider on the right to see all parameters available.
@@ -87,7 +93,7 @@ Use the wheels to adjust the value. Left click on a digit sets the cursor positi
 
 <h3>4: Interpolation factor</h3>
 
-The I/Q stream from the application is upsampled by a power of two before being sent to the the SoapySDR controlled device. Possible values are increasing powers of two: 1 (no interpolation), 2, 4, 8, 16, 32, 64.
+The I/Q stream from the application is upsampled by a power of two before being sent to the SoapySDR controlled device. Possible values are increasing powers of two: 1 (no interpolation), 2, 4, 8, 16, 32, 64.
 
 <h3>5: Transverter mode open dialog</h3>
 

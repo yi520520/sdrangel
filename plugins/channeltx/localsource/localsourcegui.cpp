@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,8 +20,9 @@
 
 #include "device/deviceuiset.h"
 #include "gui/basicchannelsettingsdialog.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/hbfilterchainconverter.h"
-#include "mainwindow.h"
+#include "dsp/dspcommands.h"
 
 #include "localsourcegui.h"
 #include "localsource.h"
@@ -35,25 +37,6 @@ LocalSourceGUI* LocalSourceGUI::create(PluginAPI* pluginAPI, DeviceUISet *device
 void LocalSourceGUI::destroy()
 {
     delete this;
-}
-
-void LocalSourceGUI::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString LocalSourceGUI::getName() const
-{
-    return objectName();
-}
-
-qint64 LocalSourceGUI::getCenterFrequency() const {
-    return 0;
-}
-
-void LocalSourceGUI::setCenterFrequency(qint64 centerFrequency)
-{
-    (void) centerFrequency;
 }
 
 void LocalSourceGUI::resetToDefaults()
@@ -82,11 +65,12 @@ bool LocalSourceGUI::deserialize(const QByteArray& data)
 
 bool LocalSourceGUI::handleMessage(const Message& message)
 {
-    if (LocalSource::MsgSampleRateNotification::match(message))
+    if (DSPSignalNotification::match(message))
     {
-        LocalSource::MsgSampleRateNotification& notif = (LocalSource::MsgSampleRateNotification&) message;
-        //m_channelMarker.setBandwidth(notif.getSampleRate());
-        m_sampleRate = notif.getSampleRate();
+        DSPSignalNotification& notif = (DSPSignalNotification&) message;
+        m_deviceCenterFrequency = notif.getCenterFrequency();
+        m_basebandSampleRate = notif.getSampleRate();
+        updateAbsoluteCenterFrequency();
         displayRateAndShift();
         return true;
     }
@@ -95,6 +79,7 @@ bool LocalSourceGUI::handleMessage(const Message& message)
         const LocalSource::MsgConfigureLocalSource& cfg = (LocalSource::MsgConfigureLocalSource&) message;
         m_settings = cfg.getSettings();
         blockApplySettings(true);
+        m_channelMarker.updateSettings(static_cast<const ChannelMarker*>(m_settings.m_channelMarker));
         displaySettings();
         blockApplySettings(false);
         return true;
@@ -106,16 +91,21 @@ bool LocalSourceGUI::handleMessage(const Message& message)
 }
 
 LocalSourceGUI::LocalSourceGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channeltx, QWidget* parent) :
-        RollupWidget(parent),
+        ChannelGUI(parent),
         ui(new Ui::LocalSourceGUI),
         m_pluginAPI(pluginAPI),
         m_deviceUISet(deviceUISet),
-        m_sampleRate(0),
+        m_basebandSampleRate(0),
+        m_deviceCenterFrequency(0),
         m_tickCount(0)
 {
-    ui->setupUi(this);
     setAttribute(Qt::WA_DeleteOnClose, true);
-    connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
+    m_helpURL = "plugins/channeltx/localsource/readme.md";
+    RollupContents *rollupContents = getRollupContents();
+	ui->setupUi(rollupContents);
+    setSizePolicy(rollupContents->sizePolicy());
+    rollupContents->arrangeRollups();
+	connect(rollupContents, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
     connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
 
     m_localSource = (LocalSource*) channeltx;
@@ -130,25 +120,21 @@ LocalSourceGUI::LocalSourceGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, B
     m_channelMarker.setVisible(true); // activate signal on the last setting only
 
     m_settings.setChannelMarker(&m_channelMarker);
+    m_settings.setRollupState(&m_rollupState);
 
-    m_deviceUISet->registerTxChannelInstance(LocalSource::m_channelIdURI, this);
     m_deviceUISet->addChannelMarker(&m_channelMarker);
-    m_deviceUISet->addRollupWidget(this);
 
     connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
-    //connect(&(m_deviceUISet->m_deviceSourceAPI->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
-
-    m_time.start();
 
     updateLocalDevices();
     displaySettings();
+    makeUIConnections();
     applySettings(true);
+    m_resizer.enableChildMouseTracking();
 }
 
 LocalSourceGUI::~LocalSourceGUI()
 {
-    m_deviceUISet->removeTxChannelInstance(this);
-    delete m_localSource; // TODO: check this: when the GUI closes it has to delete the demodulator
     delete ui;
 }
 
@@ -168,40 +154,34 @@ void LocalSourceGUI::applySettings(bool force)
     }
 }
 
-void LocalSourceGUI::applyChannelSettings()
-{
-    if (m_doApplySettings)
-    {
-        LocalSource::MsgConfigureChannelizer *msgChan = LocalSource::MsgConfigureChannelizer::create(
-                m_settings.m_log2Interp,
-                m_settings.m_filterChainHash);
-        m_localSource->getInputMessageQueue()->push(msgChan);
-    }
-}
-
 void LocalSourceGUI::displaySettings()
 {
     m_channelMarker.blockSignals(true);
     m_channelMarker.setCenterFrequency(0);
     m_channelMarker.setTitle(m_settings.m_title);
-    m_channelMarker.setBandwidth(m_sampleRate); // TODO
+    m_channelMarker.setBandwidth(m_basebandSampleRate / (1<<m_settings.m_log2Interp)); // TODO
     m_channelMarker.setMovable(false); // do not let user move the center arbitrarily
     m_channelMarker.blockSignals(false);
     m_channelMarker.setColor(m_settings.m_rgbColor); // activate signal on the last setting only
 
     setTitleColor(m_settings.m_rgbColor);
     setWindowTitle(m_channelMarker.getTitle());
+    setTitle(m_channelMarker.getTitle());
+    updateIndexLabel();
 
     blockApplySettings(true);
     ui->interpolationFactor->setCurrentIndex(m_settings.m_log2Interp);
+    ui->localDevicePlay->setChecked(m_settings.m_play);
     applyInterpolation();
+    getRollupContents()->restoreState(m_rollupState);
+    updateAbsoluteCenterFrequency();
     blockApplySettings(false);
 }
 
 void LocalSourceGUI::displayRateAndShift()
 {
-    int shift = m_shiftFrequencyFactor * m_sampleRate;
-    double channelSampleRate = ((double) m_sampleRate) / (1<<m_settings.m_log2Interp);
+    int shift = m_shiftFrequencyFactor * m_basebandSampleRate;
+    double channelSampleRate = ((double) m_basebandSampleRate) / (1<<m_settings.m_log2Interp);
     QLocale loc;
     ui->offsetFrequencyText->setText(tr("%1 Hz").arg(loc.toString(shift)));
     ui->channelRateText->setText(tr("%1k").arg(QString::number(channelSampleRate / 1000.0, 'g', 5)));
@@ -221,14 +201,16 @@ void LocalSourceGUI::updateLocalDevices()
     }
 }
 
-void LocalSourceGUI::leaveEvent(QEvent*)
+void LocalSourceGUI::leaveEvent(QEvent* event)
 {
     m_channelMarker.setHighlighted(false);
+    ChannelGUI::leaveEvent(event);
 }
 
-void LocalSourceGUI::enterEvent(QEvent*)
+void LocalSourceGUI::enterEvent(EnterEventType* event)
 {
     m_channelMarker.setHighlighted(true);
+    ChannelGUI::enterEvent(event);
 }
 
 void LocalSourceGUI::handleSourceMessages()
@@ -248,11 +230,14 @@ void LocalSourceGUI::onWidgetRolled(QWidget* widget, bool rollDown)
 {
     (void) widget;
     (void) rollDown;
+
+    getRollupContents()->saveState(m_rollupState);
+    applySettings();
 }
 
 void LocalSourceGUI::onMenuDialogCalled(const QPoint &p)
 {
-    if (m_contextMenuType == ContextMenuChannelSettings)
+    if (m_contextMenuType == ContextMenuType::ContextMenuChannelSettings)
     {
         BasicChannelSettingsDialog dialog(&m_channelMarker, this);
         dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
@@ -260,8 +245,16 @@ void LocalSourceGUI::onMenuDialogCalled(const QPoint &p)
         dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
         dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
         dialog.setReverseAPIChannelIndex(m_settings.m_reverseAPIChannelIndex);
+        dialog.setDefaultTitle(m_displayedName);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            dialog.setNumberOfStreams(m_localSource->getNumberOfDeviceStreams());
+            dialog.setStreamIndex(m_settings.m_streamIndex);
+        }
 
         dialog.move(p);
+        new DialogPositioner(&dialog, false);
         dialog.exec();
 
         m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
@@ -273,7 +266,16 @@ void LocalSourceGUI::onMenuDialogCalled(const QPoint &p)
         m_settings.m_reverseAPIChannelIndex = dialog.getReverseAPIChannelIndex();
 
         setWindowTitle(m_settings.m_title);
+        setTitle(m_channelMarker.getTitle());
         setTitleColor(m_settings.m_rgbColor);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            m_settings.m_streamIndex = dialog.getSelectedStreamIndex();
+            m_channelMarker.clearStreamIndexes();
+            m_channelMarker.addStreamIndex(m_settings.m_streamIndex);
+            updateIndexLabel();
+        }
 
         applySettings();
     }
@@ -305,6 +307,12 @@ void LocalSourceGUI::on_localDevicesRefresh_clicked(bool checked)
     updateLocalDevices();
 }
 
+void LocalSourceGUI::on_localDevicePlay_toggled(bool checked)
+{
+    m_settings.m_play = checked;
+    applySettings();
+}
+
 void LocalSourceGUI::applyInterpolation()
 {
     uint32_t maxHash = 1;
@@ -326,8 +334,9 @@ void LocalSourceGUI::applyPosition()
     m_shiftFrequencyFactor = HBFilterChainConverter::convertToString(m_settings.m_log2Interp, m_settings.m_filterChainHash, s);
     ui->filterChainText->setText(s);
 
+    updateAbsoluteCenterFrequency();
     displayRateAndShift();
-    applyChannelSettings();
+    applySettings();
 }
 
 void LocalSourceGUI::tick()
@@ -335,4 +344,19 @@ void LocalSourceGUI::tick()
     if (++m_tickCount == 20) { // once per second
         m_tickCount = 0;
     }
+}
+
+void LocalSourceGUI::makeUIConnections()
+{
+    QObject::connect(ui->interpolationFactor, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LocalSourceGUI::on_interpolationFactor_currentIndexChanged);
+    QObject::connect(ui->position, &QSlider::valueChanged, this, &LocalSourceGUI::on_position_valueChanged);
+    QObject::connect(ui->localDevice, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &LocalSourceGUI::on_localDevice_currentIndexChanged);
+    QObject::connect(ui->localDevicesRefresh, &QPushButton::clicked, this, &LocalSourceGUI::on_localDevicesRefresh_clicked);
+    QObject::connect(ui->localDevicePlay, &ButtonSwitch::toggled, this, &LocalSourceGUI::on_localDevicePlay_toggled);
+}
+
+void LocalSourceGUI::updateAbsoluteCenterFrequency()
+{
+    int shift = m_shiftFrequencyFactor * m_basebandSampleRate;
+    setStatusFrequency(m_deviceCenterFrequency + shift);
 }

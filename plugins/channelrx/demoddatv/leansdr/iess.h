@@ -1,18 +1,21 @@
-// This file is part of LeanSDR Copyright (C) 2016-2018 <pabr@pabr.org>.
-// See the toplevel README for more information.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2018-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>        //
+//                                                                                   //
+// This file is part of LeanSDR Copyright (C) 2016-2019 <pabr@pabr.org>.             //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 
 #ifndef LEANSDR_IESS_H
 #define LEANSDR_IESS_H
@@ -28,22 +31,28 @@ namespace leansdr
 
 struct etr192_descrambler : runnable
 {
-    etr192_descrambler(scheduler *sch,
-                       pipebuf<u8> &_in,  // Packed scrambled bits
-                       pipebuf<u8> &_out) // Packed bits
-        : runnable(sch, "etr192_dec"),
-          in(_in), out(_out),
-          shiftreg(0), counter(0)
+    etr192_descrambler(
+        scheduler *sch,
+        pipebuf<u8> &_in, // Packed scrambled bits
+        pipebuf<u8> &_out // Packed bits
+    ) :
+        runnable(sch, "etr192_dec"),
+        in(_in),
+        out(_out),
+        shiftreg(0),
+        counter(0)
     {
     }
 
     void run()
     {
         int count = min(in.readable(), out.writable());
+
         for (u8 *pin = in.rd(), *pend = pin + count, *pout = out.wr();
              pin < pend; ++pin, ++pout)
         {
             u8 byte_in = *pin, byte_out = 0;
+
             for (int b = 8; b--; byte_in <<= 1)
             {
                 // Levels before clock transition
@@ -61,8 +70,10 @@ struct etr192_descrambler : runnable
                 counter = reset_counter ? 0 : (counter + 1) & 31;
                 byte_out = (byte_out << 1) | bit_out;
             }
+
             *pout = byte_out;
         }
+
         in.read(count);
         out.written(count);
     }

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,8 +20,10 @@
 #ifndef DEVICES_XTRX_DEVICEXTRX_H_
 #define DEVICES_XTRX_DEVICEXTRX_H_
 
+#include <QString>
 #include <stdint.h>
 
+#include "plugin/plugininterface.h"
 #include "export.h"
 
 struct strx_dev;
@@ -32,8 +36,10 @@ public:
 
     bool open(const char* deviceStr);
     void close();
+    static void enumOriginDevices(const QString& hardwareId, PluginInterface::OriginDevices& originDevices);
     struct xtrx_dev *getDevice() { return m_dev; }
-    double set_samplerate(double rate, double master, bool output);
+    double setSamplerate(double rate, double master, bool output);
+    bool setSamplerate(double rate, uint32_t log2Decim, uint32_t log2Interp, bool output);
     double getMasterRate() const { return m_masterRate; }
     double getClockGen() const { return m_clockGen; }
     double getActualInputRate() const { return m_actualInputRate; }
@@ -41,7 +47,7 @@ public:
     static void getAutoGains(uint32_t autoGain, uint32_t& lnaGain, uint32_t& tiaGain, uint32_t& pgaGain);
 
     static const uint32_t m_nbGains = 74;
-    static const unsigned int blockSize = (1<<13);
+    static const unsigned int blockSize = (1<<12);
 
 private:
     struct xtrx_dev *m_dev; //!< device handle

@@ -1,5 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020-2021 Jon Beniston, M7RCE <jon@beniston.com>                //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -30,10 +35,11 @@
 
 class QComboBox;
 class QPluginLoader;
-class Preset;
 class Message;
 class MessageQueue;
 class DeviceAPI;
+struct DeviceUserArgs;
+class WebAPIAdapterInterface;
 
 class SDRBASE_API PluginManager : public QObject {
 	Q_OBJECT
@@ -56,33 +62,45 @@ public:
 	~PluginManager();
 
 	PluginAPI *getPluginAPI() { return &m_pluginAPI; }
+    void setEnableSoapy(bool enableSoapy) { m_enableSoapy = enableSoapy; }
 	void loadPlugins(const QString& pluginsSubDir);
 	void loadPluginsPart(const QString& pluginsSubDir);
 	void loadPluginsFinal();
+    void loadPluginsNonDiscoverable(const DeviceUserArgs& deviceUserArgs);
 	const Plugins& getPlugins() const { return m_plugins; }
 
 	// Callbacks from the plugins
 	void registerRxChannel(const QString& channelIdURI, const QString& channelId, PluginInterface* plugin);
-	void registerSampleSource(const QString& sourceName, PluginInterface* plugin);
 	void registerTxChannel(const QString& channelIdURI, const QString& channelId, PluginInterface* plugin);
+	void registerMIMOChannel(const QString& channelIdURI, const QString& channelId, PluginInterface* plugin);
+	void registerSampleSource(const QString& sourceName, PluginInterface* plugin);
 	void registerSampleSink(const QString& sinkName, PluginInterface* plugin);
     void registerSampleMIMO(const QString& mimoName, PluginInterface* plugin);
+	void registerFeature(const QString& featureIdURI, const QString& featureId, PluginInterface* plugin);
 
 	PluginAPI::SamplingDeviceRegistrations& getSourceDeviceRegistrations() { return m_sampleSourceRegistrations; }
 	PluginAPI::SamplingDeviceRegistrations& getSinkDeviceRegistrations() { return m_sampleSinkRegistrations; }
     PluginAPI::SamplingDeviceRegistrations& getMIMODeviceRegistrations() { return m_sampleMIMORegistrations; }
 	PluginAPI::ChannelRegistrations *getRxChannelRegistrations() { return &m_rxChannelRegistrations; }
 	PluginAPI::ChannelRegistrations *getTxChannelRegistrations() { return &m_txChannelRegistrations; }
+	PluginAPI::ChannelRegistrations *getMIMOChannelRegistrations() { return &m_mimoChannelRegistrations; }
+	PluginAPI::FeatureRegistrations *getFeatureRegistrations() { return &m_featureRegistrations; }
 
-    void createRxChannelInstance(int channelPluginIndex, DeviceUISet *deviceUISet, DeviceAPI *deviceAPI);
     void listRxChannels(QList<QString>& list);
-
-	void createTxChannelInstance(int channelPluginIndex, DeviceUISet *deviceUISet, DeviceAPI *deviceAPI);
 	void listTxChannels(QList<QString>& list);
+	void listMIMOChannels(QList<QString>& list);
+	void listFeatures(QList<QString>& list);
+
+	const PluginInterface *getChannelPluginInterface(const QString& channelIdURI) const;
+	const PluginInterface *getDevicePluginInterface(const QString& deviceId) const;
+	const PluginInterface *getFeaturePluginInterface(const QString& featureIdURI) const;
+
+    // Map channel/feature URI to short form Id
+    QString uriToId(const QString& uri) const;
 
 	static const QString& getFileInputDeviceId() { return m_fileInputDeviceTypeID; }
-	static const QString& getFileSinkDeviceId() { return m_fileSinkDeviceTypeID; }
-	static const QString& getTestMIMODeviceId() { return m_testMIMODeviceTypeID; }
+    static const QString& getTestMIMODeviceId() { return m_testMIMODeviceTypeID; }
+	static const QString& getFileOutputDeviceId() { return m_fileOutputDeviceTypeID; }
 
 private:
 	struct SamplingDevice { //!< This is the device registration
@@ -112,14 +130,17 @@ private:
 
 	PluginAPI m_pluginAPI;
 	Plugins m_plugins;
+    bool m_enableSoapy;
 
 	PluginAPI::ChannelRegistrations m_rxChannelRegistrations;           //!< Channel plugins register here
+	PluginAPI::ChannelRegistrations m_txChannelRegistrations;           //!< Channel plugins register here
+	PluginAPI::ChannelRegistrations m_mimoChannelRegistrations;         //!< Channel plugins register here
+
 	PluginAPI::SamplingDeviceRegistrations m_sampleSourceRegistrations; //!< Input source plugins (one per device kind) register here
+	PluginAPI::SamplingDeviceRegistrations m_sampleSinkRegistrations;   //!< Output sink plugins (one per device kind) register here
+	PluginAPI::SamplingDeviceRegistrations m_sampleMIMORegistrations;   //!< MIMO sink plugins (one per device kind) register here
 
-	PluginAPI::ChannelRegistrations m_txChannelRegistrations;         //!< Channel plugins register here
-	PluginAPI::SamplingDeviceRegistrations m_sampleSinkRegistrations; //!< Output sink plugins (one per device kind) register here
-
-	PluginAPI::SamplingDeviceRegistrations m_sampleMIMORegistrations; //!< MIMO sink plugins (one per device kind) register here
+	PluginAPI::FeatureRegistrations m_featureRegistrations;             //!< Feature plugins register here
 
 	// "Local" sample source device IDs
     static const QString m_localInputHardwareID;     //!< Local input hardware ID
@@ -134,14 +155,14 @@ private:
     static const QString m_localOutputDeviceTypeID;  //!< Local output plugin ID
     static const QString m_remoteOutputHardwareID;   //!< Remote output hardware ID
     static const QString m_remoteOutputDeviceTypeID; //!< Remote output plugin ID
-    static const QString m_fileSinkHardwareID;       //!< FileSink sink hardware ID
-    static const QString m_fileSinkDeviceTypeID;     //!< FileSink sink plugin ID
+    static const QString m_fileOutputHardwareID;     //!< FileOutput sink hardware ID
+    static const QString m_fileOutputDeviceTypeID;   //!< FileOutput sink plugin ID
 
     // "Local" sample MIMO device IDs
     static const QString m_testMIMOHardwareID;       //!< Test MIMO hardware ID
     static const QString m_testMIMODeviceTypeID;     //!< Test MIMO plugin ID
 
-	void loadPluginsDir(const QDir& dir);
+	void loadPluginsDir(const QDir& dir, const QStringList& filter);
 };
 
 static inline bool operator<(const PluginManager::Plugin& a, const PluginManager::Plugin& b)

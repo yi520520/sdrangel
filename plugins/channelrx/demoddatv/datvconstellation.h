@@ -1,4 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2018-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 // Copyright (C) 2018 F4HKW                                                      //
 // for F4EXB / SDRAngel                                                          //
 // using LeanSDR Framework (C) 2016 F4DAV                                        //
@@ -22,6 +23,7 @@
 
 #include <vector>
 
+#include "leansdr/dvb.h"
 #include "leansdr/framework.h"
 #include "gui/tvscreen.h"
 
@@ -114,26 +116,26 @@ template<typename T> struct datvconstellation: runnable
     unsigned long decimation;
     long pixels_per_frame;
     cstln_lut<eucl_ss, 256> **cstln;  // Optional ptr to optional constellation
-    TVScreen *m_objDATVScreen;
-    pipereader<complex<T> > in;
+    TVScreen *m_tvScreen;
+    pipereader<std::complex<T> > in;
     unsigned long phase;
     std::vector<int> cstln_rows;
     std::vector<int> cstln_cols;
 
     datvconstellation(
             scheduler *sch,
-            pipebuf<complex<T> > &_in,
+            pipebuf<std::complex<T> > &_in,
             T _xymin,
             T _xymax,
             const char *_name = nullptr,
-            TVScreen *objDATVScreen = nullptr) :
+            TVScreen *tvScreen = nullptr) :
         runnable(sch, _name ? _name : _in.name),
         xymin(_xymin),
         xymax(_xymax),
         decimation(DEFAULT_GUI_DECIMATION),
         pixels_per_frame(1024),
         cstln(0),
-        m_objDATVScreen(objDATVScreen),
+        m_tvScreen(tvScreen),
         in(_in),
         phase(0)
     {
@@ -144,17 +146,17 @@ template<typename T> struct datvconstellation: runnable
         //Symbols
         while (in.readable() >= pixels_per_frame)
         {
-            if ((!phase) && m_objDATVScreen)
+            if ((!phase) && m_tvScreen)
             {
-                m_objDATVScreen->resetImage();
+                m_tvScreen->resetImage();
 
-                complex<T> *p = in.rd(), *pend = p + pixels_per_frame;
+                std::complex<T> *p = in.rd(), *pend = p + pixels_per_frame;
 
                 for (; p < pend; ++p)
                 {
-                    m_objDATVScreen->selectRow(256 * (p->re - xymin) / (xymax - xymin));
-                    m_objDATVScreen->setDataColor(
-                        256 - 256 * ((p->im - xymin) / (xymax - xymin)),
+                    m_tvScreen->selectRow(256 * (p->real() - xymin) / (xymax - xymin));
+                    m_tvScreen->setDataColor(
+                        256 - 256 * ((p->imag() - xymin) / (xymax - xymin)),
                         255, 0, 255);
                 }
 
@@ -166,12 +168,12 @@ template<typename T> struct datvconstellation: runnable
 
                     for (;(row_it != cstln_rows.end()) && (col_it != cstln_cols.end()); ++row_it, ++col_it)
                     {
-                        m_objDATVScreen->selectRow(*row_it);
-                        m_objDATVScreen->setDataColor(*col_it, 250, 250, 5);
+                        m_tvScreen->selectRow(*row_it);
+                        m_tvScreen->setDataColor(*col_it, 250, 250, 5);
                     }
                 }
 
-                m_objDATVScreen->renderImage(0);
+                m_tvScreen->renderImage(0);
             }
 
             in.read(pixels_per_frame);
@@ -197,9 +199,9 @@ template<typename T> struct datvconstellation: runnable
 
         for (int i = 0; i < (*cstln)->nsymbols; ++i)
         {
-            complex<signed char> *p = &(*cstln)->symbols[i];
-            int x = 256 * (p->re - xymin) / (xymax - xymin);
-            int y = 256 - 256 * (p->im - xymin) / (xymax - xymin);
+            std::complex<signed char> *p = &(*cstln)->symbols[i];
+            int x = 256 * (p->real() - xymin) / (xymax - xymin);
+            int y = 256 - 256 * (p->imag() - xymin) / (xymax - xymin);
 
             for (int d = -4; d <= 4; ++d)
             {

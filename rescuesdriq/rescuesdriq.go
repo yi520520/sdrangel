@@ -71,7 +71,7 @@ func printHeader(header *HeaderStd) {
 	fmt.Println("Sample rate:", header.SampleRate)
 	fmt.Println("Frequency  :", header.CenterFrequency)
 	fmt.Println("Sample Size:", header.SampleSize)
-	tm := time.Unix(header.StartTimestamp, 0)
+	tm := time.Unix(header.StartTimestamp / 1000, header.StartTimestamp % 1000)
 	fmt.Println("Start      :", tm)
 	fmt.Println("CRC32      :", header.CRC32)
 	fmt.Println("CRC32 OK   :", GetCRC(header))
@@ -84,18 +84,15 @@ func copyContent(reader *bufio.Reader, writer *bufio.Writer, blockSize uint) {
 	for {
 		n, err := reader.Read(p)
 
-		if err != nil {
+		if err == nil || err == io.EOF {
+			writer.Write(p[0:n])
+			sz += int64(n)
 			if err == io.EOF {
-				writer.Write(p[0:n])
-				sz += int64(n)
-				break
-			} else {
-				fmt.Println("An error occurred during content copy. Aborting")
 				break
 			}
 		} else {
-			writer.Write(p)
-			sz += int64(blockSize) * 4096
+			fmt.Println("An error occurred during content copy. Aborting")
+			break
 		}
 
 		fmt.Printf("Wrote %d bytes\r", sz)
@@ -112,6 +109,7 @@ func main() {
 	sampleSize := flag.Uint("sz", 16, "Sample size (16 or 24)")
 	timeStr := flag.String("ts", "", "start time RFC3339 (ex: 2006-01-02T15:04:05Z)")
 	timeNow := flag.Bool("now", false, "use now for start time")
+	assumeMilliseconds := flag.Bool("msec", false, "assume timestamp read from input file is in milliseconds (by default seconds will be assumed)")
 	blockSize := flag.Uint("bz", 1, "Copy block size in multiple of 4k")
 
 	flag.Parse()
@@ -132,6 +130,11 @@ func main() {
 		// make a read buffer
 		reader := bufio.NewReader(fi)
 		var headerOrigin HeaderStd = analyze(reader)
+
+		if !*assumeMilliseconds {
+			headerOrigin.StartTimestamp = headerOrigin.StartTimestamp * (int64(time.Second) / int64(time.Millisecond))
+		}
+
 		printHeader(&headerOrigin)
 
 		if flagSeen["out"] {
@@ -152,13 +155,13 @@ func main() {
 			if flagSeen["ts"] {
 				t, err := time.Parse(time.RFC3339, *timeStr)
 				if err == nil {
-					headerOrigin.StartTimestamp = t.Unix()
+					headerOrigin.StartTimestamp = t.UnixNano() / int64(time.Millisecond)
 				} else {
 					fmt.Println("Incorrect time specified. Defaulting to now")
-					headerOrigin.StartTimestamp = int64(time.Now().Unix())
+					headerOrigin.StartTimestamp = int64(time.Now().UnixNano() / int64(time.Millisecond))
 				}
 			} else if *timeNow {
-				headerOrigin.StartTimestamp = int64(time.Now().Unix())
+				headerOrigin.StartTimestamp = int64(time.Now().UnixNano() / int64(time.Millisecond))
 			}
 
 			fmt.Println("\nHeader is now")

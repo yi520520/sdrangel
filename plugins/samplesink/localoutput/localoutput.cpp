@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -29,7 +30,6 @@
 
 #include "util/simpleserializer.h"
 #include "dsp/dspcommands.h"
-#include "dsp/dspengine.h"
 #include "device/deviceapi.h"
 
 #include "localoutput.h"
@@ -43,18 +43,27 @@ LocalOutput::LocalOutput(DeviceAPI *deviceAPI) :
     m_settings(),
     m_centerFrequency(0),
     m_sampleRate(48000),
-    m_fileSink(nullptr),
 	m_deviceDescription("LocalOutput")
 {
-	m_sampleSourceFifo.resize(96000 * 4);
+	m_sampleSourceFifo.resize(SampleSourceFifo::getSizePolicy(m_sampleRate));
     m_deviceAPI->setNbSinkStreams(1);
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &LocalOutput::networkManagerFinished
+    );
 }
 
 LocalOutput::~LocalOutput()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &LocalOutput::networkManagerFinished
+    );
     delete m_networkManager;
 	stop();
 }
@@ -66,7 +75,7 @@ void LocalOutput::destroy()
 
 void LocalOutput::init()
 {
-    applySettings(m_settings, true);
+    applySettings(m_settings, QList<QString>(), true);
 }
 
 bool LocalOutput::start()
@@ -95,12 +104,12 @@ bool LocalOutput::deserialize(const QByteArray& data)
         success = false;
     }
 
-    MsgConfigureLocalOutput* message = MsgConfigureLocalOutput::create(m_settings, true);
+    MsgConfigureLocalOutput* message = MsgConfigureLocalOutput::create(m_settings, QList<QString>(), true);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureLocalOutput* messageToGUI = MsgConfigureLocalOutput::create(m_settings, true);
+        MsgConfigureLocalOutput* messageToGUI = MsgConfigureLocalOutput::create(m_settings, QList<QString>(), true);
         m_guiMessageQueue->push(messageToGUI);
     }
 
@@ -125,6 +134,7 @@ int LocalOutput::getSampleRate() const
 void LocalOutput::setSampleRate(int sampleRate)
 {
     m_sampleRate = sampleRate;
+    m_sampleSourceFifo.resize(SampleSourceFifo::getSizePolicy(m_sampleRate));
 
     DSPSignalNotification *notif = new DSPSignalNotification(m_sampleRate, m_centerFrequency); // Frequency in Hz for the DSP engine
     m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
@@ -168,8 +178,7 @@ bool LocalOutput::handleMessage(const Message& message)
 
         if (cmd.getStartStop())
         {
-            if (m_deviceAPI->initDeviceEngine())
-            {
+            if (m_deviceAPI->initDeviceEngine()) {
                 m_deviceAPI->startDeviceEngine();
             }
         }
@@ -188,7 +197,7 @@ bool LocalOutput::handleMessage(const Message& message)
     {
         qDebug() << "LocalOutput::handleMessage:" << message.getIdentifier();
         MsgConfigureLocalOutput& conf = (MsgConfigureLocalOutput&) message;
-        applySettings(conf.getSettings(), conf.getForce());
+        applySettings(conf.getSettings(), conf.getSettingsKeys(), conf.getForce());
         return true;
     }
 	else
@@ -197,8 +206,9 @@ bool LocalOutput::handleMessage(const Message& message)
 	}
 }
 
-void LocalOutput::applySettings(const LocalOutputSettings& settings, bool force)
+void LocalOutput::applySettings(const LocalOutputSettings& settings, const QList<QString>& settingsKeys, bool force)
 {
+    qDebug() << "LocalOutput::applySettings: force:" << force << settings.getDebugString(settingsKeys, force);
     QMutexLocker mutexLocker(&m_mutex);
     std::ostringstream os;
     QString remoteAddress;
@@ -206,18 +216,20 @@ void LocalOutput::applySettings(const LocalOutputSettings& settings, bool force)
 
     if (settings.m_useReverseAPI)
     {
-        bool fullUpdate = ((m_settings.m_useReverseAPI != settings.m_useReverseAPI) && settings.m_useReverseAPI) ||
-                (m_settings.m_reverseAPIAddress != settings.m_reverseAPIAddress) ||
-                (m_settings.m_reverseAPIPort != settings.m_reverseAPIPort) ||
-                (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex);
-        webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+        bool fullUpdate = (settingsKeys.contains("useReverseAPI") && settings.m_useReverseAPI) ||
+            settingsKeys.contains("reverseAPIAddress") ||
+            settingsKeys.contains("reverseAPIPort") ||
+            settingsKeys.contains("reverseAPIDeviceIndex");
+        webapiReverseSendSettings(settingsKeys, settings, fullUpdate || force);
     }
 
-    m_settings = settings;
-    m_remoteAddress = remoteAddress;
+    if (force) {
+        m_settings = settings;
+    } else {
+        m_settings.applySettings(settingsKeys, settings);
+    }
 
-    qDebug() << "LocalOutput::applySettings: "
-            << " m_remoteAddress: " << m_remoteAddress;
+    m_remoteAddress = remoteAddress;
 }
 
 int LocalOutput::webapiRunGet(
@@ -267,7 +279,26 @@ int LocalOutput::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     LocalOutputSettings settings = m_settings;
+    webapiUpdateDeviceSettings(settings, deviceSettingsKeys, response);
 
+    MsgConfigureLocalOutput *msg = MsgConfigureLocalOutput::create(settings, deviceSettingsKeys, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureLocalOutput *msgToGUI = MsgConfigureLocalOutput::create(settings, deviceSettingsKeys, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatDeviceSettings(response, settings);
+    return 200;
+}
+
+void LocalOutput::webapiUpdateDeviceSettings(
+        LocalOutputSettings& settings,
+        const QStringList& deviceSettingsKeys,
+        SWGSDRangel::SWGDeviceSettings& response)
+{
     if (deviceSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getLocalOutputSettings()->getUseReverseApi() != 0;
     }
@@ -280,18 +311,6 @@ int LocalOutput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("reverseAPIDeviceIndex")) {
         settings.m_reverseAPIDeviceIndex = response.getLocalOutputSettings()->getReverseApiDeviceIndex();
     }
-
-    MsgConfigureLocalOutput *msg = MsgConfigureLocalOutput::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureLocalOutput *msgToGUI = MsgConfigureLocalOutput::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
-    }
-
-    webapiFormatDeviceSettings(response, settings);
-    return 200;
 }
 
 void LocalOutput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const LocalOutputSettings& settings)
@@ -325,7 +344,7 @@ void LocalOutput::webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& respons
     response.getLocalOutputReport()->setSampleRate(m_sampleRate);
 }
 
-void LocalOutput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const LocalOutputSettings& settings, bool force)
+void LocalOutput::webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const LocalOutputSettings& settings, bool force)
 {
     (void) deviceSettingsKeys;
     (void) force;
@@ -344,13 +363,14 @@ void LocalOutput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, 
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
 
     // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
 
     delete swgDeviceSettings;
 }
@@ -369,17 +389,19 @@ void LocalOutput::webapiReverseSendStartStop(bool start)
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
+    QNetworkReply *reply;
 
     if (start) {
-        m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
     } else {
-        m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
     }
 
+    buffer->setParent(reply);
     delete swgDeviceSettings;
 }
 
@@ -393,10 +415,13 @@ void LocalOutput::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("LocalOutput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("LocalOutput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
 }

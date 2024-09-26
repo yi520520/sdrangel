@@ -12,6 +12,8 @@ LimeSDR is a 2x2 MIMO device so it has two receiving channels that can run concu
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![LimeSDR input plugin GUI](../../../doc/img/LimeSDRInput_plugin.png)
 
 <h3>1: Common stream parameters</h3>
@@ -22,6 +24,8 @@ LimeSDR is a 2x2 MIMO device so it has two receiving channels that can run concu
 
 This is the center frequency of reception in kHz.
 
+The NCO must be enabled with a negative value in order to set this below 30MHz.
+
 <h4>1.2: Start/Stop</h4>
 
 Device start / stop button.
@@ -29,10 +33,6 @@ Device start / stop button.
   - Blue triangle icon: device is ready and can be started
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon to stop, plug back in, check the source on the sampling devices control panel and start again.
-
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
 
 <h4>1.4: ADC sample rate</h4>
 
@@ -135,6 +135,8 @@ The LMS7002M uses the same clock for both the ADCs and DACs therefore this sampl
 
 This is the Rx hardware filter bandwidth in kHz in the LMS7002M device for the given channel. Boundaries are updated automatically but generally are from 1.4 to 130 MHz in 1 kHz steps. Use the wheels to adjust the value. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
 
+The filter is centered at the LO frequency, so if using the NCO to achieve frequencies below 30MHz, the filter bandwidth needs to be set wide enough for not only your desired signal but the offset from the 30MHz LO as well.
+
 <h4>7.2: TSP FIR filter toggle</h4>
 
 The TSP in the LMS7002M chip has a FIR filter chain per channel. Use this button to activate or deactivate the TSP FIR filter.
@@ -145,39 +147,13 @@ Use the wheels to adjust the bandwidth of the hardware TSP FIR filter. Pressing 
 
 <h4>7.4: Transverter mode open dialog</h4>
 
-This button opens a dialog to set the transverter mode frequency translation options:
+This button opens a dialog to set the transverter mode frequency translation options. The details about this dialog can be found [here](../../../sdrgui/gui/transverterdialog.md)
 
-![LimeSDR source input stream transverter dialog](../../../doc/img/RTLSDR_plugin_xvrt.png)
-
-Note that if you mouse over the button a tooltip appears that displays the translating frequency and if translation is enabled or disabled. When the frequency translation is enabled the button is lit.
-
-<h5>7.4.1: Translating frequency</h5>
-
-You can set the translating frequency in Hz with this dial. Use the wheels to adjust the sample rate. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
-
-The frequency set in the device is the frequency on the main dial (1) minus this frequency. Thus it is positive for down converters and negative for up converters.
-
-For example a mixer at 120 MHz for HF operation you would set the value to -120,000,000 Hz so that if the main dial frequency is set at 7,130 kHz the PlutoSDR will be set to 127.130 MHz.
-
-If you use a down converter to receive the 6 cm band narrowband center frequency of 5670 MHz at 432 MHz you would set the translating frequency to 5760 - 432 = 5328 MHz thus dial +5,328,000,000 Hz.
-
-For bands even higher in the frequency spectrum the GHz digits are not really significant so you can have them set at 1 GHz. Thus to receive the 10368 MHz frequency at 432 MHz you would set the translating frequency to 1368 - 432 = 936 MHz. Note that in this case the frequency of the LO used in the mixer of the transverter is set at 9936 MHz.
-
-The Hz precision allows a fine tuning of the transverter LO offset
-
-<h5>7.4.2: Translating frequency enable/disable</h5>
-
-Use this toggle button to activate or deactivate the frequency translation
-
-<h5>7.4.3: Confirmation buttons</h5>
-
-Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes.
-
-<h3>8: Gain settings</h2>
+<h3>8: Gain settings</h3>
 
 ![LimeSDR input plugin gain GUI](../../../doc/img/LimeSDRInput_plugin_9.png)
 
-<h4>8.1: Gain mode</h2>
+<h4>8.1: Gain mode</h4>
 
 Use this combo to select either the automatic gain (Aut) or the manual (Man) gain setting. Automatic gain sets the global gain using a predefined table for LNA, TIA and PGA gain blocks. This global gain is set with button 9.2. When manual gain is engaged the LNA, TIA and PGA gains can be set independently with the 9.3, 9.4 and 9.5 buttons respectively.
 
@@ -189,7 +165,7 @@ Use this button to adjust the global gain of the LNA, TIA and PGA. LimeSuite sof
 
 <h4>8.3: LNA manual gain</h4>
 
-Use this button to adjust the gain of tha LNA when manual gain mode is set (8.1). Gain can be set between 1 and 30 dB in 1 dB steps. However the hardware has 3 dB steps for the lower gain values so increasing or decreasing by one step does not always produce a change. The value in dB appears at the right of the button.
+Use this button to adjust the gain of the LNA when manual gain mode is set (8.1). Gain can be set between 1 and 30 dB in 1 dB steps. However the hardware has 3 dB steps for the lower gain values so increasing or decreasing by one step does not always produce a change. The value in dB appears at the right of the button.
 
 <h4>8.4: TIA manual gain</h4>
 
@@ -197,7 +173,7 @@ Use this combo to select the TIA gain in dB when manual gain mode is set (8.1). 
 
 <h4>8.5: PGA manual gain</h4>
 
-Use this button to adjust the gain of tha PGA when manual gain mode is set (8.1). Gain can be set between 0 and 32 dB in 1 dB steps. The value in dB appears at the right of the button.
+Use this button to adjust the gain of the PGA when manual gain mode is set (8.1). Gain can be set between 0 and 32 dB in 1 dB steps. The value in dB appears at the right of the button.
 
 <h3>9: Antenna select</h3>
 
@@ -219,6 +195,7 @@ This label turns green when status can be obtained from the current stream. Usua
   - **U**: turns red if stream experiences underruns
   - **O**: turns red if stream experiences overruns
   - **P**: turns red if stream experiences packet drop outs
+  - **C**: turns red if calibration fails
 
 <h3>12: Stream global (all Rx) throughput in MB/s</h3>
 

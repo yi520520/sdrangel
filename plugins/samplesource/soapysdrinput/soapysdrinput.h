@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -33,7 +35,6 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class DeviceAPI;
 class SoapySDRInputThread;
-class FileRecord;
 
 namespace SoapySDR
 {
@@ -71,25 +72,6 @@ public:
             Message(),
             m_settings(settings),
             m_force(force)
-        { }
-    };
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
         { }
     };
 
@@ -203,15 +185,24 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const SoapySDRInputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            SoapySDRInputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 private:
     DeviceAPI *m_deviceAPI;
     QMutex m_mutex;
+    bool m_openSuccess;
     SoapySDRInputSettings m_settings;
     QString m_deviceDescription;
     bool m_running;
     SoapySDRInputThread *m_thread;
     DeviceSoapySDRShared m_deviceShared;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
@@ -223,10 +214,9 @@ private:
     bool setDeviceCenterFrequency(SoapySDR::Device *dev, int requestedChannel, quint64 freq_hz, int loPpmTenths);
     void updateGains(SoapySDR::Device *dev, int requestedChannel, SoapySDRInputSettings& settings);
     void updateTunableElements(SoapySDR::Device *dev, int requestedChannel, SoapySDRInputSettings& settings);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const SoapySDRInputSettings& settings);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    QVariant webapiVariantFromArgValue(SWGSDRangel::SWGArgValue *argValue);
-    void webapiFormatArgValue(const QVariant& v, SWGSDRangel::SWGArgValue *argValue);
+    static QVariant webapiVariantFromArgValue(SWGSDRangel::SWGArgValue *argValue);
+    static void webapiFormatArgValue(const QVariant& v, SWGSDRangel::SWGArgValue *argValue);
     void webapiFormatArgInfo(const SoapySDR::ArgInfo& arg, SWGSDRangel::SWGArgInfo *argInfo);
     void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const SoapySDRInputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);

@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -29,17 +32,25 @@ struct RemoteSourceSettings
     uint16_t m_dataPort;    //!< Listening data port
     quint32 m_rgbColor;
     QString m_title;
+    uint32_t m_log2Interp;
+    uint32_t m_filterChainHash;
+    int m_streamIndex;
     bool m_useReverseAPI;
     QString m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
     uint16_t m_reverseAPIDeviceIndex;
     uint16_t m_reverseAPIChannelIndex;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
 
     Serializable *m_channelMarker;
+    Serializable *m_rollupState;
 
     RemoteSourceSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
 };

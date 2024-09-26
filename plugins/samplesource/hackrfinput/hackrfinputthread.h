@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -40,6 +43,7 @@ public:
 	void setSamplerate(uint32_t samplerate);
 	void setLog2Decimation(unsigned int log2_decim);
 	void setFcPos(int fcPos);
+    void setIQOrder(bool iqOrder) { m_iqOrder = iqOrder; }
 
 private:
 	QMutex m_startWaitMutex;
@@ -54,11 +58,14 @@ private:
 	int m_samplerate;
 	unsigned int m_log2Decim;
 	int m_fcPos;
+    bool m_iqOrder;
 
-	Decimators<qint32, qint8, SDR_RX_SAMP_SZ, 8> m_decimators;
+	Decimators<qint32, qint8, SDR_RX_SAMP_SZ, 8, true> m_decimatorsIQ;
+	Decimators<qint32, qint8, SDR_RX_SAMP_SZ, 8, false> m_decimatorsQI;
 
 	void run();
-	void callback(const qint8* buf, qint32 len);
+	void callbackIQ(const qint8* buf, qint32 len);
+	void callbackQI(const qint8* buf, qint32 len);
 	static int rx_callback(hackrf_transfer* transfer);
 };
 

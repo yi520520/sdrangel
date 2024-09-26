@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -32,7 +34,7 @@ public:
 	DoubleBufferSimple()
     {
 	    m_size = 0;
-        m_current = m_data.end();
+        m_currentPosition = 0;
 	}
 
 	~DoubleBufferSimple() {}
@@ -41,7 +43,7 @@ public:
 	{
 	    m_size = other.m_size;
 	    m_data = other.m_data;
-	    m_current = m_data.begin();
+        m_currentPosition = 0;
 	}
 
     DoubleBufferSimple& operator=(const DoubleBufferSimple& other)
@@ -52,7 +54,7 @@ public:
 
         m_size = other.m_size;
         m_data = other.m_data;
-        m_current = m_data.begin();
+        m_currentPosition = 0;
         return *this;
     }
 
@@ -60,41 +62,35 @@ public:
 	{
 	    m_size = size;
         m_data.resize(2*size);
-        m_current = m_data.begin();
+        m_currentPosition = 0;
 	}
 
-	void write(const typename std::vector<T>::const_iterator& begin, const typename std::vector<T>::const_iterator& cend)
-	{
-		typename std::vector<T>::const_iterator end = cend;
+    void write(const typename std::vector<T>::const_iterator& begin, int length)
+    {
+        int insize = length > m_size ? m_size : length;
 
-		if ((end - begin) > m_size)
-		{
-			end = begin + m_size;
-		}
+        std::copy(begin, begin + insize, m_data.begin() + m_currentPosition);
 
-		int insize = end - begin;
+        if ((m_currentPosition + insize) > m_size)
+        {
+            int sizeLeft = m_size - m_currentPosition;
+            std::copy(begin, begin + sizeLeft, m_data.begin() + m_currentPosition + m_size);
+            std::copy(begin + sizeLeft, begin + insize, m_data.begin());
+            m_currentPosition = insize - sizeLeft;
+        }
+        else
+        {
+            std::copy(begin, begin + insize, m_data.begin() + m_currentPosition + m_size);
+            m_currentPosition += insize;
+        }
+    }
 
-		std::copy(begin, end, m_current);
-
-		if (((m_current - m_data.begin()) + insize) > m_size)
-		{
-			int sizeLeft = m_size - (m_current - m_data.begin());
-			std::copy(begin, begin + sizeLeft, m_current + m_size);
-			std::copy(begin + sizeLeft, end, m_data.begin());
-			m_current = m_data.begin() + (insize - sizeLeft);
-		}
-		else
-		{
-			std::copy(begin, end, m_current + m_size);
-			m_current += insize;
-		}
-	}
-
-	typename std::vector<T>::iterator getCurrent() const { return m_current + m_size; }
+	typename std::vector<T>::iterator getCurrent() { return m_data.begin() + m_currentPosition + m_size; }
+    void getCurrent(typename std::vector<T>::iterator& it) { it = m_data.begin() + m_currentPosition + m_size; }
 	typename std::vector<T>::const_iterator begin() const { return m_data.begin(); }
     typename std::vector<T>::iterator begin() { return m_data.begin(); }
-	unsigned int absoluteFill() const { return m_current - m_data.begin(); }
-	void reset() { m_current = m_data.begin(); }
+	unsigned int absoluteFill() const { return m_currentPosition; }
+	void reset() { m_currentPosition = 0; }
 
     QByteArray serialize() const
     {
@@ -102,7 +98,7 @@ public:
 
         QByteArray buf(reinterpret_cast<const char*>(m_data.data()), m_data.size()*sizeof(T));
         s.writeS32(1, m_size);
-        s.writeU32(2, m_current - m_data.begin());
+        s.writeU32(2, m_currentPosition);
         s.writeBlob(3, buf);
 
         return s.final();
@@ -124,7 +120,7 @@ public:
             d.readS32(1, &m_size, m_data.size()/2);
             m_data.resize(2*m_size);
             d.readU32(2, &tmpUInt, 0);
-            m_current = m_data.begin() + tmpUInt;
+            m_currentPosition = tmpUInt;
             d.readBlob(3, &buf);
             //qDebug("DoubleBufferSimple::deserialize: m_data.size(): %u buf.size(): %d", m_data.size(), buf.size());
             //std::copy(reinterpret_cast<char *>(m_data.data()), buf.data(), buf.data() + buf.size()); // bug
@@ -141,7 +137,7 @@ public:
 private:
 	int m_size;
 	std::vector<T> m_data;
-	typename std::vector<T>::iterator m_current;
+    int m_currentPosition;
 };
 
 #endif /* SDRBASE_UTIL_DOUBLEBUFFER_H_ */

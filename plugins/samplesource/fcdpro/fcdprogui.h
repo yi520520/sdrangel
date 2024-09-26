@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +22,7 @@
 #ifndef INCLUDE_FCDPROGUI_H
 #define INCLUDE_FCDPROGUI_H
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -33,7 +37,7 @@ namespace Ui {
 	class FCDProGui;
 }
 
-class FCDProGui : public QWidget, public PluginInstanceGUI {
+class FCDProGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -41,24 +45,18 @@ public:
 	virtual ~FCDProGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::FCDProGui* ui;
 
-	DeviceUISet* m_deviceUISet;
 	bool m_doApplySettings;
 	bool m_forceSettings;
 	FCDProSettings m_settings;
+    QList<QString> m_settingsKeys;
 	QTimer m_updateTimer;
 	QTimer m_statusTimer;
 	std::vector<int> m_gains;
@@ -73,6 +71,8 @@ private:
 	void sendSettings();
 	void updateSampleRateAndFrequency();
     void updateFrequencyLimits();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
@@ -80,7 +80,7 @@ private slots:
 	void on_ppm_valueChanged(int value);
 	void on_dcOffset_toggled(bool checked);
 	void on_iqImbalance_toggled(bool checked);
-	// TOOD: defaults push button
+	// TODO: defaults push button
 	void on_lnaGain_currentIndexChanged(int index);
 	void on_rfFilter_currentIndexChanged(int index);
 	void on_lnaEnhance_currentIndexChanged(int index);
@@ -101,7 +101,6 @@ private slots:
 	void on_fcPos_currentIndexChanged(int index);
 	void on_setDefaults_clicked(bool checked);
 	void on_startStop_toggled(bool checked);
-	void on_record_toggled(bool checked);
     void on_transverter_clicked();
 	void updateHardware();
 	void updateStatus();

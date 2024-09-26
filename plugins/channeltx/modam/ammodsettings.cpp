@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,14 +20,15 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "ammodsettings.h"
 
 AMModSettings::AMModSettings() :
-    m_channelMarker(0),
-    m_cwKeyerGUI(0)
+    m_channelMarker(nullptr),
+    m_cwKeyerGUI(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -45,11 +49,14 @@ void AMModSettings::resetToDefaults()
     m_feedbackAudioDeviceName = AudioDeviceManager::m_defaultDeviceName;
     m_feedbackVolumeFactor = 0.5f;
     m_feedbackAudioEnable = false;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray AMModSettings::serialize() const
@@ -65,6 +72,8 @@ QByteArray AMModSettings::serialize() const
 
     if (m_cwKeyerGUI) {
         s.writeBlob(7, m_cwKeyerGUI->serialize());
+    } else { // standalone operation with presets
+        s.writeBlob(7, m_cwKeyerSettings.serialize());
     }
 
     if (m_channelMarker) {
@@ -82,6 +91,15 @@ QByteArray AMModSettings::serialize() const
     s.writeString(17, m_feedbackAudioDeviceName);
     s.writeReal(18, m_feedbackVolumeFactor);
     s.writeBool(19, m_feedbackAudioEnable);
+    s.writeS32(20, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(21, m_rollupState->serialize());
+    }
+
+    s.writeS32(22, m_workspaceIndex);
+    s.writeBlob(23, m_geometryBytes);
+    s.writeBool(24, m_hidden);
 
     return s.final();
 }
@@ -109,10 +127,12 @@ bool AMModSettings::deserialize(const QByteArray& data)
         d.readReal(4, &m_modFactor, 0.2f);
         d.readU32(5, &m_rgbColor);
         d.readReal(6, &m_volumeFactor, 1.0);
+        d.readBlob(7, &bytetmp);
 
         if (m_cwKeyerGUI) {
-            d.readBlob(7, &bytetmp);
             m_cwKeyerGUI->deserialize(bytetmp);
+        } else { // standalone operation with presets
+            m_cwKeyerSettings.deserialize(bytetmp);
         }
 
         if (m_channelMarker) {
@@ -122,8 +142,8 @@ bool AMModSettings::deserialize(const QByteArray& data)
 
         d.readString(9, &m_title, "AM Modulator");
         d.readString(10, &m_audioDeviceName, AudioDeviceManager::m_defaultDeviceName);
-
         d.readS32(11, &tmp, 0);
+
         if ((tmp < 0) || (tmp > (int) AMModInputAF::AMModInputTone)) {
             m_modAFInput = AMModInputNone;
         } else {
@@ -147,6 +167,17 @@ bool AMModSettings::deserialize(const QByteArray& data)
         d.readString(17, &m_feedbackAudioDeviceName, AudioDeviceManager::m_defaultDeviceName);
         d.readReal(18, &m_feedbackVolumeFactor, 1.0);
         d.readBool(19, &m_feedbackAudioEnable, false);
+        d.readS32(20, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(21, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(22, &m_workspaceIndex, 0);
+        d.readBlob(23, &m_geometryBytes);
+        d.readBool(24, &m_hidden, false);
 
         return true;
     }

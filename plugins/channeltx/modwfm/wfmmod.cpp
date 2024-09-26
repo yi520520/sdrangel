@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,310 +23,128 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QBuffer>
+#include <QThread>
 
 #include <stdio.h>
 #include <complex.h>
 #include <algorithm>
 
 #include "SWGChannelSettings.h"
+#include "SWGWorkspaceInfo.h"
 #include "SWGChannelReport.h"
-#include "SWGAMModReport.h"
 
-#include "dsp/upchannelizer.h"
-#include "dsp/dspengine.h"
-#include "dsp/threadedbasebandsamplesource.h"
 #include "dsp/dspcommands.h"
 #include "device/deviceapi.h"
 #include "util/db.h"
+#include "maincore.h"
 
+#include "wfmmodbaseband.h"
 #include "wfmmod.h"
 
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureWFMMod, Message)
-MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureChannelizer, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureFileSourceName, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureFileSourceSeek, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgConfigureFileSourceStreamTiming, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgReportFileSourceStreamData, Message)
 MESSAGE_CLASS_DEFINITION(WFMMod::MsgReportFileSourceStreamTiming, Message)
 
-const QString WFMMod::m_channelIdURI = "sdrangel.channeltx.modwfm";
-const QString WFMMod::m_channelId = "WFMMod";
-const int WFMMod::m_levelNbSamples = 480; // every 10ms
-const int WFMMod::m_rfFilterFFTLength = 1024;
+const char* const WFMMod::m_channelIdURI = "sdrangel.channeltx.modwfm";
+const char* const WFMMod::m_channelId = "WFMMod";
 
 WFMMod::WFMMod(DeviceAPI *deviceAPI) :
     ChannelAPI(m_channelIdURI, ChannelAPI::StreamSingleSource),
     m_deviceAPI(deviceAPI),
-    m_basebandSampleRate(384000),
-    m_outputSampleRate(384000),
-    m_inputFrequencyOffset(0),
-	m_modPhasor(0.0f),
-    m_audioFifo(4800),
-	m_settingsMutex(QMutex::Recursive),
     m_fileSize(0),
 	m_recordLength(0),
-	m_sampleRate(48000),
-	m_levelCalcCount(0),
-	m_peakLevel(0.0f),
-	m_levelSum(0.0f)
+	m_sampleRate(48000)
 {
 	setObjectName(m_channelId);
 
-    m_rfFilter = new fftfilt(-62500.0 / 384000.0, 62500.0 / 384000.0, m_rfFilterFFTLength);
-    m_rfFilterBuffer = new Complex[m_rfFilterFFTLength];
-    std::fill(m_rfFilterBuffer, m_rfFilterBuffer+m_rfFilterFFTLength, Complex{0,0});
-    //memset(m_rfFilterBuffer, 0, sizeof(Complex)*(m_rfFilterFFTLength));
-    m_rfFilterBufferIndex = 0;
+    m_thread = new QThread(this);
+    m_basebandSource = new WFMModBaseband();
+    m_basebandSource->setInputFileStream(&m_ifstream);
+    m_basebandSource->setChannel(this);
+    m_basebandSource->moveToThread(m_thread);
 
-	m_audioBuffer.resize(1<<14);
-	m_audioBufferFill = 0;
-
-	m_magsq = 0.0;
-
-	DSPEngine::instance()->getAudioDeviceManager()->addAudioSource(&m_audioFifo, getInputMessageQueue());
-    m_audioSampleRate = DSPEngine::instance()->getAudioDeviceManager()->getInputSampleRate();
-
-	m_toneNcoRF.setFreq(1000.0, m_outputSampleRate);
-    m_cwKeyer.setSampleRate(m_outputSampleRate);
-    m_cwKeyer.reset();
-
-    applyChannelSettings(m_basebandSampleRate, m_outputSampleRate, m_inputFrequencyOffset, true);
     applySettings(m_settings, true);
 
-    m_channelizer = new UpChannelizer(this);
-    m_threadedChannelizer = new ThreadedBasebandSampleSource(m_channelizer, this);
-    m_deviceAPI->addChannelSource(m_threadedChannelizer);
+    m_deviceAPI->addChannelSource(this);
     m_deviceAPI->addChannelSourceAPI(this);
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &WFMMod::networkManagerFinished
+    );
 }
 
 WFMMod::~WFMMod()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &WFMMod::networkManagerFinished
+    );
     delete m_networkManager;
-    DSPEngine::instance()->getAudioDeviceManager()->removeAudioSource(&m_audioFifo);
     m_deviceAPI->removeChannelSourceAPI(this);
-    m_deviceAPI->removeChannelSource(m_threadedChannelizer);
-    delete m_threadedChannelizer;
-    delete m_channelizer;
-    delete m_rfFilter;
-    delete[] m_rfFilterBuffer;
+    m_deviceAPI->removeChannelSource(this);
+    delete m_basebandSource;
+    delete m_thread;
 }
 
-void WFMMod::pull(Sample& sample)
+void WFMMod::setDeviceAPI(DeviceAPI *deviceAPI)
 {
-	if (m_settings.m_channelMute)
-	{
-		sample.m_real = 0.0f;
-		sample.m_imag = 0.0f;
-		return;
-	}
-
-	Complex ci, ri;
-    fftfilt::cmplx *rf;
-    int rf_out;
-
-	m_settingsMutex.lock();
-
-	if ((m_settings.m_modAFInput == WFMModSettings::WFMModInputFile)
-	   || (m_settings.m_modAFInput == WFMModSettings::WFMModInputAudio))
-	{
-	    if (m_interpolator.interpolate(&m_interpolatorDistanceRemain, m_modSample, &ri))
-	    {
-	        pullAF(m_modSample);
-	        calculateLevel(m_modSample.real());
-	        m_audioBufferFill++;
-	    }
-
-	    m_interpolatorDistanceRemain += m_interpolatorDistance;
-	}
-	else
-	{
-	    pullAF(ri);
-	}
-
-    m_modPhasor += (m_settings.m_fmDeviation / (float) m_outputSampleRate) * ri.real() * M_PI * 2.0f;
-    ci.real(cos(m_modPhasor) * 0.891235351562f * SDR_TX_SCALEF); // -1 dB
-    ci.imag(sin(m_modPhasor) * 0.891235351562f * SDR_TX_SCALEF);
-
-    // RF filtering
-    rf_out = m_rfFilter->runFilt(ci, &rf);
-
-    if (rf_out > 0)
+    if (deviceAPI != m_deviceAPI)
     {
-        memcpy((void *) m_rfFilterBuffer, (const void *) rf, rf_out*sizeof(Complex));
-        m_rfFilterBufferIndex = 0;
-
-    }
-
-    ci = m_rfFilterBuffer[m_rfFilterBufferIndex] * m_carrierNco.nextIQ(); // shift to carrier frequency
-    m_rfFilterBufferIndex++;
-
-    m_settingsMutex.unlock();
-
-    double magsq = ci.real() * ci.real() + ci.imag() * ci.imag();
-	magsq /= (SDR_TX_SCALED*SDR_TX_SCALED);
-	m_movingAverage(magsq);
-	m_magsq = m_movingAverage.asDouble();
-
-	sample.m_real = (FixReal) ci.real();
-	sample.m_imag = (FixReal) ci.imag();
-}
-
-void WFMMod::pullAudio(int nbSamples)
-{
-    unsigned int nbSamplesAudio = nbSamples * ((Real) m_audioSampleRate / (Real) m_basebandSampleRate);
-
-    if (nbSamplesAudio > m_audioBuffer.size())
-    {
-        m_audioBuffer.resize(nbSamplesAudio);
-    }
-
-    m_audioFifo.read(reinterpret_cast<quint8*>(&m_audioBuffer[0]), nbSamplesAudio);
-    m_audioBufferFill = 0;
-}
-
-void WFMMod::pullAF(Complex& sample)
-{
-    switch (m_settings.m_modAFInput)
-    {
-    case WFMModSettings::WFMModInputTone:
-        sample.real(m_toneNcoRF.next() * m_settings.m_volumeFactor);
-        sample.imag(0.0f);
-        break;
-    case WFMModSettings::WFMModInputFile:
-        // sox f4exb_call.wav --encoding float --endian little f4exb_call.raw
-        // ffplay -f f32le -ar 48k -ac 1 f4exb_call.raw
-        if (m_ifstream.is_open())
-        {
-            if (m_ifstream.eof())
-            {
-            	if (m_settings.m_playLoop)
-            	{
-                    m_ifstream.clear();
-                    m_ifstream.seekg(0, std::ios::beg);
-            	}
-            }
-
-            if (m_ifstream.eof())
-            {
-            	sample.real(0.0f);
-                sample.imag(0.0f);
-            }
-            else
-            {
-                Real s;
-            	m_ifstream.read(reinterpret_cast<char*>(&s), sizeof(Real));
-            	sample.real(s * m_settings.m_volumeFactor);
-                sample.imag(0.0f);
-            }
-        }
-        else
-        {
-            sample.real(0.0f);
-            sample.imag(0.0f);
-        }
-        break;
-    case WFMModSettings::WFMModInputAudio:
-        {
-            sample.real(((m_audioBuffer[m_audioBufferFill].l + m_audioBuffer[m_audioBufferFill].r) / 65536.0f) * m_settings.m_volumeFactor);
-            sample.imag(0.0f);
-        }
-        break;
-    case WFMModSettings::WFMModInputCWTone:
-        Real fadeFactor;
-
-        if (m_cwKeyer.getSample())
-        {
-            m_cwKeyer.getCWSmoother().getFadeSample(true, fadeFactor);
-            sample.real(m_toneNcoRF.next() * m_settings.m_volumeFactor * fadeFactor);
-            sample.imag(0.0f);
-        }
-        else
-        {
-            if (m_cwKeyer.getCWSmoother().getFadeSample(false, fadeFactor))
-            {
-                sample.real(m_toneNcoRF.next() * m_settings.m_volumeFactor * fadeFactor);
-                sample.imag(0.0f);
-            }
-            else
-            {
-                sample.real(0.0f);
-                sample.imag(0.0f);
-                m_toneNcoRF.setPhase(0);
-            }
-        }
-        break;
-    case WFMModSettings::WFMModInputNone:
-    default:
-        sample.real(0.0f);
-        sample.imag(0.0f);
-        break;
-    }
-}
-
-void WFMMod::calculateLevel(const Real& sample)
-{
-    if (m_levelCalcCount < m_levelNbSamples)
-    {
-        m_peakLevel = std::max(std::fabs(m_peakLevel), sample);
-        m_levelSum += sample * sample;
-        m_levelCalcCount++;
-    }
-    else
-    {
-        qreal rmsLevel = sqrt(m_levelSum / m_levelNbSamples);
-        //qDebug("WFMMod::calculateLevel: %f %f", rmsLevel, m_peakLevel);
-        emit levelChanged(rmsLevel, m_peakLevel, m_levelNbSamples);
-        m_peakLevel = 0.0f;
-        m_levelSum = 0.0f;
-        m_levelCalcCount = 0;
+        m_deviceAPI->removeChannelSourceAPI(this);
+        m_deviceAPI->removeChannelSource(this);
+        m_deviceAPI = deviceAPI;
+        m_deviceAPI->addChannelSource(this);
+        m_deviceAPI->addChannelSinkAPI(this);
     }
 }
 
 void WFMMod::start()
 {
-	qDebug() << "WFMMod::start: m_outputSampleRate: " << m_outputSampleRate
-			<< " m_inputFrequencyOffset: " << m_inputFrequencyOffset;
-
-	m_audioFifo.clear();
-	applyChannelSettings(m_basebandSampleRate, m_outputSampleRate, m_inputFrequencyOffset, true);
+	qDebug("WFMMod::start");
+    m_basebandSource->reset();
+    m_thread->start();
 }
 
 void WFMMod::stop()
 {
+    qDebug("WFMMod::stop");
+	m_thread->exit();
+	m_thread->wait();
+}
+
+void WFMMod::pull(SampleVector::iterator& begin, unsigned int nbSamples)
+{
+    m_basebandSource->pull(begin, nbSamples);
+}
+
+void WFMMod::setCenterFrequency(qint64 frequency)
+{
+    WFMModSettings settings = m_settings;
+    settings.m_inputFrequencyOffset = frequency;
+    applySettings(settings, false);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureWFMMod *msgToGUI = MsgConfigureWFMMod::create(settings, false);
+        m_guiMessageQueue->push(msgToGUI);
+    }
 }
 
 bool WFMMod::handleMessage(const Message& cmd)
 {
-	if (UpChannelizer::MsgChannelizerNotification::match(cmd))
-	{
-		UpChannelizer::MsgChannelizerNotification& notif = (UpChannelizer::MsgChannelizerNotification&) cmd;
-		qDebug() << "WFMMod::handleMessage: MsgChannelizerNotification";
-
-		applyChannelSettings(notif.getBasebandSampleRate(), notif.getSampleRate(), notif.getFrequencyOffset());
-
-		return true;
-	}
-    else if (MsgConfigureChannelizer::match(cmd))
-    {
-        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
-        qDebug() << "WFMMod::handleMessage: MsgConfigureChannelizer:"
-                << " getSampleRate: " << cfg.getSampleRate()
-                << " getCenterFrequency: " << cfg.getCenterFrequency();
-
-        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-            cfg.getSampleRate(),
-            cfg.getCenterFrequency());
-
-        return true;
-    }
-    else if (MsgConfigureWFMMod::match(cmd))
+    if (MsgConfigureWFMMod::match(cmd))
     {
         MsgConfigureWFMMod& cfg = (MsgConfigureWFMMod&) cmd;
-        qDebug() << "NFWFMMod::handleMessage: MsgConfigureWFMMod";
+        qDebug() << "WFMMod::handleMessage: MsgConfigureWFMMod";
 
         WFMModSettings settings = cfg.getSettings();
 
@@ -373,22 +193,25 @@ bool WFMMod::handleMessage(const Message& cmd)
 
         return true;
     }
-    else if (DSPConfigureAudio::match(cmd))
+    else if (DSPSignalNotification::match(cmd))
     {
-        DSPConfigureAudio& cfg = (DSPConfigureAudio&) cmd;
-        uint32_t sampleRate = cfg.getSampleRate();
-
-        qDebug() << "WFMMod::handleMessage: DSPConfigureAudio:"
-                << " sampleRate: " << sampleRate;
-
-        if (sampleRate != m_audioSampleRate) {
-            applyAudioSampleRate(sampleRate);
+        // Forward to the source
+        DSPSignalNotification& notif = (DSPSignalNotification&) cmd;
+        DSPSignalNotification* rep = new DSPSignalNotification(notif); // make a copy
+        qDebug() << "WFMMod::handleMessage: DSPSignalNotification";
+        m_basebandSource->getInputMessageQueue()->push(rep);
+        // Forward to GUI if any
+        if (getMessageQueueToGUI()) {
+            getMessageQueueToGUI()->push(new DSPSignalNotification(notif));
         }
 
         return true;
     }
-    else if (DSPSignalNotification::match(cmd))
+    else if (MainCore::MsgChannelDemodQuery::match(cmd))
     {
+        qDebug() << "WFMMod::handleMessage: MsgChannelDemodQuery";
+        sendSampleRateToDemodAnalyzer();
+
         return true;
     }
 	else
@@ -432,56 +255,6 @@ void WFMMod::seekFileStream(int seekPercentage)
     }
 }
 
-void WFMMod::applyAudioSampleRate(int sampleRate)
-{
-    qDebug("WFMMod::applyAudioSampleRate: %d", sampleRate);
-
-    m_settingsMutex.lock();
-    m_interpolatorDistanceRemain = 0;
-    m_interpolatorConsumed = false;
-    m_interpolatorDistance = (Real) sampleRate / (Real) m_outputSampleRate;
-    m_interpolator.create(48, sampleRate, m_settings.m_rfBandwidth / 2.2, 3.0);
-    m_settingsMutex.unlock();
-
-    m_audioSampleRate = sampleRate;
-}
-
-void WFMMod::applyChannelSettings(int basebandSampleRate, int outputSampleRate, int inputFrequencyOffset, bool force)
-{
-    qDebug() << "WFMMod::applyChannelSettings:"
-            << " basebandSampleRate: " << basebandSampleRate
-            << " outputSampleRate: " << outputSampleRate
-            << " inputFrequencyOffset: " << inputFrequencyOffset;
-
-    if ((inputFrequencyOffset != m_inputFrequencyOffset) ||
-        (outputSampleRate != m_outputSampleRate) || force)
-    {
-        m_settingsMutex.lock();
-        m_carrierNco.setFreq(inputFrequencyOffset, outputSampleRate);
-        m_settingsMutex.unlock();
-    }
-
-    if ((outputSampleRate != m_outputSampleRate) || force)
-    {
-        m_settingsMutex.lock();
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) m_audioSampleRate / (Real) outputSampleRate;
-        m_interpolator.create(48, m_audioSampleRate, m_settings.m_rfBandwidth / 2.2, 3.0);
-        Real lowCut = -(m_settings.m_rfBandwidth / 2.0) / outputSampleRate;
-        Real hiCut  = (m_settings.m_rfBandwidth / 2.0) / outputSampleRate;
-        m_rfFilter->create_filter(lowCut, hiCut);
-        m_toneNcoRF.setFreq(m_settings.m_toneFrequency, outputSampleRate);
-        m_cwKeyer.setSampleRate(outputSampleRate);
-        m_cwKeyer.reset();
-        m_settingsMutex.unlock();
-    }
-
-    m_basebandSampleRate = basebandSampleRate;
-    m_outputSampleRate = outputSampleRate;
-    m_inputFrequencyOffset = inputFrequencyOffset;
-}
-
 void WFMMod::applySettings(const WFMModSettings& settings, bool force)
 {
     qDebug() << "WFMMod::applySettings:"
@@ -522,48 +295,36 @@ void WFMMod::applySettings(const WFMModSettings& settings, bool force)
     if ((settings.m_modAFInput != m_settings.m_modAFInput) || force) {
         reverseAPIKeys.append("modAFInput");
     }
-
-    if ((settings.m_afBandwidth != m_settings.m_afBandwidth) || force)
-    {
+    if ((settings.m_afBandwidth != m_settings.m_afBandwidth) || force) {
         reverseAPIKeys.append("afBandwidth");
-        m_settingsMutex.lock();
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) m_audioSampleRate / (Real) m_outputSampleRate;
-        m_interpolator.create(48, m_audioSampleRate, settings.m_rfBandwidth / 2.2, 3.0);
-        m_settingsMutex.unlock();
     }
-
-    if ((settings.m_rfBandwidth != m_settings.m_rfBandwidth) || force)
-    {
+    if ((settings.m_rfBandwidth != m_settings.m_rfBandwidth) || force) {
         reverseAPIKeys.append("rfBandwidth");
-        m_settingsMutex.lock();
-        Real lowCut = -(settings.m_rfBandwidth / 2.0) / m_outputSampleRate;
-        Real hiCut  = (settings.m_rfBandwidth / 2.0) / m_outputSampleRate;
-        m_rfFilter->create_filter(lowCut, hiCut);
-        m_settingsMutex.unlock();
     }
-
-    if ((settings.m_toneFrequency != m_settings.m_toneFrequency) || force)
-    {
+    if ((settings.m_toneFrequency != m_settings.m_toneFrequency) || force) {
         reverseAPIKeys.append("toneFrequency");
-        m_settingsMutex.lock();
-        m_toneNcoRF.setFreq(settings.m_toneFrequency, m_outputSampleRate);
-        m_settingsMutex.unlock();
     }
-
-    if ((settings.m_audioDeviceName != m_settings.m_audioDeviceName) || force)
-    {
+    if ((settings.m_audioDeviceName != m_settings.m_audioDeviceName) || force) {
         reverseAPIKeys.append("audioDeviceName");
-        AudioDeviceManager *audioDeviceManager = DSPEngine::instance()->getAudioDeviceManager();
-        int audioDeviceIndex = audioDeviceManager->getInputDeviceIndex(settings.m_audioDeviceName);
-        audioDeviceManager->addAudioSource(&m_audioFifo, getInputMessageQueue(), audioDeviceIndex);
-        uint32_t audioSampleRate = audioDeviceManager->getInputSampleRate(audioDeviceIndex);
-
-        if (m_audioSampleRate != audioSampleRate) {
-            applyAudioSampleRate(audioSampleRate);
-        }
     }
+
+    if (m_settings.m_streamIndex != settings.m_streamIndex)
+    {
+        if (m_deviceAPI->getSampleMIMO()) // change of stream is possible for MIMO devices only
+        {
+            m_deviceAPI->removeChannelSourceAPI(this);
+            m_deviceAPI->removeChannelSource(this, m_settings.m_streamIndex);
+            m_deviceAPI->addChannelSource(this, settings.m_streamIndex);
+            m_deviceAPI->addChannelSourceAPI(this);
+            m_settings.m_streamIndex = settings.m_streamIndex; // make sure ChannelAPI::getStreamIndex() is consistent
+            emit streamIndexChanged(settings.m_streamIndex);
+        }
+
+        reverseAPIKeys.append("streamIndex");
+    }
+
+    WFMModBaseband::MsgConfigureWFMModBaseband *msg = WFMModBaseband::MsgConfigureWFMModBaseband::create(settings, force);
+    m_basebandSource->getInputMessageQueue()->push(msg);
 
     if (settings.m_useReverseAPI)
     {
@@ -573,6 +334,13 @@ void WFMMod::applySettings(const WFMModSettings& settings, bool force)
                 (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex) ||
                 (m_settings.m_reverseAPIChannelIndex != settings.m_reverseAPIChannelIndex);
         webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+    }
+
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "settings", pipes);
+
+    if (pipes.size() > 0) {
+        sendChannelSettings(pipes, reverseAPIKeys, settings, force);
     }
 
     m_settings = settings;
@@ -600,6 +368,25 @@ bool WFMMod::deserialize(const QByteArray& data)
     }
 }
 
+void WFMMod::sendSampleRateToDemodAnalyzer()
+{
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "reportdemod", pipes);
+
+    if (pipes.size() > 0)
+    {
+        for (const auto& pipe : pipes)
+        {
+            MessageQueue* messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+            MainCore::MsgChannelDemodReport *msg = MainCore::MsgChannelDemodReport::create(
+                this,
+                getAudioSampleRate()
+            );
+            messageQueue->push(msg);
+        }
+    }
+}
+
 int WFMMod::webapiSettingsGet(
         SWGSDRangel::SWGChannelSettings& response,
         QString& errorMessage)
@@ -608,6 +395,20 @@ int WFMMod::webapiSettingsGet(
     response.setWfmModSettings(new SWGSDRangel::SWGWFMModSettings());
     response.getWfmModSettings()->init();
     webapiFormatChannelSettings(response, m_settings);
+
+    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getWfmModSettings()->getCwKeyer();
+    const CWKeyerSettings& cwKeyerSettings = m_basebandSource->getCWKeyer().getSettings();
+    CWKeyer::webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
+
+    return 200;
+}
+
+int WFMMod::webapiWorkspaceGet(
+        SWGSDRangel::SWGWorkspaceInfo& response,
+        QString& errorMessage)
+{
+    (void) errorMessage;
+    response.setIndex(m_settings.m_workspaceIndex);
     return 200;
 }
 
@@ -619,15 +420,48 @@ int WFMMod::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     WFMModSettings settings = m_settings;
-    bool channelizerChange = false;
+    webapiUpdateChannelSettings(settings, channelSettingsKeys, response);
 
+    if (channelSettingsKeys.contains("cwKeyer"))
+    {
+        SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getWfmModSettings()->getCwKeyer();
+        CWKeyerSettings cwKeyerSettings = m_basebandSource->getCWKeyer().getSettings();
+        CWKeyer::webapiSettingsPutPatch(channelSettingsKeys, cwKeyerSettings, apiCwKeyerSettings);
+
+        CWKeyer::MsgConfigureCWKeyer *msgCwKeyer = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
+        m_basebandSource->getCWKeyer().getInputMessageQueue()->push(msgCwKeyer);
+
+        if (m_guiMessageQueue) // forward to GUI if any
+        {
+            CWKeyer::MsgConfigureCWKeyer *msgCwKeyerToGUI = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
+            m_guiMessageQueue->push(msgCwKeyerToGUI);
+        }
+    }
+
+    MsgConfigureWFMMod *msg = MsgConfigureWFMMod::create(settings, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureWFMMod *msgToGUI = MsgConfigureWFMMod::create(settings, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatChannelSettings(response, settings);
+
+    return 200;
+}
+
+void WFMMod::webapiUpdateChannelSettings(
+        WFMModSettings& settings,
+        const QStringList& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings& response)
+{
     if (channelSettingsKeys.contains("channelMute")) {
         settings.m_channelMute = response.getWfmModSettings()->getChannelMute() != 0;
     }
-    if (channelSettingsKeys.contains("inputFrequencyOffset"))
-    {
+    if (channelSettingsKeys.contains("inputFrequencyOffset")) {
         settings.m_inputFrequencyOffset = response.getWfmModSettings()->getInputFrequencyOffset();
-        channelizerChange = true;
     }
     if (channelSettingsKeys.contains("modAFInput")) {
         settings.m_modAFInput = (WFMModSettings::WFMModInputAF) response.getWfmModSettings()->getModAfInput();
@@ -637,7 +471,6 @@ int WFMMod::webapiSettingsPutPatch(
     }
     if (channelSettingsKeys.contains("rfBandwidth")) {
         settings.m_rfBandwidth = response.getWfmModSettings()->getRfBandwidth();
-        channelizerChange = true;
     }
     if (channelSettingsKeys.contains("afBandwidth")) {
         settings.m_afBandwidth = response.getWfmModSettings()->getAfBandwidth();
@@ -657,6 +490,9 @@ int WFMMod::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("fmDeviation")) {
         settings.m_fmDeviation = response.getWfmModSettings()->getFmDeviation();
     }
+    if (channelSettingsKeys.contains("streamIndex")) {
+        settings.m_streamIndex = response.getWfmModSettings()->getStreamIndex();
+    }
     if (channelSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getWfmModSettings()->getUseReverseApi() != 0;
     }
@@ -672,42 +508,12 @@ int WFMMod::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("reverseAPIChannelIndex")) {
         settings.m_reverseAPIChannelIndex = response.getWfmModSettings()->getReverseApiChannelIndex();
     }
-
-    if (channelSettingsKeys.contains("cwKeyer"))
-    {
-        SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getWfmModSettings()->getCwKeyer();
-        CWKeyerSettings cwKeyerSettings = m_cwKeyer.getSettings();
-        m_cwKeyer.webapiSettingsPutPatch(channelSettingsKeys, cwKeyerSettings, apiCwKeyerSettings);
-
-        CWKeyer::MsgConfigureCWKeyer *msgCwKeyer = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
-        m_cwKeyer.getInputMessageQueue()->push(msgCwKeyer);
-
-        if (m_guiMessageQueue) // forward to GUI if any
-        {
-            CWKeyer::MsgConfigureCWKeyer *msgCwKeyerToGUI = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
-            m_guiMessageQueue->push(msgCwKeyerToGUI);
-        }
+    if (settings.m_channelMarker && channelSettingsKeys.contains("channelMarker")) {
+        settings.m_channelMarker->updateFrom(channelSettingsKeys, response.getWfmModSettings()->getChannelMarker());
     }
-
-    if (channelizerChange)
-    {
-        WFMMod::MsgConfigureChannelizer *msgChan = WFMMod::MsgConfigureChannelizer::create(
-                settings.m_rfBandwidth, settings.m_inputFrequencyOffset);
-        m_inputMessageQueue.push(msgChan);
+    if (settings.m_rollupState && channelSettingsKeys.contains("rollupState")) {
+        settings.m_rollupState->updateFrom(channelSettingsKeys, response.getWfmModSettings()->getRollupState());
     }
-
-    MsgConfigureWFMMod *msg = MsgConfigureWFMMod::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureWFMMod *msgToGUI = MsgConfigureWFMMod::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
-    }
-
-    webapiFormatChannelSettings(response, settings);
-
-    return 200;
 }
 
 int WFMMod::webapiReportGet(
@@ -745,10 +551,6 @@ void WFMMod::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& respon
         response.getWfmModSettings()->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings);
     }
 
-    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getWfmModSettings()->getCwKeyer();
-    const CWKeyerSettings& cwKeyerSettings = m_cwKeyer.getSettings();
-    m_cwKeyer.webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
-
     if (response.getWfmModSettings()->getAudioDeviceName()) {
         *response.getWfmModSettings()->getAudioDeviceName() = settings.m_audioDeviceName;
     } else {
@@ -766,22 +568,136 @@ void WFMMod::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& respon
     response.getWfmModSettings()->setReverseApiPort(settings.m_reverseAPIPort);
     response.getWfmModSettings()->setReverseApiDeviceIndex(settings.m_reverseAPIDeviceIndex);
     response.getWfmModSettings()->setReverseApiChannelIndex(settings.m_reverseAPIChannelIndex);
+
+    if (settings.m_channelMarker)
+    {
+        if (response.getWfmModSettings()->getChannelMarker())
+        {
+            settings.m_channelMarker->formatTo(response.getWfmModSettings()->getChannelMarker());
+        }
+        else
+        {
+            SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+            settings.m_channelMarker->formatTo(swgChannelMarker);
+            response.getWfmModSettings()->setChannelMarker(swgChannelMarker);
+        }
+    }
+
+    if (settings.m_rollupState)
+    {
+        if (response.getWfmModSettings()->getRollupState())
+        {
+            settings.m_rollupState->formatTo(response.getWfmModSettings()->getRollupState());
+        }
+        else
+        {
+            SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+            settings.m_rollupState->formatTo(swgRollupState);
+            response.getWfmModSettings()->setRollupState(swgRollupState);
+        }
+    }
 }
 
 void WFMMod::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response)
 {
     response.getWfmModReport()->setChannelPowerDb(CalcDb::dbPower(getMagSq()));
-    response.getWfmModReport()->setAudioSampleRate(m_audioSampleRate);
-    response.getWfmModReport()->setChannelSampleRate(m_outputSampleRate);
+    response.getWfmModReport()->setAudioSampleRate(m_basebandSource->getAudioSampleRate());
+    response.getWfmModReport()->setChannelSampleRate(m_basebandSource->getChannelSampleRate());
 }
 
 void WFMMod::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const WFMModSettings& settings, bool force)
 {
     SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+    webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+
+    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
+            .arg(settings.m_reverseAPIAddress)
+            .arg(settings.m_reverseAPIPort)
+            .arg(settings.m_reverseAPIDeviceIndex)
+            .arg(settings.m_reverseAPIChannelIndex);
+    m_networkRequest.setUrl(QUrl(channelSettingsURL));
+    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QBuffer *buffer = new QBuffer();
+    buffer->open((QBuffer::ReadWrite));
+    buffer->write(swgChannelSettings->asJson().toUtf8());
+    buffer->seek(0);
+
+    // Always use PATCH to avoid passing reverse API settings
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
+
+    delete swgChannelSettings;
+}
+
+void WFMMod::webapiReverseSendCWSettings(const CWKeyerSettings& cwKeyerSettings)
+{
+    SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+    swgChannelSettings->setDirection(1); // single source (Tx)
+    swgChannelSettings->setChannelType(new QString("WFMMod"));
+    swgChannelSettings->setWfmModSettings(new SWGSDRangel::SWGWFMModSettings());
+    SWGSDRangel::SWGWFMModSettings *swgWFMModSettings = swgChannelSettings->getWfmModSettings();
+
+    swgWFMModSettings->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings());
+    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = swgWFMModSettings->getCwKeyer();
+    m_basebandSource->getCWKeyer().webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
+
+    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
+            .arg(m_settings.m_reverseAPIAddress)
+            .arg(m_settings.m_reverseAPIPort)
+            .arg(m_settings.m_reverseAPIDeviceIndex)
+            .arg(m_settings.m_reverseAPIChannelIndex);
+    m_networkRequest.setUrl(QUrl(channelSettingsURL));
+    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QBuffer *buffer = new QBuffer();
+    buffer->open((QBuffer::ReadWrite));
+    buffer->write(swgChannelSettings->asJson().toUtf8());
+    buffer->seek(0);
+
+    // Always use PATCH to avoid passing reverse API settings
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
+
+    delete swgChannelSettings;
+}
+
+void WFMMod::sendChannelSettings(
+    const QList<ObjectPipe*>& pipes,
+    QList<QString>& channelSettingsKeys,
+    const WFMModSettings& settings,
+    bool force)
+{
+    for (const auto& pipe : pipes)
+    {
+        MessageQueue *messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+
+        if (messageQueue)
+        {
+            SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+            webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+            MainCore::MsgChannelSettings *msg = MainCore::MsgChannelSettings::create(
+                this,
+                channelSettingsKeys,
+                swgChannelSettings,
+                force
+            );
+            messageQueue->push(msg);
+        }
+    }
+}
+
+void WFMMod::webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const WFMModSettings& settings,
+        bool force
+)
+{
     swgChannelSettings->setDirection(1); // single source (Tx)
     swgChannelSettings->setOriginatorChannelIndex(getIndexInDeviceSet());
     swgChannelSettings->setOriginatorDeviceSetIndex(getDeviceSetIndex());
-    swgChannelSettings->setChannelType(new QString("WFMMod"));
+    swgChannelSettings->setChannelType(new QString(m_channelId));
     swgChannelSettings->setWfmModSettings(new SWGSDRangel::SWGWFMModSettings());
     SWGSDRangel::SWGWFMModSettings *swgWFMModSettings = swgChannelSettings->getWfmModSettings();
 
@@ -820,66 +736,34 @@ void WFMMod::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, cons
     if (channelSettingsKeys.contains("fmDeviation")) {
         swgWFMModSettings->setFmDeviation(settings.m_fmDeviation);
     }
+    if (channelSettingsKeys.contains("streamIndex")) {
+        swgWFMModSettings->setStreamIndex(settings.m_streamIndex);
+    }
     if (channelSettingsKeys.contains("audioDeviceName") || force) {
         swgWFMModSettings->setAudioDeviceName(new QString(settings.m_audioDeviceName));
     }
 
-    if (force)
+    if (settings.m_channelMarker && (channelSettingsKeys.contains("channelMarker") || force))
     {
-        const CWKeyerSettings& cwKeyerSettings = m_cwKeyer.getSettings();
-        swgWFMModSettings->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings());
-        SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = swgWFMModSettings->getCwKeyer();
-        m_cwKeyer.webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
+        SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+        settings.m_channelMarker->formatTo(swgChannelMarker);
+        swgWFMModSettings->setChannelMarker(swgChannelMarker);
     }
 
-    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
-            .arg(settings.m_reverseAPIAddress)
-            .arg(settings.m_reverseAPIPort)
-            .arg(settings.m_reverseAPIDeviceIndex)
-            .arg(settings.m_reverseAPIChannelIndex);
-    m_networkRequest.setUrl(QUrl(channelSettingsURL));
-    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    if (settings.m_rollupState && (channelSettingsKeys.contains("rollupState") || force))
+    {
+        SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+        settings.m_rollupState->formatTo(swgRollupState);
+        swgWFMModSettings->setRollupState(swgRollupState);
+    }
 
-    QBuffer *buffer=new QBuffer();
-    buffer->open((QBuffer::ReadWrite));
-    buffer->write(swgChannelSettings->asJson().toUtf8());
-    buffer->seek(0);
-
-    // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
-
-    delete swgChannelSettings;
-}
-
-void WFMMod::webapiReverseSendCWSettings(const CWKeyerSettings& cwKeyerSettings)
-{
-    SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
-    swgChannelSettings->setDirection(1); // single source (Tx)
-    swgChannelSettings->setChannelType(new QString("WFMMod"));
-    swgChannelSettings->setWfmModSettings(new SWGSDRangel::SWGWFMModSettings());
-    SWGSDRangel::SWGWFMModSettings *swgWFMModSettings = swgChannelSettings->getWfmModSettings();
-
-    swgWFMModSettings->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings());
-    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = swgWFMModSettings->getCwKeyer();
-    m_cwKeyer.webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
-
-    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
-            .arg(m_settings.m_reverseAPIAddress)
-            .arg(m_settings.m_reverseAPIPort)
-            .arg(m_settings.m_reverseAPIDeviceIndex)
-            .arg(m_settings.m_reverseAPIChannelIndex);
-    m_networkRequest.setUrl(QUrl(channelSettingsURL));
-    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-    QBuffer *buffer=new QBuffer();
-    buffer->open((QBuffer::ReadWrite));
-    buffer->write(swgChannelSettings->asJson().toUtf8());
-    buffer->seek(0);
-
-    // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
-
-    delete swgChannelSettings;
+    if (force)
+    {
+        const CWKeyerSettings& cwKeyerSettings = m_basebandSource->getCWKeyer().getSettings();
+        swgWFMModSettings->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings());
+        SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = swgWFMModSettings->getCwKeyer();
+        m_basebandSource->getCWKeyer().webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
+    }
 }
 
 void WFMMod::networkManagerFinished(QNetworkReply *reply)
@@ -892,10 +776,43 @@ void WFMMod::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("WFMMod::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("WFMMod::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
+}
+
+double WFMMod::getMagSq() const
+{
+    return m_basebandSource->getMagSq();
+}
+
+CWKeyer *WFMMod::getCWKeyer()
+{
+    return &m_basebandSource->getCWKeyer();
+}
+
+void WFMMod::setLevelMeter(QObject *levelMeter)
+{
+    connect(m_basebandSource, SIGNAL(levelChanged(qreal, qreal, int)), levelMeter, SLOT(levelChanged(qreal, qreal, int)));
+}
+
+uint32_t WFMMod::getNumberOfDeviceStreams() const
+{
+    return m_deviceAPI->getNbSinkStreams();
+}
+
+int WFMMod::getAudioSampleRate() const
+{
+    return m_basebandSource->getAudioSampleRate();
+}
+
+int WFMMod::getFeedbackAudioSampleRate() const
+{
+    return m_basebandSource->getFeedbackAudioSampleRate();
 }

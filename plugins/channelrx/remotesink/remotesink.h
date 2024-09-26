@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2018-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // Remote sink channel (Rx) UDP sender thread                                    //
 //                                                                               //
@@ -24,24 +25,20 @@
 #ifndef INCLUDE_REMOTESINK_H_
 #define INCLUDE_REMOTESINK_H_
 
-#include <channel/remotedatablock.h>
 #include <QObject>
-#include <QMutex>
 #include <QNetworkRequest>
 
 #include "dsp/basebandsamplesink.h"
 #include "channel/channelapi.h"
-#include "remotesinksettings.h"
+#include "remotesinkbaseband.h"
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 class DeviceAPI;
-class ThreadedBasebandSampleSink;
-class DownChannelizer;
-class RemoteSinkThread;
+class ObjectPipe;
 
 class RemoteSink : public BasebandSampleSink, public ChannelAPI {
-    Q_OBJECT
 public:
     class MsgConfigureRemoteSink : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -66,67 +63,31 @@ public:
         { }
     };
 
-    class MsgSampleRateNotification : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        static MsgSampleRateNotification* create(int sampleRate) {
-            return new MsgSampleRateNotification(sampleRate);
-        }
-
-        int getSampleRate() const { return m_sampleRate; }
-
-    private:
-
-        MsgSampleRateNotification(int sampleRate) :
-            Message(),
-            m_sampleRate(sampleRate)
-        { }
-
-        int m_sampleRate;
-    };
-
-    class MsgConfigureChannelizer : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        int getLog2Decim() const { return m_log2Decim; }
-        int getFilterChainHash() const { return m_filterChainHash; }
-
-        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
-        {
-            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
-        }
-
-    private:
-        unsigned int m_log2Decim;
-        unsigned int m_filterChainHash;
-
-        MsgConfigureChannelizer(unsigned int log2Decim, int filterChainHash) :
-            Message(),
-            m_log2Decim(log2Decim),
-            m_filterChainHash(filterChainHash)
-        { }
-    };
-
     RemoteSink(DeviceAPI *deviceAPI);
     virtual ~RemoteSink();
     virtual void destroy() { delete this; }
+    virtual void setDeviceAPI(DeviceAPI *deviceAPI);
+    virtual DeviceAPI *getDeviceAPI() { return m_deviceAPI; }
 
+    using BasebandSampleSink::feed;
     virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool po);
     virtual void start();
     virtual void stop();
-    virtual bool handleMessage(const Message& cmd);
+    virtual void pushMessage(Message *msg) { m_inputMessageQueue.push(msg); }
+    virtual QString getSinkName() { return objectName(); }
 
     virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual QString getIdentifier() const { return objectName(); }
     virtual void getTitle(QString& title) { title = "Remote Sink"; }
     virtual qint64 getCenterFrequency() const { return m_frequencyOffset; }
+    virtual void setCenterFrequency(qint64) {}
 
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
 
     virtual int getNbSinkStreams() const { return 1; }
     virtual int getNbSourceStreams() const { return 0; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
 
     virtual qint64 getStreamCenterFrequency(int streamIndex, bool sinkElseSource) const
     {
@@ -139,66 +100,66 @@ public:
             SWGSDRangel::SWGChannelSettings& response,
             QString& errorMessage);
 
+    virtual int webapiWorkspaceGet(
+            SWGSDRangel::SWGWorkspaceInfo& response,
+            QString& errorMessage);
+
     virtual int webapiSettingsPutPatch(
             bool force,
             const QStringList& channelSettingsKeys,
             SWGSDRangel::SWGChannelSettings& response,
             QString& errorMessage);
 
-    /** Set center frequency given in Hz */
-    void setCenterFrequency(uint64_t centerFrequency) { m_centerFrequency = centerFrequency; }
+    static void webapiFormatChannelSettings(
+        SWGSDRangel::SWGChannelSettings& response,
+        const RemoteSinkSettings& settings);
 
-    /** Set sample rate given in Hz */
-    void setSampleRate(uint32_t sampleRate) { m_sampleRate = sampleRate; }
+    static void webapiUpdateChannelSettings(
+            RemoteSinkSettings& settings,
+            const QStringList& channelSettingsKeys,
+            SWGSDRangel::SWGChannelSettings& response);
 
-    void setNbBlocksFEC(int nbBlocksFEC);
-    void setTxDelay(int txDelay, int nbBlocksFEC);
-    void setDataAddress(const QString& address) { m_dataAddress = address; }
-    void setDataPort(uint16_t port) { m_dataPort = port; }
-    void setChannelizer(unsigned int log2Decim, unsigned int filterChainHash);
+    uint32_t getNumberOfDeviceStreams() const;
+    int getBasebandSampleRate() const { return m_basebandSampleRate; }
 
-    static const QString m_channelIdURI;
-    static const QString m_channelId;
-
-signals:
-    void dataBlockAvailable(RemoteDataBlock *dataBlock);
+    static const char* const m_channelIdURI;
+    static const char* const m_channelId;
 
 private:
     DeviceAPI *m_deviceAPI;
-    ThreadedBasebandSampleSink* m_threadedChannelizer;
-    DownChannelizer* m_channelizer;
+    QThread *m_thread;
+    RemoteSinkBaseband *m_basebandSink;
     bool m_running;
-
     RemoteSinkSettings m_settings;
-    RemoteSinkThread *m_sinkThread;
 
-    int m_txBlockIndex;                  //!< Current index in blocks to transmit in the Tx row
-    uint16_t m_frameCount;               //!< transmission frame count
-    int m_sampleIndex;                   //!< Current sample index in protected block data
-    RemoteSuperBlock m_superBlock;
-    RemoteMetaDataFEC m_currentMetaFEC;
-    RemoteDataBlock *m_dataBlock;
-    QMutex m_dataBlockMutex;
-
-    uint64_t m_centerFrequency;
     int64_t m_frequencyOffset;
-    uint32_t m_sampleRate;
-    uint32_t m_deviceSampleRate;
-    int m_nbBlocksFEC;
-    int m_txDelay;
-    QString m_dataAddress;
-    uint16_t m_dataPort;
+    int m_basebandSampleRate;
+
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
+    virtual bool handleMessage(const Message& cmd);
     void applySettings(const RemoteSinkSettings& settings, bool force = false);
-    void validateFilterChainHash(RemoteSinkSettings& settings);
+    static void validateFilterChainHash(RemoteSinkSettings& settings);
     void calculateFrequencyOffset();
-    void webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& response, const RemoteSinkSettings& settings);
+    void updateWithDeviceData();
     void webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const RemoteSinkSettings& settings, bool force);
+    void sendChannelSettings(
+        const QList<ObjectPipe*>& pipes,
+        QList<QString>& channelSettingsKeys,
+        const RemoteSinkSettings& settings,
+        bool force
+    );
+    void webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const RemoteSinkSettings& settings,
+        bool force
+    );
 
 private slots:
     void networkManagerFinished(QNetworkReply *reply);
+    void handleIndexInDeviceSetChanged(int index);
 };
 
 #endif /* INCLUDE_REMOTESINK_H_ */

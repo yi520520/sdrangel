@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -35,7 +35,7 @@ class SoapySDROutputThread : public QThread {
     Q_OBJECT
 
 public:
-    SoapySDROutputThread(SoapySDR::Device* dev, unsigned int nbTxChannels, QObject* parent = 0);
+    SoapySDROutputThread(SoapySDR::Device* dev, unsigned int nbTxChannels, QObject* parent = nullptr);
     ~SoapySDROutputThread();
 
     void startWork();
@@ -94,6 +94,10 @@ private:
     void callbackSO16(qint16* buf, qint32 len, unsigned int channel = 0);
     void callbackSOIF(float* buf, qint32 len, unsigned int channel = 0);
     void callbackMO(std::vector<void *>& buffs, qint32 samplesPerChannel);
+    void callbackPart8(qint8* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd, unsigned int channel);
+    void callbackPart12(qint16* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd, unsigned int channel);
+    void callbackPart16(qint16* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd, unsigned int channel);
+    void callbackPartF(float* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd, unsigned int channel);
 };
 
 

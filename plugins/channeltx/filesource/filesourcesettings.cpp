@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -38,11 +39,15 @@ void FileSourceSettings::resetToDefaults()
     m_rgbColor = QColor(140, 4, 4).rgb();
     m_title = "File source";
     m_channelMarker = nullptr;
+    m_rollupState = nullptr;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray FileSourceSettings::serialize() const
@@ -60,6 +65,19 @@ QByteArray FileSourceSettings::serialize() const
     s.writeU32(10, m_reverseAPIPort);
     s.writeU32(11, m_reverseAPIDeviceIndex);
     s.writeU32(12, m_reverseAPIChannelIndex);
+    s.writeS32(13, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(14, m_rollupState->serialize());
+    }
+
+    if (m_channelMarker) {
+        s.writeBlob(15, m_channelMarker->serialize());
+    }
+
+    s.writeS32(16, m_workspaceIndex);
+    s.writeBlob(17, m_geometryBytes);
+    s.writeBool(18, m_hidden);
 
     return s.final();
 }
@@ -79,6 +97,7 @@ bool FileSourceSettings::deserialize(const QByteArray& data)
         uint32_t tmp;
         int itmp;
         QString strtmp;
+        QByteArray bytetmp;
 
         d.readString(1, &m_fileName, "test.sdriq");
         d.readBool(2, &m_loop, false);
@@ -87,11 +106,11 @@ bool FileSourceSettings::deserialize(const QByteArray& data)
         d.readU32(4, &m_filterChainHash, 0);
         d.readS32(5, &itmp, 20);
         m_gainDB = itmp < -10 ? -10 : itmp > 50 ? 50 : itmp;
-        d.readU32(5, &m_rgbColor, QColor(140, 4, 4).rgb());
-        d.readString(6, &m_title, "File source");
-        d.readBool(7, &m_useReverseAPI, false);
-        d.readString(8, &m_reverseAPIAddress, "127.0.0.1");
-        d.readU32(9, &tmp, 0);
+        d.readU32(6, &m_rgbColor, QColor(140, 4, 4).rgb());
+        d.readString(7, &m_title, "File source");
+        d.readBool(8, &m_useReverseAPI, false);
+        d.readString(9, &m_reverseAPIAddress, "127.0.0.1");
+        d.readU32(10, &tmp, 0);
 
         if ((tmp > 1023) && (tmp < 65535)) {
             m_reverseAPIPort = tmp;
@@ -99,10 +118,27 @@ bool FileSourceSettings::deserialize(const QByteArray& data)
             m_reverseAPIPort = 8888;
         }
 
-        d.readU32(10, &tmp, 0);
-        m_reverseAPIDeviceIndex = tmp > 99 ? 99 : tmp;
         d.readU32(11, &tmp, 0);
+        m_reverseAPIDeviceIndex = tmp > 99 ? 99 : tmp;
+        d.readU32(12, &tmp, 0);
         m_reverseAPIChannelIndex = tmp > 99 ? 99 : tmp;
+        d.readS32(13, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(14, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        if (m_channelMarker)
+        {
+            d.readBlob(15, &bytetmp);
+            m_channelMarker->deserialize(bytetmp);
+        }
+
+        d.readS32(16, &m_workspaceIndex, 0);
+        d.readBlob(17, &m_geometryBytes);
+        d.readBool(18, &m_hidden, false);
 
         return true;
     }

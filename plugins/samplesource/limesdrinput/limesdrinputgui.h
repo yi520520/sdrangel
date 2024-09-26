@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef PLUGINS_SAMPLESOURCE_LIMESDRINPUT_LIMESDRINPUTGUI_H_
 #define PLUGINS_SAMPLESOURCE_LIMESDRINPUT_LIMESDRINPUTGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -32,7 +33,7 @@ namespace Ui {
     class LimeSDRInputGUI;
 }
 
-class LimeSDRInputGUI : public QWidget, public PluginInstanceGUI {
+class LimeSDRInputGUI : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -40,23 +41,18 @@ public:
     virtual ~LimeSDRInputGUI();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
+    void setReplayTime(float time) override;
 
 private:
     Ui::LimeSDRInputGUI* ui;
 
-    DeviceUISet* m_deviceUISet;
     LimeSDRInput* m_limeSDRInput; //!< Same object as above but gives easy access to LimeSDRInput methods and attributes that are used intensively
     LimeSDRInputSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
     QTimer m_updateTimer;
     QTimer m_statusTimer;
@@ -71,19 +67,24 @@ private:
 
     void displaySettings();
     void displaySampleRate();
+	void displayReplayLength();
+	void displayReplayOffset();
+	void displayReplayStep();
     void setNCODisplay();
     void setCenterFrequencyDisplay();
     void setCenterFrequencySetting(uint64_t kHzValue);
     void sendSettings();
     void updateSampleRateAndFrequency();
+    void checkLPF();
     void updateADCRate();
     void updateFrequencyLimits();
     void blockApplySettings(bool block);
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
     void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void on_centerFrequency_changed(quint64 value);
     void on_ncoFrequency_changed(qint64 value);
     void on_ncoEnable_toggled(bool checked);
@@ -104,6 +105,12 @@ private slots:
     void on_extClock_clicked();
     void on_transverter_clicked();
     void on_sampleRateMode_toggled(bool checked);
+  	void on_replayOffset_valueChanged(int value);
+	void on_replayNow_clicked();
+	void on_replayPlus_clicked();
+	void on_replayMinus_clicked();
+	void on_replaySave_clicked();
+	void on_replayLoop_toggled(bool checked);
     void openDeviceSettingsDialog(const QPoint& p);
 
     void updateHardware();

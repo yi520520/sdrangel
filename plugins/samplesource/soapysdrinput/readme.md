@@ -8,13 +8,15 @@ SoapySDR is a [C/C++ API](https://github.com/pothosware/SoapySDR/blob/master/inc
 
 SoapySDR devices appear in the list of available devices in the order they are listed in the API call to SoapySDR. If more than one device controlled by SoapySDR is listed then its sequence number is incremented like:
 
-  - SoapySDR[0:0] Generic RTL...
-  - SoapySDR[1:0] Generic RTL...
+  - SoapySDR[0:0] rtlsdr: Generic RTL...
+  - SoapySDR[1:0] rtlsdr: Generic RTL...
+
+The SoapySDR driver name appears right before the column
 
 If the same device exposes several channels they appear as distinct devices with the channel number incremented like:
 
-  - SoapySDR[1:0] LimeSDR...
-  - SoapySDR[1:1] LimeSDR...
+  - SoapySDR[1:0] lime: LimeSDR...
+  - SoapySDR[1:1] lime: LimeSDR...
 
 This works similarly to LimeSDR USB or BladeRF 2.0 micro
 
@@ -27,6 +29,8 @@ The binary distributions provide only the SoapySDR base library. It is your resp
 Occasionally some devices may require to have the user specifying keyword parameters in order to open the device correctly. Most noticeably the Red Pitaya (driver `redpitaya`) needs the IP address of the board specified as a `addr=x.x.x.x` key value pair as it does not get scanned automatically.
 
 In such a case you will use the device user arguments (Preferences -> Devices -> User arguments) with the dialog as described [here](../../../sdrgui/deviceuserargs.md)
+
+If you use Soapy Remote make sure you read [this Wiki page](https://github.com/f4exb/sdrangel/wiki/Soapy-Remote) first as user arguments are mandatory.
 
 <h2>SoapySDR API implementation</h2>
 
@@ -71,6 +75,8 @@ When installed the Red Pitaya SoapySDR plugin lists a Red Pitaya device even if 
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![SoapySDR input plugin GUI](../../../doc/img/SoapySDRInput_plugin1.png)
 
 The top part described by number tags is common for all devices. The bottom part under the "A" tag depends on the SoapySDR device implementation. The corresponding widgets are stacked vertically inside a scrollable area as there may be many controls depending on how the device interface is implemented in SoapySDR. Move the slider on the right to see all parameters available.
@@ -93,10 +99,6 @@ Device start / stop button.
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon, plug back in and start again. Check the console log for possible errors.
 
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
-
 <h4>1.4: Stream sample rate</h4>
 
 Baseband I/Q sample rate in kS/s. This is the device sample rate (the "SR" SoapySDR control) divided by the decimation factor (4).
@@ -108,7 +110,7 @@ These buttons control the SDRangel internal DSP auto correction options:
   - **DC**: auto remove DC component
   - **IQ**: auto make I/Q balance. The DC correction must be enabled for this to be effective.
 
-<h3>3: Baseband center frequency position relative the LO center frequency</h3>
+<h3>3: Baseband center frequency position relative to the LO center frequency</h3>
 
 Possible values are:
 
@@ -127,33 +129,7 @@ The I/Q stream from the SoapySDR I/Q stream is downsampled by a power of two bef
 
 <h3>5: Transverter mode open dialog</h3>
 
-This button opens a dialog to set the transverter mode frequency translation options:
-
-![Input stream transverter dialog](../../../doc/img/RTLSDR_plugin_xvrt.png)
-
-Note that if you mouse over the button a tooltip appears that displays the translating frequency and if translation is enabled or disabled. When the frequency translation is enabled the button is lit.
-
-<h4>5.1: Translating frequency</h4>
-
-You can set the translating frequency in Hz with this dial. The manipulation of the dial is described in (1.1: Frequency).
-
-The frequency set in the device is the frequency on the main dial (1) minus this frequency. Thus it is positive for down converters and negative for up converters.
-
-For example a mixer at 120 MHz for HF operation you would set the value to -120,000,000 Hz so that if the main dial frequency is set at 7,130 kHz the PlutoSDR will be set to 127.130 MHz.
-
-If you use a down converter to receive the 6 cm band narrowband center frequency of 5670 MHz at 432 MHz you would set the translating frequency to 5760 - 432 = 5328 MHz thus dial +5,328,000,000 Hz.
-
-For bands even higher in the frequency spectrum the GHz digits are not really significant so you can have them set at 1 GHz. Thus to receive the 10368 MHz frequency at 432 MHz you would set the translating frequency to 1368 - 432 = 936 MHz. Note that in this case the frequency of the LO used in the mixer of the transverter is set at 9936 MHz.
-
-The Hz precision allows a fine tuning of the transverter LO offset
-
-<h4>5.2: Translating frequency enable/disable</h4>
-
-Use this toggle button to activate or deactivate the frequency translation
-
-<h4>5.3: Confirmation buttons</h4>
-
-Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes.
+This button opens a dialog to set the transverter mode frequency translation options. The details about this dialog can be found [here](../../../sdrgui/gui/transverterdialog.md)
 
 <h3>6: Software LO ppm correction</h3>
 

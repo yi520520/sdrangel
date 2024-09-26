@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,15 +26,17 @@
 #include "freedvmodgui.h"
 #endif
 #include "freedvmod.h"
+#include "freedvmodwebapiadapter.h"
 #include "freedvmodplugin.h"
 
 const PluginDescriptor FreeDVModPlugin::m_pluginDescriptor = {
-    QString("FreeDV Modulator"),
-    QString("4.11.5"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    FreeDVMod::m_channelId,
+    QStringLiteral("FreeDV Modulator"),
+    QStringLiteral("7.20.0"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 FreeDVModPlugin::FreeDVModPlugin(QObject* parent) :
@@ -52,28 +58,39 @@ void FreeDVModPlugin::initPlugin(PluginAPI* pluginAPI)
     m_pluginAPI->registerTxChannel(FreeDVMod::m_channelIdURI, FreeDVMod::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* FreeDVModPlugin::createTxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSource *txChannel)
+void FreeDVModPlugin::createTxChannel(DeviceAPI *deviceAPI, BasebandSampleSource **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		FreeDVMod *instance = new FreeDVMod(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* FreeDVModPlugin::createTxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSource *txChannel) const
+{
+	(void) deviceUISet;
+	(void) txChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* FreeDVModPlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel)
+ChannelGUI* FreeDVModPlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel) const
 {
     return FreeDVModGUI::create(m_pluginAPI, deviceUISet, txChannel);
 }
 #endif
 
-BasebandSampleSource* FreeDVModPlugin::createTxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* FreeDVModPlugin::createChannelWebAPIAdapter() const
 {
-    return new FreeDVMod(deviceAPI);
+	return new FreeDVModWebAPIAdapter();
 }
-
-ChannelAPI* FreeDVModPlugin::createTxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new FreeDVMod(deviceAPI);
-}
-
-

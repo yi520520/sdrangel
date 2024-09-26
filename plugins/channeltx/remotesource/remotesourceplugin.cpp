@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,15 +26,17 @@
 #include "remotesourcegui.h"
 #endif
 #include "remotesource.h"
+#include "remotesourcewebapiadapter.h"
 #include "remotesourceplugin.h"
 
 const PluginDescriptor RemoteSourcePlugin::m_pluginDescriptor = {
-    QString("Remote channel source"),
-    QString("4.5.2"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    RemoteSource::m_channelId,
+    QStringLiteral("Remote channel source"),
+    QStringLiteral("7.20.0"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 RemoteSourcePlugin::RemoteSourcePlugin(QObject* parent) :
@@ -52,29 +58,39 @@ void RemoteSourcePlugin::initPlugin(PluginAPI* pluginAPI)
     m_pluginAPI->registerTxChannel(RemoteSource::m_channelIdURI, RemoteSource::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* RemoteSourcePlugin::createTxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSource *txChannel)
+void RemoteSourcePlugin::createTxChannel(DeviceAPI *deviceAPI, BasebandSampleSource **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		RemoteSource *instance = new RemoteSource(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* RemoteSourcePlugin::createTxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSource *txChannel) const
+{
+	(void) deviceUISet;
+	(void) txChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* RemoteSourcePlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel)
+ChannelGUI* RemoteSourcePlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel) const
 {
     return RemoteSourceGUI::create(m_pluginAPI, deviceUISet, txChannel);
 }
 #endif
 
-BasebandSampleSource* RemoteSourcePlugin::createTxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* RemoteSourcePlugin::createChannelWebAPIAdapter() const
 {
-    return new RemoteSource(deviceAPI);
+	return new RemoteSourceWebAPIAdapter();
 }
-
-ChannelAPI* RemoteSourcePlugin::createTxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new RemoteSource(deviceAPI);
-}
-
-
-

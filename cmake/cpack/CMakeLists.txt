@@ -1,5 +1,5 @@
 # Stuff qmake can tell us
-get_target_property (QMAKE_EXECUTABLE Qt5::qmake LOCATION)
+get_target_property (QMAKE_EXECUTABLE Qt::qmake LOCATION)
 function (QUERY_QMAKE VAR RESULT)
   exec_program (${QMAKE_EXECUTABLE} ARGS "-query ${VAR}" RETURN_VALUE return_code OUTPUT_VARIABLE output)
   if (NOT return_code)
@@ -11,6 +11,8 @@ endfunction (QUERY_QMAKE)
 
 query_qmake (QT_INSTALL_PLUGINS QT_PLUGINS_DIR)
 query_qmake (QT_INSTALL_IMPORTS QT_IMPORTS_DIR)
+query_qmake (QT_INSTALL_QML QT_QML_DIR)
+query_qmake (QT_INSTALL_LIBS QT_LIBS_DIR)
 
 if(APPLE AND BUNDLE AND BUILD_GUI)
 
@@ -25,70 +27,31 @@ if(APPLE AND BUNDLE AND BUILD_GUI)
     set (CPACK_MACOS_PACKAGE_ARCHITECTURE noarch)
   endif (SW_VERS_PROGRAM)
 
+  # Create script that runs macdeployqt
+  configure_file("${CMAKE_SOURCE_DIR}/cmake/cpack/deploy_mac.cmake.in" "${PROJECT_BINARY_DIR}/deploy_mac.cmake" @ONLY)
+
   set(CPACK_GENERATOR "Bundle")
   set(CPACK_BINARY_DRAGNDROP ON)
   set(CPACK_BUNDLE_NAME "${APPLICATION_NAME}")
   set(CPACK_BUNDLE_ICON "${CMAKE_SOURCE_DIR}/cmake/cpack/sdrangel_icon.icns")
   set(CPACK_BUNDLE_PLIST "${CMAKE_BINARY_DIR}/Info.plist")
-  set(CPACK_BUNDLE_STARTUP_COMMAND "${CMAKE_SOURCE_DIR}/cmake/cpack/sdrangel.sh")
   set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}/cmake/cpack/sdrangel_icon.icns")
-  set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}-${CPACK_PACKAGE_VERSION}_${CPACK_MACOS_PACKAGE_ARCHITECTURE}_${CMAKE_SYSTEM_PROCESSOR}")
-
-  # Copy Qt Plugins; fixup_bundle doesn't do that
-  install (
-    DIRECTORY
-    "${QT_PLUGINS_DIR}/platforms"
-    "${QT_PLUGINS_DIR}/audio"
-    "${QT_PLUGINS_DIR}/accessible"
-    "${QT_PLUGINS_DIR}/imageformats"
-    "${QT_PLUGINS_DIR}/mediaservice"
-    "${QT_PLUGINS_DIR}/playlistformats"
-    "${QT_PLUGINS_DIR}/styles"
-    "${QT_PLUGINS_DIR}/iconengines"
-    DESTINATION "../PlugIns"
-    CONFIGURATIONS Release MinSizeRel
-    COMPONENT runtime
-    FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}"
-    PATTERN "*minimal*${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-    PATTERN "*offscreen*${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-    PATTERN "*quick*${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-    PATTERN "*_debug${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-    )
-  # add plugins path for Mac Bundle
-  install (CODE "
-  get_filename_component (the_qt_conf \"\${CMAKE_INSTALL_PREFIX}/qt.conf\" REALPATH)
-  file (WRITE \"\${the_qt_conf}\"
-\"
-[Paths]
-Plugins = ../PlugIns
-\")"
-    )
+  set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}-${CPACK_PACKAGE_VERSION}_${CPACK_MACOS_PACKAGE_ARCHITECTURE}_${CMAKE_SYSTEM_PROCESSOR}" CACHE INTERNAL "")
+  set(CPACK_PRE_BUILD_SCRIPTS "${PROJECT_BINARY_DIR}/deploy_mac.cmake")
 
   # copy SoapySDR Modules
   # probably libmirsdrapi-rsp.dylib can't be re-distribuited
   # we remove the file at the end of fixup_bundle
   if(ENABLE_SOAPYSDR AND SOAPYSDR_FOUND)
-    set(SOAPY_SDR_MOD_PATH "${SOAPYSDR_ROOT}/lib/SoapySDR/modules${SOAPYSDR_ABI_VERSION}")
+    set(SOAPY_SDR_MOD_PATH "${SOAPYSDR_LIBDIR}/lib/SoapySDR/modules${SOAPYSDR_VERSION}")
     file(GLOB SOAPY_MODS ${SOAPY_SDR_MOD_PATH}/*.so)
     foreach(SOAPY_MOD_FILE ${SOAPY_MODS})
       install( FILES "${SOAPY_MOD_FILE}"
-        DESTINATION "../Frameworks/SoapySDR/modules${SOAPYSDR_ABI_VERSION}"
+        DESTINATION "../Frameworks/SoapySDR/modules${SOAPYSDR_VERSION}"
         COMPONENT Runtime
         )
     endforeach()
   endif()
-
-  install(CODE "
-  file(GLOB_RECURSE SDRANGEL_PLUGINS
-    \"\${CMAKE_INSTALL_PREFIX}/${INSTALL_PLUGINS_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}\")
-  file(GLOB_RECURSE SDRANGEL_PLUGINSSRV
-  \"\${CMAKE_INSTALL_PREFIX}/${INSTALL_PLUGINSSRV_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}\")
-  file(GLOB_RECURSE QTPLUGINS \"\${CMAKE_INSTALL_PREFIX}/../PlugIns/*${CMAKE_SHARED_LIBRARY_SUFFIX}\")
-  file(GLOB_RECURSE SOAPYSDR_PLUGINS \"\${CMAKE_INSTALL_PREFIX}/../Frameworks/SoapySDR/modules${SOAPY_SDR_ABI_VERSION}/*.so\")
-
-  set(BU_CHMOD_BUNDLE_ITEMS ON)
-  include(BundleUtilities)
-  fixup_bundle(\"\${CMAKE_INSTALL_PREFIX}/${CMAKE_PROJECT_NAME}\" \"\${SDRANGEL_PLUGINS};\${SDRANGEL_PLUGINSSRV};\${QTPLUGINS};\${SOAPYSDR_PLUGINS}\" \"${CMAKE_LIBRARY_OUTPUT_DIRECTORY};${MACOS_EXTERNAL_LIBS_FIXUP}\")
 
   # remove non distribuitable file
   if(ENABLE_MIRSDRAPI AND OFF)
@@ -101,7 +64,6 @@ Plugins = ../PlugIns
   foreach(file \${SDRANGEL_REMOVE_LIB})
     file(REMOVE \"\${file}\")
   endforeach()
-  " COMPONENT Runtime)
 
   # TODO: code/dmg signature
   #   see https://github.com/cjcliffe/CubicSDR
@@ -172,24 +134,6 @@ elseif(LINUX AND BUNDLE)
 
 elseif(WIN32 OR MINGW)
 
-  set(QT_PLUGINS_DIR_SET
-    "${QT_PLUGINS_DIR}/platforms"
-    "${QT_PLUGINS_DIR}/audio"
-    "${QT_PLUGINS_DIR}/imageformats"
-    "${QT_PLUGINS_DIR}/mediaservice"
-    "${QT_PLUGINS_DIR}/playlistformats"
-    "${QT_PLUGINS_DIR}/renderplugins"
-    "${QT_PLUGINS_DIR}/iconengines"
-  )
-
-  # Copy Qt Plugins; fixup_bundle doesn't do that
-  foreach(qt_plugin ${QT_PLUGINS_DIR_SET})
-    get_filename_component(qt_plugin_name "${qt_plugin}"  NAME)
-    add_custom_target(copy_qt_plugin_${qt_plugin_name} ALL
-      COMMAND ${CMAKE_COMMAND} -E copy_directory "${qt_plugin}" "${SDRANGEL_BINARY_BIN_DIR}/${qt_plugin_name}"
-    )
-  endforeach(qt_plugin)
-
   # unfortunately some libraries are dependencies of dll so we copy by hand
   # TODO check if we can use fixup_bundle() and have libraries on root path
 
@@ -211,11 +155,107 @@ elseif(WIN32 OR MINGW)
     )
   endforeach(opencv_dll)
 
+  if(ENABLE_SOAPYSDR AND SOAPYSDR_FOUND)
+    # Soapy support libraries
+    file(MAKE_DIRECTORY ${SDRANGEL_BINARY_LIB_DIR}/SoapySDR)
+    file(MAKE_DIRECTORY ${SDRANGEL_BINARY_LIB_DIR}/SoapySDR/modules0.7)
+    file(GLOB SOAPYSUPPORT_DLLS "${SOAPYSUPPORT_DIR}/lib/SoapySDR/modules0.7/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    foreach(soapysupport_dll ${SOAPYSUPPORT_DLLS})
+      get_filename_component(soapysupport_dll_name "${soapysupport_dll}"  NAME)
+      add_custom_target(copy_soapysupport_${soapysupport_dll_name} ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${soapysupport_dll}" "${SDRANGEL_BINARY_LIB_DIR}/SoapySDR/modules0.7/"
+      )
+    endforeach(soapysupport_dll)
+  endif()
+
+  file(GLOB FFTW3F_DLLS "${FFTW3F_DLL_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  foreach(fftw3f_dll ${FFTW3F_DLLS})
+    get_filename_component(fftw3f_dll_name "${fftw3f_dll}"  NAME)
+    add_custom_target(copy_fftw3f_${fftw3f_dll_name} ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${fftw3f_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+    )
+  endforeach(fftw3f_dll)
+  
+  file(GLOB LIBUSB_DLLS "${LIBUSB_DLL_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  foreach(libusb_dll ${LIBUSB_DLLS})
+    get_filename_component(libusb_dll_name "${libusb_dll}"  NAME)
+    add_custom_target(copy_libusb_${libusb_dll_name} ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${libusb_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+    )
+  endforeach(libusb_dll)
+
+  file(GLOB CODEC2_DLLS "${CODEC2_DLL_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  foreach(codec2_dll ${CODEC2_DLLS})
+    get_filename_component(codec2_dll_name "${codec2_dll}"  NAME)
+    add_custom_target(copy_codec2_${codec2_dll_name} ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${codec2_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+    )
+  endforeach(codec2_dll)
+
+  file(GLOB HIDAPI_DLLS "${HIDAPI_DLL_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  foreach(hidapi_dll ${HIDAPI_DLLS})
+    get_filename_component(hidapi_dll_name "${hidapi_dll}"  NAME)
+    add_custom_target(copy_hidapi_${hidapi_dll_name} ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${hidapi_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+    )
+  endforeach(hidapi_dll)
+
+  if(ENABLE_USRP AND UHD_FOUND)
+    file(GLOB UHD_DLLS "${UHD_DLL_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    foreach(uhd_dll ${UHD_DLLS})
+      get_filename_component(uhd_dll_name "${uhd_dll}"  NAME)
+      add_custom_target(copy_uhd_${uhd_dll_name} ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${uhd_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+      )
+    endforeach(uhd_dll)
+  endif()
+
+  if(ENABLE_SDRPLAY AND SDRPLAY_FOUND)
+    file(GLOB SDRPLAY_DLLS "${SDRPLAY_DLL_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    foreach(sdrplay_dll ${SDRPLAY_DLLS})
+      get_filename_component(sdrplay_dll_name "${sdrplay_dll}"  NAME)
+      add_custom_target(copy_sdrplay_${sdrplay_dll_name} ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${sdrplay_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+      )
+    endforeach(sdrplay_dll)
+  endif()
+
+  file(GLOB OPENSSL_DLLS "${OPENSSL_DLL_DIR}/*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  foreach(openssl_dll ${OPENSSL_DLLS})
+    get_filename_component(openssl_dll_name "${openssl_dll}"  NAME)
+    add_custom_target(copy_openssl_${openssl_dll_name} ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${openssl_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+    )
+  endforeach(openssl_dll)
+
+  file(GLOB LIBSIGMF_DLLS "${LIBSIGMF_DLL_DIR}/libsigmf*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  foreach(libsigmf_dll ${LIBSIGMF_DLLS})
+    get_filename_component(libsigmf_dll_name "${libsigmf_dll}"  NAME)
+    add_custom_target(copy_libsigmf_${libsigmf_dll_name} ALL
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${libsigmf_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+    )
+  endforeach(libsigmf_dll)
+
+  if(${VKFFT_BACKEND} EQUAL 1)
+    find_package(CUDA)
+    if(CUDA_FOUND)
+      file(GLOB CUDA_DLLS "${CUDA_TOOLKIT_ROOT_DIR}/bin/nvrtc*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+      foreach(cuda_dll ${CUDA_DLLS})
+        get_filename_component(cuda_dll_name "${cuda_dll}"  NAME)
+        add_custom_target(copy_cuda_${cuda_dll_name} ALL
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different "${cuda_dll}" "${SDRANGEL_BINARY_BIN_DIR}/"
+        )
+      endforeach(cuda_dll)
+    endif()
+  endif()
+
   # TODO we need a way to fixup_bundle() on the build bin/ directory without call install
   if(BUILD_GUI)
     install(CODE "
       include(BundleUtilities)
-      fixup_bundle(\"${SDRANGEL_BINARY_BIN_DIR}/sdrangel${CMAKE_EXECUTABLE_SUFFIX}\" \"\" \"${WINDOWS_FIXUP_BUNDLE_LIB_DIRS}\")
+      # BundleUtilities.cmake verify_app fails unless we ignore QtWebEngineProcess.exe, as it fails if there are any " external " prerequisites
+      # Should we ignore it? It appears to work OK if we do. Is there a better way?
+      fixup_bundle(\"${SDRANGEL_BINARY_BIN_DIR}/sdrangel${CMAKE_EXECUTABLE_SUFFIX}\" \"\" \"${WINDOWS_FIXUP_BUNDLE_LIB_DIRS}\" IGNORE_ITEM \"QtWebEngineProcess.exe\")
     " COMPONENT Runtime)
   elseif(BUILD_SERVER)
     install(CODE "
@@ -230,6 +270,7 @@ elseif(WIN32 OR MINGW)
         include(BundleUtilities)
         fixup_bundle(\"\${CMAKE_INSTALL_PREFIX}/sdrangel${CMAKE_EXECUTABLE_SUFFIX}\" \"\" \"${WINDOWS_FIXUP_BUNDLE_LIB_DIRS}\")
       " COMPONENT Runtime)
+      install(FILES "${FFTW3F_WISDOM}" DESTINATION "${INSTALL_BIN_DIR}")
     elseif(BUILD_SERVER)
       install(CODE "
         include(BundleUtilities)
@@ -237,23 +278,9 @@ elseif(WIN32 OR MINGW)
       " COMPONENT Runtime)
     endif(BUILD_GUI)
 
-    # Copy Qt Plugins; fixup_bundle doesn't do that
-    install (
-      DIRECTORY ${QT_PLUGINS_DIR_SET}
-      DESTINATION "${INSTALL_BIN_DIR}"
-      CONFIGURATIONS Release MinSizeRel
-      COMPONENT runtime
-      FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}"
-      PATTERN "*minimal*${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-      PATTERN "*offscreen*${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-      PATTERN "*quick*${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-      PATTERN "*_debug${CMAKE_SHARED_LIBRARY_SUFFIX}" EXCLUDE
-    )
-
     # unfortunately some libraries are dependencies of dll so we copy by hand
     # TODO check if we can use fixup_bundle() and have libraries on root path
     # inputkiwisdr.dll
-    install(FILES "${Qt5_DIR}/../../../bin/Qt5WebSockets${CMAKE_SHARED_LIBRARY_SUFFIX}" DESTINATION "${INSTALL_LIB_DIR}")
     # demoddatv.dll
     install(DIRECTORY "${FFMPEG_LIBRARIES}/" DESTINATION "${INSTALL_LIB_DIR}"
       FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}")
@@ -263,6 +290,29 @@ elseif(WIN32 OR MINGW)
     # libusb
     get_filename_component(GFN_LIBUSB_DIR "${LIBUSB_LIBRARIES}" DIRECTORY)
     install(FILES "${GFN_LIBUSB_DIR}/libusb-1.0${CMAKE_SHARED_LIBRARY_SUFFIX}" DESTINATION "${INSTALL_LIB_DIR}")
+    # codec2
+    install(DIRECTORY "${CODEC2_DLL_DIR}/" DESTINATION "${INSTALL_LIB_DIR}"
+      FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # hidapi
+    install(DIRECTORY "${HIDAPI_DLL_DIR}/" DESTINATION "${INSTALL_LIB_DIR}"
+      FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # uhd
+    install(DIRECTORY "${UHD_DLL_DIR}/" DESTINATION "${INSTALL_LIB_DIR}"
+      FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # sdrplay
+    install(DIRECTORY "${SDRPLAY_DLL_DIR}/" DESTINATION "${INSTALL_LIB_DIR}"
+      FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # OpenSSL
+    install(DIRECTORY "${OPENSSL_DLL_DIR}/" DESTINATION "${INSTALL_LIB_DIR}"
+      FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # libsigmf
+    install(DIRECTORY "${LIBSIGMF_DLL_DIR}/" DESTINATION "${INSTALL_LIB_DIR}"
+      FILES_MATCHING PATTERN "*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    # CUDA runtime
+    if((${VKFFT_BACKEND} EQUAL 1) AND CUDA_FOUND)
+      install(DIRECTORY "${CUDA_TOOLKIT_ROOT_DIR}/bin/" DESTINATION "${INSTALL_LIB_DIR}"
+        FILES_MATCHING PATTERN "nvrtc*${CMAKE_SHARED_LIBRARY_SUFFIX}")
+    endif()
 
     install(CODE "
       # remove *.lib files
@@ -281,7 +331,7 @@ elseif(WIN32 OR MINGW)
       endforeach()
     " COMPONENT Runtime)
 
-    list(APPEND CPACK_GENERATOR "ZIP;NSIS")
+    list(APPEND CPACK_GENERATOR "NSIS")
     set(CPACK_MONOLITHIC_INSTALL ON)
     set(CPACK_NSIS_HELP_LINK ${CPACK_PACKAGE_CONTACT})
     set(CPACK_NSIS_URL_INFO_ABOUT ${CPACK_PACKAGE_CONTACT})

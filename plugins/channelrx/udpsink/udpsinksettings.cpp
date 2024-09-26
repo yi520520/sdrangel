@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,14 +18,14 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "udpsinksettings.h"
 
 UDPSinkSettings::UDPSinkSettings() :
-    m_channelMarker(0),
-    m_spectrumGUI(0)
+    m_channelMarker(nullptr),
+    m_spectrumGUI(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -45,6 +46,7 @@ void UDPSinkSettings::resetToDefaults()
     m_audioActive = false;
     m_audioStereo = false;
     m_volume = 20;
+    m_streamIndex = 0;
     m_udpAddress = "127.0.0.1";
     m_udpPort = 9998;
     m_audioPort = 9997;
@@ -55,6 +57,8 @@ void UDPSinkSettings::resetToDefaults()
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray UDPSinkSettings::serialize() const
@@ -91,6 +95,15 @@ QByteArray UDPSinkSettings::serialize() const
     s.writeU32(25, m_reverseAPIPort);
     s.writeU32(26, m_reverseAPIDeviceIndex);
     s.writeU32(27, m_reverseAPIChannelIndex);
+    s.writeS32(28, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(29, m_rollupState->serialize());
+    }
+
+    s.writeS32(30, m_workspaceIndex);
+    s.writeBlob(31, m_geometryBytes);
+    s.writeBool(32, m_hidden);
 
     return s.final();
 
@@ -113,7 +126,8 @@ bool UDPSinkSettings::deserialize(const QByteArray& data)
         int32_t s32tmp;
         quint32 u32tmp;
 
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
             d.readBlob(6, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
@@ -132,7 +146,8 @@ bool UDPSinkSettings::deserialize(const QByteArray& data)
         d.readReal(4, &m_outputSampleRate, 48000.0);
         d.readReal(5, &m_rfBandwidth, 32000.0);
 
-        if (m_spectrumGUI) {
+        if (m_spectrumGUI)
+        {
             d.readBlob(7, &bytetmp);
             m_spectrumGUI->deserialize(bytetmp);
         }
@@ -180,6 +195,17 @@ bool UDPSinkSettings::deserialize(const QByteArray& data)
         m_reverseAPIDeviceIndex = u32tmp > 99 ? 99 : u32tmp;
         d.readU32(27, &u32tmp, 0);
         m_reverseAPIChannelIndex = u32tmp > 99 ? 99 : u32tmp;
+        d.readS32(28, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(29, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(30, &m_workspaceIndex, 0);
+        d.readBlob(31, &m_geometryBytes);
+        d.readBool(32, &m_hidden, false);
 
         return true;
     }

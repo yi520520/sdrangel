@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2018 Christopher Hewitt <hewitt@ieee.org>                       //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,9 +21,9 @@
 #include <QtPlugin>
 #include <libbladeRF.h>
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 
 #include "bladerf2outputplugin.h"
+#include "bladerf2outputwebapiadapter.h"
 
 #ifdef SERVER_MODE
 #include "bladerf2output.h"
@@ -29,16 +32,17 @@
 #endif
 
 const PluginDescriptor BladeRF2OutputPlugin::m_pluginDescriptor = {
-    QString("BladeRF2 Output"),
-    QString("4.5.4"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("BladeRF2"),
+    QStringLiteral("BladeRF2 Output"),
+    QStringLiteral("7.20.0"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString BladeRF2OutputPlugin::m_hardwareID = "BladeRF2";
-const QString BladeRF2OutputPlugin::m_deviceTypeID = BLADERF2OUTPUT_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "BladeRF2";
+static constexpr const char* const m_deviceTypeID = BLADERF2OUTPUT_DEVICE_TYPE_ID;
 
 BladeRF2OutputPlugin::BladeRF2OutputPlugin(QObject* parent) :
     QObject(parent)
@@ -55,65 +59,48 @@ void BladeRF2OutputPlugin::initPlugin(PluginAPI* pluginAPI)
     pluginAPI->registerSampleSink(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices BladeRF2OutputPlugin::enumSampleSinks()
+void BladeRF2OutputPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
+{
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+    DeviceBladeRF2::enumOriginDevices(m_hardwareID, originDevices);
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices BladeRF2OutputPlugin::enumSampleSinks(const OriginDevices& originDevices)
 {
     SamplingDevices result;
-    struct bladerf_devinfo *devinfo = 0;
 
-    int count = bladerf_get_device_list(&devinfo);
-
-    if (devinfo)
+    for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
     {
-        for(int i = 0; i < count; i++)
+        if (it->hardwareId == m_hardwareID)
         {
-            struct bladerf *dev;
-
-            int status = bladerf_open_with_devinfo(&dev, &devinfo[i]);
-
-            if (status == BLADERF_ERR_NODEV)
+            for (int j = 0; j < it->nbTxStreams; j++)
             {
-                qCritical("Bladerf2OutputPlugin::enumSampleSinks: No device at index %d", i);
-                continue;
+                QString displayedName = it->displayableName;
+                displayedName.replace(QString("$1]"), QString("%1]").arg(j));
+                result.append(SamplingDevice(
+                    displayedName,
+                    it->hardwareId,
+                    m_deviceTypeID,
+                    it->serial,
+                    it->sequence,
+                    PluginInterface::SamplingDevice::PhysicalDevice,
+                    PluginInterface::SamplingDevice::StreamSingleTx,
+                    it->nbTxStreams,
+                    j
+                ));
             }
-            else if (status != 0)
-            {
-                qCritical("Bladerf2OutputPlugin::enumSampleSinks: Failed to open device at index %d", i);
-                continue;
-            }
-
-            const char *boardName = bladerf_get_board_name(dev);
-
-            if (strcmp(boardName, "bladerf2") == 0)
-            {
-                unsigned int nbTxChannels = bladerf_get_channel_count(dev, BLADERF_TX);
-
-                for (unsigned int j = 0; j < nbTxChannels; j++)
-                {
-                    qDebug("Blderf2InputPlugin::enumSampleSinks: device #%d (%s) channel %u", i, devinfo[i].serial, j);
-                    QString displayedName(QString("BladeRF2[%1:%2] %3").arg(devinfo[i].instance).arg(j).arg(devinfo[i].serial));
-                    result.append(SamplingDevice(displayedName,
-                            m_hardwareID,
-                            m_deviceTypeID,
-                            QString(devinfo[i].serial),
-                            i,
-                            PluginInterface::SamplingDevice::PhysicalDevice,
-                            PluginInterface::SamplingDevice::StreamSingleTx,
-                            nbTxChannels,
-                            j));
-                }
-            }
-
-            bladerf_close(dev);
         }
-
-        bladerf_free_device_list(devinfo); // Valgrind memcheck
     }
 
     return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* BladeRF2OutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* BladeRF2OutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -124,7 +111,7 @@ PluginInstanceGUI* BladeRF2OutputPlugin::createSampleSinkPluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* BladeRF2OutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* BladeRF2OutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -155,6 +142,7 @@ DeviceSampleSink* BladeRF2OutputPlugin::createSampleSinkPluginInstance(const QSt
     }
 }
 
-
-
-
+DeviceWebAPIAdapter *BladeRF2OutputPlugin::createDeviceWebAPIAdapter() const
+{
+    return new BladeRF2OutputWebAPIAdapter();
+}

@@ -10,6 +10,8 @@ The plugin is present in the core of the software and thus is always present in 
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![Test source input plugin GUI](../../../doc/img/TestSourceInput_plugin.png)
 
 <h3>1: Common stream parameters</h3>
@@ -30,7 +32,8 @@ Device start / stop button.
 
 <h4>1.3: Record</h4>
 
-Record baseband I/Q stream toggle button
+  - Left click: record baseband I/Q stream toggle button
+  - Right click: choose record file
 
 <h4>1.4: Stream sample rate</h4>
 
@@ -54,7 +57,7 @@ The I/Q stream from the generator is downsampled by a power of two before being 
 
 This exercises the decimation chain.
 
-<h4>2.3: Baseband center frequency position relative the center frequency</h4>
+<h4>2.3: Baseband center frequency position relative to the center frequency</h4>
 
   - **Cen**: the decimation operation takes place around the center frequency Fs
   - **Inf**: the decimation operation takes place around Fs - Fc.
@@ -77,7 +80,7 @@ This is the sample size in number of bits. It corresponds to the actual sample s
 
 This controls the generator sample rate in samples per second.
 
-<h3>4: Modulation</h4>
+<h3>4: Modulation</h3>
 
   - **No**: No modulation
   - **AM**: Amplitude modulation (AM)

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016-2017 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,14 +20,18 @@
 #ifndef DEVICES_BLADERF_DEVICESDBLADERF_H_
 #define DEVICES_BLADERF_DEVICESDBLADERF_H_
 
+#include <QString>
+
 #include <libbladeRF.h>
 
+#include "plugin/plugininterface.h"
 #include "export.h"
 
 class DEVICES_API DeviceBladeRF1
 {
 public:
     static bool open_bladerf(struct bladerf **dev, const char *serial);
+    static void enumOriginDevices(const QString& hardwareId, PluginInterface::OriginDevices& originDevices);
 
 private:
     static struct bladerf *open_bladerf_from_serial(const char *serial);

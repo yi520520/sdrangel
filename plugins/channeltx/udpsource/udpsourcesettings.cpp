@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,13 +20,13 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 
 UDPSourceSettings::UDPSourceSettings() :
-    m_channelMarker(0),
-    m_spectrumGUI(0)
+    m_channelMarker(nullptr),
+    m_spectrumGUI(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -49,13 +50,18 @@ void UDPSourceSettings::resetToDefaults()
     m_squelchEnabled = true;
     m_udpAddress = "127.0.0.1";
     m_udpPort = 9998;
+    m_multicastAddress = "224.0.0.1";
+    m_multicastJoin = false;
     m_rgbColor = QColor(225, 25, 99).rgb();
     m_title = "UDP Sample Source";
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray UDPSourceSettings::serialize() const
@@ -74,6 +80,8 @@ QByteArray UDPSourceSettings::serialize() const
         s.writeBlob(7, m_spectrumGUI->serialize());
     }
 
+    s.writeString(8, m_multicastAddress);
+    s.writeBool(9, m_multicastJoin);
     s.writeS32(10, roundf(m_gainOut * 10.0));
     s.writeS32(11, m_fmDeviation);
     s.writeReal(12, m_amModFactor);
@@ -90,6 +98,15 @@ QByteArray UDPSourceSettings::serialize() const
     s.writeU32(23, m_reverseAPIPort);
     s.writeU32(24, m_reverseAPIDeviceIndex);
     s.writeU32(25, m_reverseAPIChannelIndex);
+    s.writeS32(26, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(27, m_rollupState->serialize());
+    }
+
+    s.writeS32(28, m_workspaceIndex);
+    s.writeBlob(29, m_geometryBytes);
+    s.writeBool(30, m_hidden);
 
     return s.final();
 }
@@ -119,7 +136,6 @@ bool UDPSourceSettings::deserialize(const QByteArray& data)
 
         d.readS32(2, &s32tmp, 0);
         m_inputFrequencyOffset = s32tmp;
-
         d.readS32(3, &s32tmp, 0);
 
         if (s32tmp < (int) FormatNone) {
@@ -137,25 +153,21 @@ bool UDPSourceSettings::deserialize(const QByteArray& data)
             m_spectrumGUI->deserialize(bytetmp);
         }
 
+        d.readString(8, &m_multicastAddress, "224.0.0.1");
+        d.readBool(9, &m_multicastJoin, false);
         d.readS32(10, &s32tmp, 10);
         m_gainOut = s32tmp / 10.0;
-
         d.readS32(11, &m_fmDeviation, 2500);
         d.readReal(12, &m_amModFactor, 0.95);
         d.readBool(13, &m_stereoInput, false);
-
         d.readS32(14, &s32tmp, -60);
         m_squelch = s32tmp * 1.0;
         m_squelchEnabled = (s32tmp != -100);
-
         d.readS32(15, &s32tmp, 5);
         m_squelchGate = s32tmp / 100.0;
-
         d.readBool(16, &m_autoRWBalance, true);
-
         d.readS32(17, &s32tmp, 10);
         m_gainIn = s32tmp / 10.0;
-
         d.readString(18, &m_udpAddress, "127.0.0.1");
         d.readU32(19, &u32tmp, 9998);
 
@@ -165,7 +177,7 @@ bool UDPSourceSettings::deserialize(const QByteArray& data)
             m_udpPort = 9998;
         }
 
-        d.readString(20, &m_title, "UDP Sample Sink");
+        d.readString(20, &m_title, "UDP Sample Source");
 
         d.readBool(21, &m_useReverseAPI, false);
         d.readString(22, &m_reverseAPIAddress, "127.0.0.1");
@@ -181,6 +193,17 @@ bool UDPSourceSettings::deserialize(const QByteArray& data)
         m_reverseAPIDeviceIndex = u32tmp > 99 ? 99 : u32tmp;
         d.readU32(25, &u32tmp, 0);
         m_reverseAPIChannelIndex = u32tmp > 99 ? 99 : u32tmp;
+        d.readS32(26, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(27, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(28, &m_workspaceIndex, 0);
+        d.readBlob(29, &m_geometryBytes);
+        d.readBool(30, &m_hidden, false);
 
         return true;
     }

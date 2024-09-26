@@ -1,4 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2018-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 // Copyright (C) 2019 F4HKW                                                      //
 // for F4EXB / SDRAngel                                                          //
 // using LeanSDR Framework (C) 2016 F4DAV                                        //
@@ -23,14 +24,17 @@
 #include <vector>
 
 #include "leansdr/framework.h"
+#include "leansdr/sdr.h"
 #include "gui/tvscreen.h"
 
 namespace leansdr {
 
 static const int DEFAULT_GUI_DVBS2_DECIMATION = 64;
 
-static inline cstln_lut<llr_ss, 256> * make_dvbs2_constellation(cstln_lut<llr_ss, 256>::predef c,
-        code_rate r)
+static inline cstln_lut<llr_ss, 256> * make_dvbs2_constellation(
+    cstln_lut<llr_ss, 256>::predef c,
+    code_rate r
+)
 {
     float gamma1 = 1, gamma2 = 1, gamma3 = 1;
 
@@ -104,8 +108,8 @@ static inline cstln_lut<llr_ss, 256> * make_dvbs2_constellation(cstln_lut<llr_ss
     }
 
     cstln_lut<llr_ss, 256> *newCstln = new cstln_lut<llr_ss, 256>(c, 10, gamma1, gamma2, gamma3);
-    newCstln->m_rateCode = (int) r;
-    newCstln->m_typeCode = (int) c;
+    newCstln->m_rateCode = r < code_rate::FEC_COUNT ? r : -1;
+    newCstln->m_typeCode = c < cstln_lut<llr_ss, 256>::predef::COUNT ? c : -1;
     newCstln->m_setByModcod = false;
     return newCstln;
 }
@@ -117,18 +121,18 @@ template<typename T> struct datvdvbs2constellation: runnable
     long pixels_per_frame;
     /*cstln_lut<llr_ss, 256>*/ cstln_base **cstln;  // Optional ptr to optional constellation
     TVScreen *m_objDATVScreen;
-    pipereader<complex<T> > in;
+    pipereader<std::complex<T> > in;
     unsigned long phase;
     std::vector<int> cstln_rows;
     std::vector<int> cstln_cols;
 
     datvdvbs2constellation(
-            scheduler *sch,
-            pipebuf<complex<T> > &_in,
-            T _xymin,
-            T _xymax,
-            const char *_name = nullptr,
-            TVScreen *objDATVScreen = nullptr) :
+        scheduler *sch,
+        pipebuf<std::complex<T> > &_in,
+        T _xymin,
+        T _xymax,
+        const char *_name = nullptr,
+        TVScreen *objDATVScreen = nullptr) :
         runnable(sch, _name ? _name : _in.name),
         xymin(_xymin),
         xymax(_xymax),
@@ -152,13 +156,13 @@ template<typename T> struct datvdvbs2constellation: runnable
             {
                 m_objDATVScreen->resetImage();
 
-                complex<T> *p = in.rd(), *pend = p + pixels_per_frame;
+                std::complex<T> *p = in.rd(), *pend = p + pixels_per_frame;
 
                 for (; p < pend; ++p)
                 {
-                    m_objDATVScreen->selectRow(256 * (p->re - xymin) / (xymax - xymin));
+                    m_objDATVScreen->selectRow(256 * (p->real() - xymin) / (xymax - xymin));
                     m_objDATVScreen->setDataColor(
-                        256 - 256 * ((p->im - xymin) / (xymax - xymin)),
+                        256 - 256 * ((p->imag() - xymin) / (xymax - xymin)),
                         255, 0, 255);
                 }
 
@@ -201,9 +205,9 @@ template<typename T> struct datvdvbs2constellation: runnable
 
         for (int i = 0; i < (*cstln)->nsymbols; ++i)
         {
-            complex<signed char> *p = &(*cstln)->symbols[i];
-            int x = 256 * (p->re - xymin) / (xymax - xymin);
-            int y = 256 - 256 * (p->im - xymin) / (xymax - xymin);
+            std::complex<signed char> *p = &(*cstln)->symbols[i];
+            int x = 256 * (p->real() - xymin) / (xymax - xymin);
+            int y = 256 - 256 * (p->imag() - xymin) / (xymax - xymin);
 
             for (int d = -4; d <= 4; ++d)
             {

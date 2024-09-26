@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -80,6 +83,10 @@ struct DATVDemodSettings
     dvb_version m_standard;
     DATVModulation m_modulation;
     DATVCodeRate m_fec;
+    bool m_softLDPC;
+    QString m_softLDPCToolPath;
+    int m_softLDPCMaxTrials;
+    int m_maxBitflips;
     bool m_audioMute;
     QString m_audioDeviceName;
     int m_symbolRate;
@@ -96,10 +103,24 @@ struct DATVDemodSettings
     QString m_udpTSAddress;
     quint32 m_udpTSPort;
     bool m_udpTS;
+    bool m_playerEnable;
+    int m_streamIndex; //!< MIMO channel. Not relevant when connected to SI (single Rx).
+    bool m_useReverseAPI;
+    QString m_reverseAPIAddress;
+    uint16_t m_reverseAPIPort;
+    uint16_t m_reverseAPIDeviceIndex;
+    uint16_t m_reverseAPIChannelIndex;
+    Serializable *m_rollupState;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
+
+    static const int m_softLDPCMaxMaxTrials = 50;
 
     DATVDemodSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
     void debug(const QString& msg) const;
@@ -112,6 +133,8 @@ struct DATVDemodSettings
     static QString getStrFromCodeRate(const DATVCodeRate codeRate);
     static void getAvailableModulations(dvb_version dvbStandard, std::vector<DATVModulation>& modulations);
     static void getAvailableCodeRates(dvb_version dvbStandard, DATVModulation modulation, std::vector<DATVCodeRate>& codeRates);
+    static DATVDemodSettings::DATVCodeRate getCodeRateFromLeanDVBCode(int leanDVBCodeRate);
+    static DATVDemodSettings::DATVModulation getModulationFromLeanDVBCode(int leanDVBModulation);
 };
 
 #endif // PLUGINS_CHANNELRX_DEMODATV_DATVDEMODSETTINGS_H_

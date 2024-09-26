@@ -5,8 +5,6 @@ LocalInputSettings:
       type: integer
     iqCorrection:
       type: integer
-    fileRecordName:
-      type: string
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -22,6 +20,6 @@ LocalInputReport:
   properties:
     centerFrequency:
       type: integer
-      format: uint64
+      format: int64
     sampleRate:
       type: integer

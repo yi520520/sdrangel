@@ -1,3 +1,19 @@
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>             //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 #include "sdr.h"
 
 namespace leansdr
@@ -19,8 +35,9 @@ const char *cstln_base::names[] =
 
 void softsymb_harden(llr_ss *ss)
 {
-    for (int b = 0; b < 8; ++b)
+    for (int b = 0; b < 8; ++b) {
         ss->bits[b] = (ss->bits[b] < 0) ? -127 : 127;
+    }
 }
 
 void softsymb_harden(hard_ss *ss)
@@ -30,8 +47,9 @@ void softsymb_harden(hard_ss *ss)
 
 void softsymb_harden(eucl_ss *ss)
 {
-    for (int s = 0; s < ss->MAX_SYMBOLS; ++s)
+    for (int s = 0; s < ss->MAX_SYMBOLS; ++s) {
         ss->dists2[s] = (s == ss->nearest) ? 0 : 1;
+    }
 }
 
 
@@ -59,8 +77,9 @@ void to_softsymb(const full_ss *fss, hard_ss *ss)
 
 void to_softsymb(const full_ss *fss, eucl_ss *ss)
 {
-    for (int s = 0; s < ss->MAX_SYMBOLS; ++s)
+    for (int s = 0; s < ss->MAX_SYMBOLS; ++s) {
         ss->dists2[s] = fss->dists2[s];
+    }
 
     uint16_t best = 65535, best2 = 65535;
 
@@ -87,10 +106,15 @@ void to_softsymb(const full_ss *fss, llr_ss *ss)
     {
         float v = (1.0f - fss->p[b]) / (fss->p[b] + 1e-6);
         int r = logf(v) * 5; // TBD Optimal scaling vs saturation ?
-        if (r < -127)
+
+        if (r < -127) {
             r = -127;
-        if (r > 127)
+        }
+
+        if (r > 127) {
             r = 127;
+        }
+
         ss->bits[b] = r;
     }
 }

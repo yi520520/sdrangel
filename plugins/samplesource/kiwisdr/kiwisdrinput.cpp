@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Vort                                                       //
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2019-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Vort <vvort@yandex.ru>                                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,6 +23,7 @@
 #include <QNetworkReply>
 #include <QNetworkAccessManager>
 #include <QBuffer>
+#include <QThread>
 
 #include "SWGDeviceSettings.h"
 #include "SWGDeviceState.h"
@@ -33,51 +34,54 @@
 #include "device/deviceapi.h"
 #include "kiwisdrworker.h"
 #include "dsp/dspcommands.h"
-#include "dsp/dspengine.h"
-#include "dsp/filerecord.h"
 
 MESSAGE_CLASS_DEFINITION(KiwiSDRInput::MsgConfigureKiwiSDR, Message)
-MESSAGE_CLASS_DEFINITION(KiwiSDRInput::MsgFileRecord, Message)
 MESSAGE_CLASS_DEFINITION(KiwiSDRInput::MsgStartStop, Message)
 MESSAGE_CLASS_DEFINITION(KiwiSDRInput::MsgSetStatus, Message)
 
 
 KiwiSDRInput::KiwiSDRInput(DeviceAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
+    m_sampleRate(12000),
 	m_settings(),
 	m_kiwiSDRWorker(nullptr),
-	m_deviceDescription(),
+    m_kiwiSDRWorkerThread(nullptr),
+	m_deviceDescription("KiwiSDR"),
 	m_running(false),
-	m_masterTimer(deviceAPI->getMasterTimer())
+	m_masterTimer(deviceAPI->getMasterTimer()),
+    m_latitude(std::numeric_limits<float>::quiet_NaN()),
+    m_longitude(std::numeric_limits<float>::quiet_NaN()),
+    m_altitude(std::numeric_limits<float>::quiet_NaN())
 {
-	m_kiwiSDRWorkerThread.start();
-
-    m_fileSink = new FileRecord();
+    m_sampleFifo.setLabel(m_deviceDescription);
     m_deviceAPI->setNbSourceStreams(1);
-    m_deviceAPI->addAncillarySink(m_fileSink);
 
     if (!m_sampleFifo.setSize(getSampleRate() * 2)) {
         qCritical("KiwiSDRInput::KiwiSDRInput: Could not allocate SampleFifo");
     }
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &KiwiSDRInput::networkManagerFinished
+    );
 }
 
 KiwiSDRInput::~KiwiSDRInput()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &KiwiSDRInput::networkManagerFinished
+    );
     delete m_networkManager;
 
     if (m_running) {
         stop();
     }
-
-	m_kiwiSDRWorkerThread.quit();
-	m_kiwiSDRWorkerThread.wait();
-
-    m_deviceAPI->removeAncillarySink(m_fileSink);
-    delete m_fileSink;
 }
 
 void KiwiSDRInput::destroy()
@@ -87,27 +91,35 @@ void KiwiSDRInput::destroy()
 
 void KiwiSDRInput::init()
 {
-    applySettings(m_settings, true);
+    applySettings(m_settings, QList<QString>(), true);
 }
 
 bool KiwiSDRInput::start()
 {
 	QMutexLocker mutexLocker(&m_mutex);
 
-    if (m_running) stop();
+    if (m_running) {
+        return true;
+    }
 
+    m_kiwiSDRWorkerThread = new QThread();
 	m_kiwiSDRWorker = new KiwiSDRWorker(&m_sampleFifo);
-	m_kiwiSDRWorker->moveToThread(&m_kiwiSDRWorkerThread);
+    m_kiwiSDRWorker->setInputMessageQueue(getInputMessageQueue());
+	m_kiwiSDRWorker->moveToThread(m_kiwiSDRWorkerThread);
+
+    QObject::connect(m_kiwiSDRWorkerThread, &QThread::finished, m_kiwiSDRWorker, &QObject::deleteLater);
+    QObject::connect(m_kiwiSDRWorkerThread, &QThread::finished, m_kiwiSDRWorkerThread, &QThread::deleteLater);
 
 	connect(this, &KiwiSDRInput::setWorkerCenterFrequency, m_kiwiSDRWorker, &KiwiSDRWorker::onCenterFrequencyChanged);
 	connect(this, &KiwiSDRInput::setWorkerServerAddress, m_kiwiSDRWorker, &KiwiSDRWorker::onServerAddressChanged);
 	connect(this, &KiwiSDRInput::setWorkerGain, m_kiwiSDRWorker, &KiwiSDRWorker::onGainChanged);
 	connect(m_kiwiSDRWorker, &KiwiSDRWorker::updateStatus, this, &KiwiSDRInput::setWorkerStatus);
 
-	mutexLocker.unlock();
-
-	applySettings(m_settings, true);
+	m_kiwiSDRWorkerThread->start();
 	m_running = true;
+
+	mutexLocker.unlock();
+	applySettings(m_settings, QList<QString>(), true);
 
 	return true;
 }
@@ -116,15 +128,20 @@ void KiwiSDRInput::stop()
 {
 	QMutexLocker mutexLocker(&m_mutex);
 
-	setWorkerStatus(0);
-
-	if (m_kiwiSDRWorker != 0)
-	{
-		m_kiwiSDRWorker->deleteLater();
-		m_kiwiSDRWorker = 0;
-	}
+    if (!m_running) {
+        return;
+    }
 
 	m_running = false;
+	setWorkerStatus(0);
+
+	if (m_kiwiSDRWorkerThread)
+	{
+        m_kiwiSDRWorkerThread->quit();
+        m_kiwiSDRWorkerThread->wait();
+		m_kiwiSDRWorker = nullptr;
+        m_kiwiSDRWorkerThread = nullptr;
+	}
 }
 
 QByteArray KiwiSDRInput::serialize() const
@@ -142,12 +159,12 @@ bool KiwiSDRInput::deserialize(const QByteArray& data)
         success = false;
     }
 
-    MsgConfigureKiwiSDR* message = MsgConfigureKiwiSDR::create(m_settings, true);
+    MsgConfigureKiwiSDR* message = MsgConfigureKiwiSDR::create(m_settings, QList<QString>(), true);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureKiwiSDR* messageToGUI = MsgConfigureKiwiSDR::create(m_settings, true);
+        MsgConfigureKiwiSDR* messageToGUI = MsgConfigureKiwiSDR::create(m_settings, QList<QString>(), true);
         m_guiMessageQueue->push(messageToGUI);
     }
 
@@ -161,7 +178,7 @@ const QString& KiwiSDRInput::getDeviceDescription() const
 
 int KiwiSDRInput::getSampleRate() const
 {
-	return 12000;
+	return m_sampleRate;
 }
 
 quint64 KiwiSDRInput::getCenterFrequency() const
@@ -174,12 +191,12 @@ void KiwiSDRInput::setCenterFrequency(qint64 centerFrequency)
 	KiwiSDRSettings settings = m_settings;
     settings.m_centerFrequency = centerFrequency;
 
-    MsgConfigureKiwiSDR* message = MsgConfigureKiwiSDR::create(settings, false);
+    MsgConfigureKiwiSDR* message = MsgConfigureKiwiSDR::create(settings, QList<QString>{"centerFrequency"}, false);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureKiwiSDR* messageToGUI = MsgConfigureKiwiSDR::create(settings, false);
+        MsgConfigureKiwiSDR* messageToGUI = MsgConfigureKiwiSDR::create(settings, QList<QString>{"centerFrequency"}, false);
         m_guiMessageQueue->push(messageToGUI);
     }
 }
@@ -198,34 +215,37 @@ bool KiwiSDRInput::handleMessage(const Message& message)
         MsgConfigureKiwiSDR& conf = (MsgConfigureKiwiSDR&) message;
         qDebug() << "KiwiSDRInput::handleMessage: MsgConfigureKiwiSDR";
 
-        bool success = applySettings(conf.getSettings(), conf.getForce());
+        bool success = applySettings(conf.getSettings(), conf.getSettingsKeys(), conf.getForce());
 
-        if (!success)
-        {
+        if (!success) {
             qDebug("KiwiSDRInput::handleMessage: config error");
         }
 
         return true;
     }
-    else if (MsgFileRecord::match(message))
+    else if (KiwiSDRWorker::MsgReportSampleRate::match(message))
     {
-        MsgFileRecord& conf = (MsgFileRecord&) message;
-        qDebug() << "KiwiSDRInput::handleMessage: MsgFileRecord: " << conf.getStartStop();
+        KiwiSDRWorker::MsgReportSampleRate& report = (KiwiSDRWorker::MsgReportSampleRate&) message;
+        m_sampleRate = report.getSampleRate();
+        qDebug() << "KiwiSDRInput::handleMessage: KiwiSDRWorker::MsgReportSampleRate: m_sampleRate: " << m_sampleRate;
 
-        if (conf.getStartStop())
-        {
-            if (m_settings.m_fileRecordName.size() != 0) {
-                m_fileSink->setFileName(m_settings.m_fileRecordName);
-            } else {
-                m_fileSink->genUniqueFileName(m_deviceAPI->getDeviceUID());
-            }
+        if (!m_sampleFifo.setSize(m_sampleRate * 2)) {
+            qCritical("KiwiSDRInput::KiwiSDRInput: Could not allocate SampleFifo");
+        }
 
-            m_fileSink->startRecording();
-        }
-        else
-        {
-            m_fileSink->stopRecording();
-        }
+		DSPSignalNotification *notif = new DSPSignalNotification(
+			m_sampleRate, m_settings.m_centerFrequency);
+		m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
+
+        return true;
+    }
+    else if (KiwiSDRWorker::MsgReportPosition::match(message))
+    {
+        KiwiSDRWorker::MsgReportPosition& report = (KiwiSDRWorker::MsgReportPosition&) message;
+
+        m_latitude = report.getLatitude();
+        m_longitude = report.getLongitude();
+        m_altitude = report.getAltitude();
 
         return true;
     }
@@ -236,8 +256,7 @@ bool KiwiSDRInput::handleMessage(const Message& message)
 
         if (cmd.getStartStop())
         {
-            if (m_deviceAPI->initDeviceEngine())
-            {
+            if (m_deviceAPI->initDeviceEngine()) {
                 m_deviceAPI->startDeviceEngine();
             }
         }
@@ -267,70 +286,49 @@ int KiwiSDRInput::getStatus() const
     }
 }
 
-bool KiwiSDRInput::applySettings(const KiwiSDRSettings& settings, bool force)
+bool KiwiSDRInput::applySettings(const KiwiSDRSettings& settings, const QList<QString>& settingsKeys, bool force)
 {
-	qDebug() << "KiwiSDRInput::applySettings: "
-        << " m_serverAddress: " << settings.m_serverAddress
-        << " m_centerFrequency: " << settings.m_centerFrequency
-        << " m_gain: " << settings.m_gain
-        << " m_useAGC: " << settings.m_useAGC
-        << " m_fileRecordName: " << settings.m_fileRecordName
-        << " m_useAGC: " << settings.m_useAGC
-        << " m_useReverseAPI: " << settings.m_useReverseAPI
-        << " m_reverseAPIAddress: " << settings.m_reverseAPIAddress
-        << " m_reverseAPIPort: " << settings.m_reverseAPIPort
-        << " m_reverseAPIDeviceIndex: " << settings.m_reverseAPIDeviceIndex;
+	qDebug() << "KiwiSDRInput::applySettings: force: "<< force << settings.getDebugString(settingsKeys, force);
 
-    QList<QString> reverseAPIKeys;
-
-	if (m_settings.m_serverAddress != settings.m_serverAddress || force)
+	if (settingsKeys.contains("serverAddress") || force)
     {
-        reverseAPIKeys.append("serverAddress");
 		emit setWorkerServerAddress(settings.m_serverAddress);
     }
 
-	if (m_settings.m_gain != settings.m_gain || force) {
-        reverseAPIKeys.append("gain");
-    }
-	if (m_settings.m_useAGC != settings.m_useAGC || force) {
-        reverseAPIKeys.append("useAGC");
-    }
-
-	if (m_settings.m_gain != settings.m_gain ||
-		m_settings.m_useAGC != settings.m_useAGC || force)
+	if (settingsKeys.contains("gain") ||
+		settingsKeys.contains("useAGC") || force)
 	{
 		emit setWorkerGain(settings.m_gain, settings.m_useAGC);
 	}
 
-    if (m_settings.m_dcBlock != settings.m_dcBlock)
-    {
-        reverseAPIKeys.append("dcBlock");
+    if (settingsKeys.contains("dcBlock")) {
         m_deviceAPI->configureCorrections(settings.m_dcBlock, false);
     }
 
-    if (m_settings.m_centerFrequency != settings.m_centerFrequency || force)
+    if (settingsKeys.contains("centerFrequency") || force)
     {
-        reverseAPIKeys.append("centerFrequency");
-
         emit setWorkerCenterFrequency(settings.m_centerFrequency);
 
 		DSPSignalNotification *notif = new DSPSignalNotification(
 			getSampleRate(), settings.m_centerFrequency);
-		m_fileSink->handleMessage(*notif); // forward to file sink
 		m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
 	}
 
     if (settings.m_useReverseAPI)
     {
-        qDebug("KiwiSDRInput::applySettings: call webapiReverseSendSettings");
-        bool fullUpdate = ((m_settings.m_useReverseAPI != settings.m_useReverseAPI) && settings.m_useReverseAPI) ||
-                (m_settings.m_reverseAPIAddress != settings.m_reverseAPIAddress) ||
-                (m_settings.m_reverseAPIPort != settings.m_reverseAPIPort) ||
-                (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex);
-        webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+        bool fullUpdate = (settingsKeys.contains("useReverseAPI") && settings.m_useReverseAPI) ||
+            settingsKeys.contains("reverseAPIAddress") ||
+            settingsKeys.contains("reverseAPIPort") ||
+            settingsKeys.contains("reverseAPIDeviceIndex");
+        webapiReverseSendSettings(settingsKeys, settings, fullUpdate || force);
     }
 
-    m_settings = settings;
+    if (force) {
+        m_settings = settings;
+    } else {
+        m_settings.applySettings(settingsKeys, settings);
+    }
+
     return true;
 }
 
@@ -381,7 +379,26 @@ int KiwiSDRInput::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     KiwiSDRSettings settings = m_settings;
+    webapiUpdateDeviceSettings(settings, deviceSettingsKeys, response);
 
+    MsgConfigureKiwiSDR *msg = MsgConfigureKiwiSDR::create(settings, deviceSettingsKeys, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureKiwiSDR *msgToGUI = MsgConfigureKiwiSDR::create(settings, deviceSettingsKeys, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatDeviceSettings(response, settings);
+    return 200;
+}
+
+void KiwiSDRInput::webapiUpdateDeviceSettings(
+        KiwiSDRSettings& settings,
+        const QStringList& deviceSettingsKeys,
+        SWGSDRangel::SWGDeviceSettings& response)
+{
     if (deviceSettingsKeys.contains("gain")) {
         settings.m_gain = response.getKiwiSdrSettings()->getGain();
     }
@@ -397,9 +414,6 @@ int KiwiSDRInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("serverAddress")) {
         settings.m_serverAddress = *response.getKiwiSdrSettings()->getServerAddress();
     }
-    if (deviceSettingsKeys.contains("fileRecordName")) {
-        settings.m_fileRecordName = *response.getKiwiSdrSettings()->getFileRecordName();
-    }
     if (deviceSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getKiwiSdrSettings()->getUseReverseApi() != 0;
     }
@@ -412,18 +426,6 @@ int KiwiSDRInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("reverseAPIDeviceIndex")) {
         settings.m_reverseAPIDeviceIndex = response.getKiwiSdrSettings()->getReverseApiDeviceIndex();
     }
-
-    MsgConfigureKiwiSDR *msg = MsgConfigureKiwiSDR::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureKiwiSDR *msgToGUI = MsgConfigureKiwiSDR::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
-    }
-
-    webapiFormatDeviceSettings(response, settings);
-    return 200;
 }
 
 int KiwiSDRInput::webapiReportGet(
@@ -450,12 +452,6 @@ void KiwiSDRInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& re
         response.getKiwiSdrSettings()->setServerAddress(new QString(settings.m_serverAddress));
     }
 
-    if (response.getKiwiSdrSettings()->getFileRecordName()) {
-        *response.getKiwiSdrSettings()->getFileRecordName() = settings.m_fileRecordName;
-    } else {
-        response.getKiwiSdrSettings()->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
-
     response.getKiwiSdrSettings()->setUseReverseApi(settings.m_useReverseAPI ? 1 : 0);
 
     if (response.getKiwiSdrSettings()->getReverseApiAddress()) {
@@ -471,9 +467,12 @@ void KiwiSDRInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& re
 void KiwiSDRInput::webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response)
 {
     response.getKiwiSdrReport()->setStatus(getStatus());
+    response.getKiwiSdrReport()->setLatitude(m_latitude);
+    response.getKiwiSdrReport()->setLongitude(m_longitude);
+    response.getKiwiSdrReport()->setAltitude(m_altitude);
 }
 
-void KiwiSDRInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const KiwiSDRSettings& settings, bool force)
+void KiwiSDRInput::webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const KiwiSDRSettings& settings, bool force)
 {
     SWGSDRangel::SWGDeviceSettings *swgDeviceSettings = new SWGSDRangel::SWGDeviceSettings();
     swgDeviceSettings->setDirection(0); // single Rx
@@ -499,9 +498,6 @@ void KiwiSDRInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys,
     if (deviceSettingsKeys.contains("serverAddress") || force) {
         swgKiwiSDRSettings->setServerAddress(new QString(settings.m_serverAddress));
     }
-    if (deviceSettingsKeys.contains("fileRecordName") || force) {
-        swgKiwiSDRSettings->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
 
     QString deviceSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/device/settings")
             .arg(settings.m_reverseAPIAddress)
@@ -510,13 +506,14 @@ void KiwiSDRInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys,
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
 
     // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
 
     delete swgDeviceSettings;
 }
@@ -535,17 +532,19 @@ void KiwiSDRInput::webapiReverseSendStartStop(bool start)
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
+    QNetworkReply *reply;
 
     if (start) {
-        m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
     } else {
-        m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
     }
 
+    buffer->setParent(reply);
     delete swgDeviceSettings;
 }
 
@@ -559,10 +558,13 @@ void KiwiSDRInput::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("KiwiSDRInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("KiwiSDRInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
 }

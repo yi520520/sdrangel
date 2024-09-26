@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2019-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // In this version we will use a fixed constant bit rate of 64kbit/s.            //
 // With a frame time of 20ms the encoder output size is always 160 bytes.        //
@@ -27,8 +27,7 @@
 
 AudioOpus::AudioOpus() :
     m_encoderState(0),
-    m_encoderOK(false),
-    m_mutex(QMutex::Recursive)
+    m_encoderOK(false)
 {
     qDebug("AudioOpus::AudioOpus: libopus version %s", opus_get_version_string());
 }
@@ -43,7 +42,6 @@ AudioOpus::~AudioOpus()
 void AudioOpus::setEncoder(int32_t fs, int nChannels)
 {
     int error;
-    bool newInstance = true;
     QMutexLocker mutexLocker(&m_mutex);
 
     if (m_encoderState) {

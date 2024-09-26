@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,17 +24,20 @@
 #include <QStringList>
 #include <QList>
 #include <QMap>
-#include <QAudioDeviceInfo>
+#include <QObject>
 
-#include "audio/audioinput.h"
-#include "audio/audiooutput.h"
+#include "audio/audioinputdevice.h"
+#include "audio/audiooutputdevice.h"
+#include "audio/audiodeviceinfo.h"
+#include "util/messagequeue.h"
 #include "export.h"
 
+class QThread;
 class QDataStream;
 class AudioFifo;
-class MessageQueue;
 
-class SDRBASE_API AudioDeviceManager {
+class SDRBASE_API AudioDeviceManager : public QObject {
+    Q_OBJECT
 public:
     class InputDeviceInfo
     {
@@ -45,7 +50,7 @@ public:
             sampleRate = m_defaultAudioSampleRate;
             volume = m_defaultAudioInputVolume;
         }
-        unsigned int sampleRate;
+        int sampleRate;
         float volume;
         friend QDataStream& operator<<(QDataStream& ds, const InputDeviceInfo& info);
         friend QDataStream& operator>>(QDataStream& ds, InputDeviceInfo& info);
@@ -60,9 +65,11 @@ public:
             udpPort(m_defaultUDPPort),
             copyToUDP(false),
             udpUseRTP(false),
-            udpChannelMode(AudioOutput::UDPChannelLeft),
-            udpChannelCodec(AudioOutput::UDPCodecL16),
-            udpDecimationFactor(1)
+            udpChannelMode(AudioOutputDevice::UDPChannelLeft),
+            udpChannelCodec(AudioOutputDevice::UDPCodecL16),
+            udpDecimationFactor(1),
+            recordToFile(false),
+            recordSilenceTime(0)
         {}
         void resetToDefaults() {
             sampleRate = m_defaultAudioSampleRate;
@@ -70,27 +77,30 @@ public:
             udpPort = m_defaultUDPPort;
             copyToUDP = false;
             udpUseRTP = false;
-            udpChannelMode = AudioOutput::UDPChannelLeft;
-            udpChannelCodec = AudioOutput::UDPCodecL16;
+            udpChannelMode = AudioOutputDevice::UDPChannelLeft;
+            udpChannelCodec = AudioOutputDevice::UDPCodecL16;
             udpDecimationFactor = 1;
+            fileRecordName.clear();
+            recordToFile = false;
+            recordSilenceTime = 0;
         }
-        unsigned int sampleRate;
+        int sampleRate;
         QString udpAddress;
         quint16 udpPort;
         bool copyToUDP;
         bool udpUseRTP;
-        AudioOutput::UDPChannelMode udpChannelMode;
-        AudioOutput::UDPChannelCodec udpChannelCodec;
+        AudioOutputDevice::UDPChannelMode udpChannelMode;
+        AudioOutputDevice::UDPChannelCodec udpChannelCodec;
         uint32_t udpDecimationFactor;
+        QString fileRecordName;
+        bool recordToFile;
+        int recordSilenceTime; //!< 100's ms
         friend QDataStream& operator<<(QDataStream& ds, const OutputDeviceInfo& info);
         friend QDataStream& operator>>(QDataStream& ds, OutputDeviceInfo& info);
     };
 
 	AudioDeviceManager();
 	~AudioDeviceManager();
-
-	const QList<QAudioDeviceInfo>& getInputDevices() const { return m_inputDevicesInfo; }
-    const QList<QAudioDeviceInfo>& getOutputDevices() const { return m_outputDevicesInfo; }
 
     bool getOutputDeviceName(int outputDeviceIndex, QString &deviceName) const;
     bool getInputDeviceName(int inputDeviceIndex, QString &deviceName) const;
@@ -113,28 +123,34 @@ public:
     void unsetOutputDeviceInfo(int outputDeviceIndex);
     void inputInfosCleanup();  //!< Remove input info from map for input devices not present
     void outputInfosCleanup(); //!< Remove output info from map for output devices not present
+    bool setInputDeviceVolume(float volume, int inputDeviceIndex);
+    bool setOutputDeviceVolume(float volume, int outputDeviceIndex);
 
-    static const unsigned int m_defaultAudioSampleRate = 48000;
+    static const int m_defaultAudioSampleRate = 48000;
     static const float m_defaultAudioInputVolume;
     static const QString m_defaultUDPAddress;
     static const quint16 m_defaultUDPPort = 9998;
     static const QString m_defaultDeviceName;
 
 private:
-    QList<QAudioDeviceInfo> m_inputDevicesInfo;
-    QList<QAudioDeviceInfo> m_outputDevicesInfo;
-
     QMap<AudioFifo*, int> m_audioSinkFifos; //< audio sink FIFO to audio output device index-1 map
     QMap<AudioFifo*, MessageQueue*> m_audioFifoToSinkMessageQueues; //!< audio sink FIFO to attached sink message queue
     QMap<int, QList<MessageQueue*> > m_outputDeviceSinkMessageQueues; //!< sink message queues attached to device
-    QMap<int, AudioOutput*> m_audioOutputs; //!< audio device index to audio output map (index -1 is default device)
+    QMap<int, AudioOutputDevice*> m_audioOutputs; //!< audio device index to audio output map (index -1 is default device)
+    QMap<int, QThread*> m_audioOutputThreads; //!< audio device index to audio output threads map
     QMap<QString, OutputDeviceInfo> m_audioOutputInfos; //!< audio device name to audio output info
 
     QMap<AudioFifo*, int> m_audioSourceFifos; //< audio source FIFO to audio input device index-1 map
     QMap<AudioFifo*, MessageQueue*> m_audioFifoToSourceMessageQueues; //!< audio source FIFO to attached source message queue
     QMap<int, QList<MessageQueue*> > m_inputDeviceSourceMessageQueues; //!< sink message queues attached to device
-    QMap<int, AudioInput*> m_audioInputs; //!< audio device index to audio input map (index -1 is default device)
+    QMap<int, AudioInputDevice*> m_audioInputs; //!< audio device index to audio input map (index -1 is default device)
+    QMap<int, QThread*> m_audioInputThreads; //!< audio device index to audio input threads map
     QMap<QString, InputDeviceInfo> m_audioInputInfos; //!< audio device name to audio input device info
+
+    bool m_defaultOutputStarted; //!< True if the default audio output (-1) has already been started
+    bool m_defaultInputStarted;  //!< True if the default audio input (-1) has already been started
+
+    MessageQueue m_inputMessageQueue;
 
     void resetToDefaults();
     QByteArray serialize() const;
@@ -153,7 +169,12 @@ private:
     void deserializeOutputMap(QByteArray& data);
     void debugAudioOutputInfos() const;
 
+    bool handleMessage(const Message& cmd);
+
 	friend class MainSettings;
+
+private slots:
+    void handleInputMessages();
 };
 
 QDataStream& operator<<(QDataStream& ds, const AudioDeviceManager::InputDeviceInfo& info);

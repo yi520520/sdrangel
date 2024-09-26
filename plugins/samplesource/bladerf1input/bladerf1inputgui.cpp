@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,15 +18,15 @@
 
 #include <QDebug>
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include <libbladeRF.h>
 
 #include "ui_bladerf1inputgui.h"
 #include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
@@ -33,9 +34,8 @@
 #include "bladerf1inputgui.h"
 
 Bladerf1InputGui::Bladerf1InputGui(DeviceUISet *deviceUISet, QWidget* parent) :
-	QWidget(parent),
+	DeviceGUI(parent),
 	ui(new Ui::Bladerf1InputGui),
-	m_deviceUISet(deviceUISet),
 	m_forceSettings(true),
 	m_doApplySettings(true),
 	m_settings(),
@@ -44,11 +44,16 @@ Bladerf1InputGui::Bladerf1InputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	m_sampleRate(0),
 	m_lastEngineState(DeviceAPI::StNotStarted)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_sampleSource = (Bladerf1Input*) m_deviceUISet->m_deviceAPI->getSampleSource();
 
-	ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#Bladerf1InputGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesource/bladerf1input/readme.md";
 	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequency->setValueRange(7, BLADERF_FREQUENCY_MIN_XB200/1000, BLADERF_FREQUENCY_MAX/1000);
+    ui->centerFrequency->setValueRange(7, BLADERF_FREQUENCY_MIN_XB200/1000, BLADERF_FREQUENCY_MAX/1000);
 
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
     // BladeRF can go as low as 80 kS/s but because of buffering in practice experience is not good below 330 kS/s
@@ -64,8 +69,7 @@ Bladerf1InputGui::Bladerf1InputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
 	displaySettings();
 
@@ -73,10 +77,14 @@ Bladerf1InputGui::Bladerf1InputGui(DeviceUISet *deviceUISet, QWidget* parent) :
     m_sampleSource->setMessageQueueToGUI(&m_inputMessageQueue);
 
 	sendSettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 }
 
 Bladerf1InputGui::~Bladerf1InputGui()
 {
+    m_statusTimer.stop();
+    m_updateTimer.stop();
 	delete ui;
 }
 
@@ -85,32 +93,11 @@ void Bladerf1InputGui::destroy()
 	delete this;
 }
 
-void Bladerf1InputGui::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString Bladerf1InputGui::getName() const
-{
-	return objectName();
-}
-
 void Bladerf1InputGui::resetToDefaults()
 {
 	m_settings.resetToDefaults();
 	displaySettings();
-	sendSettings();
-}
-
-qint64 Bladerf1InputGui::getCenterFrequency() const
-{
-	return m_settings.m_centerFrequency;
-}
-
-void Bladerf1InputGui::setCenterFrequency(qint64 centerFrequency)
-{
-	m_settings.m_centerFrequency = centerFrequency;
-	displaySettings();
+    m_forceSettings = true;
 	sendSettings();
 }
 
@@ -137,7 +124,13 @@ bool Bladerf1InputGui::handleMessage(const Message& message)
     if (Bladerf1Input::MsgConfigureBladerf1::match(message))
     {
         const Bladerf1Input::MsgConfigureBladerf1& cfg = (Bladerf1Input::MsgConfigureBladerf1&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         blockApplySettings(true);
         displaySettings();
         blockApplySettings(false);
@@ -275,6 +268,7 @@ void Bladerf1InputGui::sendSettings()
 void Bladerf1InputGui::on_centerFrequency_changed(quint64 value)
 {
 	m_settings.m_centerFrequency = value * 1000;
+    m_settingsKeys.append("centerFrequency");
 	sendSettings();
 }
 
@@ -287,18 +281,21 @@ void Bladerf1InputGui::on_sampleRate_changed(quint64 value)
     }
 
     displayFcTooltip();
+    m_settingsKeys.append("devSampleRate");
     sendSettings();
 }
 
 void Bladerf1InputGui::on_dcOffset_toggled(bool checked)
 {
 	m_settings.m_dcBlock = checked;
+    m_settingsKeys.append("dcBlock");
 	sendSettings();
 }
 
 void Bladerf1InputGui::on_iqImbalance_toggled(bool checked)
 {
 	m_settings.m_iqCorrection = checked;
+    m_settingsKeys.append("iqCorrection");
 	sendSettings();
 }
 
@@ -306,6 +303,7 @@ void Bladerf1InputGui::on_bandwidth_currentIndexChanged(int index)
 {
 	int newbw = BladerfBandwidths::getBandwidth(index);
 	m_settings.m_bandwidth = newbw * 1000;
+    m_settingsKeys.append("bandwidth");
 	sendSettings();
 }
 
@@ -324,6 +322,8 @@ void Bladerf1InputGui::on_decim_currentIndexChanged(int index)
         m_settings.m_devSampleRate = ui->sampleRate->getValueNew() * (1 << m_settings.m_log2Decim);
     }
 
+    m_settingsKeys.append("log2Decim");
+    m_settingsKeys.append("devSampleRate");
 	sendSettings();
 }
 
@@ -331,6 +331,7 @@ void Bladerf1InputGui::on_fcPos_currentIndexChanged(int index)
 {
     m_settings.m_fcPos = (BladeRF1InputSettings::fcPos_t) (index < 0 ? 0 : index > 2 ? 2 : index);
     displayFcTooltip();
+    m_settingsKeys.append("fcPos");
     sendSettings();
 }
 
@@ -342,6 +343,7 @@ void Bladerf1InputGui::on_lna_currentIndexChanged(int index)
 		return;
 
 	m_settings.m_lnaGain = index;
+    m_settingsKeys.append("lnaGain");
 	sendSettings();
 }
 
@@ -352,6 +354,7 @@ void Bladerf1InputGui::on_vga1_valueChanged(int value)
 
 	ui->vga1Text->setText(tr("%1dB").arg(value));
 	m_settings.m_vga1 = value;
+    m_settingsKeys.append("vga1");
 	sendSettings();
 }
 
@@ -362,6 +365,7 @@ void Bladerf1InputGui::on_vga2_valueChanged(int value)
 
 	ui->vga2Text->setText(tr("%1dB").arg(value));
 	m_settings.m_vga2 = value;
+    m_settingsKeys.append("vga2");
 	sendSettings();
 }
 
@@ -371,55 +375,73 @@ void Bladerf1InputGui::on_xb200_currentIndexChanged(int index)
 	{
 		m_settings.m_xb200 = true;
 		m_settings.m_xb200Path = BLADERF_XB200_BYPASS;
+        m_settingsKeys.append("xb200");
+        m_settingsKeys.append("xb200Path");
 	}
 	else if (index == 2) // Auto 1dB
 	{
 		m_settings.m_xb200 = true;
 		m_settings.m_xb200Path = BLADERF_XB200_MIX;
 		m_settings.m_xb200Filter = BLADERF_XB200_AUTO_1DB;
+        m_settingsKeys.append("xb200");
+        m_settingsKeys.append("xb200Path");
+        m_settingsKeys.append("xb200Filter");
 	}
 	else if (index == 3) // Auto 3dB
 	{
 		m_settings.m_xb200 = true;
 		m_settings.m_xb200Path = BLADERF_XB200_MIX;
 		m_settings.m_xb200Filter = BLADERF_XB200_AUTO_3DB;
+        m_settingsKeys.append("xb200");
+        m_settingsKeys.append("xb200Path");
+        m_settingsKeys.append("xb200Filter");
 	}
 	else if (index == 4) // Custom
 	{
 		m_settings.m_xb200 = true;
 		m_settings.m_xb200Path = BLADERF_XB200_MIX;
 		m_settings.m_xb200Filter = BLADERF_XB200_CUSTOM;
+        m_settingsKeys.append("xb200");
+        m_settingsKeys.append("xb200Path");
+        m_settingsKeys.append("xb200Filter");
 	}
 	else if (index == 5) // 50 MHz
 	{
 		m_settings.m_xb200 = true;
 		m_settings.m_xb200Path = BLADERF_XB200_MIX;
 		m_settings.m_xb200Filter = BLADERF_XB200_50M;
+        m_settingsKeys.append("xb200");
+        m_settingsKeys.append("xb200Path");
+        m_settingsKeys.append("xb200Filter");
 	}
 	else if (index == 6) // 144 MHz
 	{
 		m_settings.m_xb200 = true;
 		m_settings.m_xb200Path = BLADERF_XB200_MIX;
 		m_settings.m_xb200Filter = BLADERF_XB200_144M;
+        m_settingsKeys.append("xb200");
+        m_settingsKeys.append("xb200Path");
+        m_settingsKeys.append("xb200Filter");
 	}
 	else if (index == 7) // 222 MHz
 	{
 		m_settings.m_xb200 = true;
 		m_settings.m_xb200Path = BLADERF_XB200_MIX;
 		m_settings.m_xb200Filter = BLADERF_XB200_222M;
+        m_settingsKeys.append("xb200");
+        m_settingsKeys.append("xb200Path");
+        m_settingsKeys.append("xb200Filter");
 	}
 	else // no xb200
 	{
 		m_settings.m_xb200 = false;
+        m_settingsKeys.append("xb200");
 	}
 
-	if (m_settings.m_xb200)
-	{
-		ui->centerFrequency->setValueRange(7, BLADERF_FREQUENCY_MIN_XB200/1000, BLADERF_FREQUENCY_MAX/1000);
-	}
-	else
-	{
-		ui->centerFrequency->setValueRange(7, BLADERF_FREQUENCY_MIN/1000, BLADERF_FREQUENCY_MAX/1000);
+	if (m_settings.m_xb200) {
+        ui->centerFrequency->setValueRange(7, BLADERF_FREQUENCY_MIN_XB200/1000, BLADERF_FREQUENCY_MAX/1000);
+	} else {
+        ui->centerFrequency->setValueRange(7, BLADERF_FREQUENCY_MIN/1000, BLADERF_FREQUENCY_MAX/1000);
 	}
 
 	sendSettings();
@@ -434,18 +456,6 @@ void Bladerf1InputGui::on_startStop_toggled(bool checked)
     }
 }
 
-void Bladerf1InputGui::on_record_toggled(bool checked)
-{
-    if (checked) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
-
-    Bladerf1Input::MsgFileRecord* message = Bladerf1Input::MsgFileRecord::create(checked);
-    m_sampleSource->getInputMessageQueue()->push(message);
-}
-
 void Bladerf1InputGui::on_sampleRateMode_toggled(bool checked)
 {
     m_sampleRateMode = checked;
@@ -456,9 +466,10 @@ void Bladerf1InputGui::updateHardware()
 {
     if (m_doApplySettings)
     {
-        qDebug() << "BladerfGui::updateHardware";
-        Bladerf1Input::MsgConfigureBladerf1* message = Bladerf1Input::MsgConfigureBladerf1::create(m_settings, m_forceSettings);
+        qDebug() << "BladerfGui::updateHardware:";
+        Bladerf1Input::MsgConfigureBladerf1* message = Bladerf1Input::MsgConfigureBladerf1::create(m_settings, m_settingsKeys, m_forceSettings);
         m_sampleSource->getInputMessageQueue()->push(message);
+        m_settingsKeys.clear();
         m_forceSettings = false;
         m_updateTimer.stop();
     }
@@ -542,19 +553,46 @@ unsigned int Bladerf1InputGui::getXb200Index(bool xb_200, bladerf_xb200_path xb2
 
 void Bladerf1InputGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settingsKeys.append("transverterMode");
+        m_settingsKeys.append("m_transverterDeltaFrequency");
+        m_settingsKeys.append("m_iqOrder");
+        m_settingsKeys.append("centerFrequency");
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void Bladerf1InputGui::makeUIConnections()
+{
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &Bladerf1InputGui::on_centerFrequency_changed);
+    QObject::connect(ui->sampleRate, &ValueDial::changed, this, &Bladerf1InputGui::on_sampleRate_changed);
+    QObject::connect(ui->dcOffset, &ButtonSwitch::toggled, this, &Bladerf1InputGui::on_dcOffset_toggled);
+    QObject::connect(ui->iqImbalance, &ButtonSwitch::toggled, this, &Bladerf1InputGui::on_iqImbalance_toggled);
+    QObject::connect(ui->bandwidth, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &Bladerf1InputGui::on_bandwidth_currentIndexChanged);
+    QObject::connect(ui->decim, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &Bladerf1InputGui::on_decim_currentIndexChanged);
+    QObject::connect(ui->lna, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &Bladerf1InputGui::on_lna_currentIndexChanged);
+    QObject::connect(ui->vga1, &QSlider::valueChanged, this, &Bladerf1InputGui::on_vga1_valueChanged);
+    QObject::connect(ui->vga2, &QSlider::valueChanged, this, &Bladerf1InputGui::on_vga2_valueChanged);
+    QObject::connect(ui->fcPos, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &Bladerf1InputGui::on_fcPos_currentIndexChanged);
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &Bladerf1InputGui::on_startStop_toggled);
+    QObject::connect(ui->sampleRateMode, &QToolButton::toggled, this, &Bladerf1InputGui::on_sampleRateMode_toggled);
+    QObject::connect(ui->xb200, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &Bladerf1InputGui::on_xb200_currentIndexChanged);
 }

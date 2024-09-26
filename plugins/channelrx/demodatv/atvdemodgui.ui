@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>ATVDemodGUI</class>
- <widget class="RollupWidget" name="ATVDemodGUI">
+ <widget class="RollupContents" name="ATVDemodGUI">
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
     <width>700</width>
-    <height>743</height>
+    <height>699</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+   <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
@@ -115,24 +115,7 @@
        </widget>
       </item>
       <item>
-       <widget class="ButtonSwitch" name="decimatorEnable">
-        <property name="toolTip">
-         <string>Toggle decimator on/off</string>
-        </property>
-        <property name="text">
-         <string/>
-        </property>
-        <property name="icon">
-         <iconset resource="../../../sdrgui/resources/res.qrc">
-          <normaloff>:/arrow_down.png</normaloff>:/arrow_down.png</iconset>
-        </property>
-        <property name="checkable">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="channelSampleRateText">
+       <widget class="QLabel" name="tvSampleRateText">
         <property name="minimumSize">
          <size>
           <width>66</width>
@@ -140,7 +123,7 @@
          </size>
         </property>
         <property name="toolTip">
-         <string>Effective channel sample rate (kS/s)</string>
+         <string>TV line based sample rate (kS/s)</string>
         </property>
         <property name="text">
          <string> 00000.00k</string>
@@ -154,15 +137,15 @@
        <widget class="QLabel" name="nbPointsPerLineText">
         <property name="minimumSize">
          <size>
-          <width>40</width>
+          <width>80</width>
           <height>0</height>
          </size>
         </property>
         <property name="toolTip">
-         <string>Number of points (samples) per line</string>
+         <string>Number of integer points (samples) per line plus fractional part</string>
         </property>
         <property name="text">
-         <string>000p</string>
+         <string>0000p+0.00</string>
         </property>
         <property name="alignment">
          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
@@ -368,6 +351,108 @@
        </widget>
       </item>
       <item>
+       <widget class="Line" name="line_5">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="amScaleFactorLabel">
+        <property name="text">
+         <string>AM</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QDial" name="amScaleFactor">
+        <property name="maximumSize">
+         <size>
+          <width>24</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>Adjust AM scaling as % of nominal scale</string>
+        </property>
+        <property name="minimum">
+         <number>50</number>
+        </property>
+        <property name="maximum">
+         <number>200</number>
+        </property>
+        <property name="pageStep">
+         <number>1</number>
+        </property>
+        <property name="value">
+         <number>100</number>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="amScaleFactorText">
+        <property name="minimumSize">
+         <size>
+          <width>26</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>% of nominal scale</string>
+        </property>
+        <property name="text">
+         <string>100</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QDial" name="amScaleOffset">
+        <property name="maximumSize">
+         <size>
+          <width>24</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>AM offset as % of adjusted scale</string>
+        </property>
+        <property name="minimum">
+         <number>-50</number>
+        </property>
+        <property name="maximum">
+         <number>50</number>
+        </property>
+        <property name="pageStep">
+         <number>1</number>
+        </property>
+        <property name="value">
+         <number>0</number>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="amScaleOffsetText">
+        <property name="minimumSize">
+         <size>
+          <width>26</width>
+          <height>0</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>% of full scale</string>
+        </property>
+        <property name="text">
+         <string>-50</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="Line" name="line_4">
         <property name="orientation">
          <enum>Qt::Vertical</enum>
@@ -490,7 +575,7 @@
      <x>10</x>
      <y>570</y>
      <width>681</width>
-     <height>81</height>
+     <height>104</height>
     </rect>
    </property>
    <property name="windowTitle">
@@ -520,6 +605,11 @@
         <property name="toolTip">
          <string>Nominal number of lines per frame</string>
         </property>
+        <item>
+         <property name="text">
+          <string>819</string>
+         </property>
+        </item>
         <item>
          <property name="text">
           <string>640</string>
@@ -666,12 +756,6 @@
       </item>
       <item>
        <widget class="QComboBox" name="standard">
-        <property name="maximumSize">
-         <size>
-          <width>70</width>
-          <height>16777215</height>
-         </size>
-        </property>
         <property name="toolTip">
          <string>TV standard scheme</string>
         </property>
@@ -687,17 +771,17 @@
         </item>
         <item>
          <property name="text">
-          <string>PAL405</string>
+          <string>819L</string>
          </property>
         </item>
         <item>
          <property name="text">
-          <string>ShI</string>
+          <string>ShortI</string>
          </property>
         </item>
         <item>
          <property name="text">
-          <string>ShNI</string>
+          <string>ShortNI</string>
          </property>
         </item>
         <item>
@@ -802,19 +886,6 @@
         </property>
        </widget>
       </item>
-      <item row="0" column="6">
-       <widget class="QLabel" name="blackLevelText">
-        <property name="toolTip">
-         <string>Black level value</string>
-        </property>
-        <property name="text">
-         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;right&quot;&gt;mV&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
-       </widget>
-      </item>
       <item row="0" column="2">
        <widget class="QLabel" name="synchLevelText">
         <property name="toolTip">
@@ -835,14 +906,27 @@
         </property>
        </widget>
       </item>
-      <item row="0" column="4">
+      <item row="0" column="3">
+       <spacer name="horizontalSpacer_2">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>40</width>
+          <height>20</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+      <item row="1" column="0">
        <widget class="QLabel" name="blackLevelLabel">
         <property name="text">
          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Black Lvl&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
         </property>
        </widget>
       </item>
-      <item row="0" column="5">
+      <item row="1" column="1">
        <widget class="QSlider" name="blackLevel">
         <property name="toolTip">
          <string>Black level</string>
@@ -864,38 +948,42 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="0">
-       <widget class="QLabel" name="lineTimeLabel">
+      <item row="1" column="2">
+       <widget class="QLabel" name="blackLevelText">
+        <property name="toolTip">
+         <string>Black level value</string>
+        </property>
         <property name="text">
-         <string>Line</string>
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;right&quot;&gt;mV&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
         </property>
        </widget>
       </item>
-      <item row="1" column="1">
-       <widget class="QSlider" name="lineTime">
+      <item row="0" column="6">
+       <widget class="QLabel" name="lineTimeText">
+        <property name="minimumSize">
+         <size>
+          <width>62</width>
+          <height>0</height>
+         </size>
+        </property>
         <property name="toolTip">
-         <string>Line length adjustment</string>
+         <string>Effective line length value</string>
         </property>
-        <property name="minimum">
-         <number>-100</number>
+        <property name="text">
+         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;right&quot;&gt;&amp;mu;S&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
         </property>
-        <property name="maximum">
-         <number>100</number>
+        <property name="alignment">
+         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
         </property>
-        <property name="singleStep">
-         <number>1</number>
-        </property>
-        <property name="pageStep">
-         <number>1</number>
-        </property>
-        <property name="value">
-         <number>0</number>
-        </property>
-        <property name="sliderPosition">
-         <number>0</number>
-        </property>
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
+       </widget>
+      </item>
+      <item row="0" column="4">
+       <widget class="QLabel" name="lineTimeLabel">
+        <property name="text">
+         <string>Line</string>
         </property>
        </widget>
       </item>
@@ -903,31 +991,6 @@
        <widget class="QLabel" name="topTimeLabel">
         <property name="text">
          <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;H Pulse&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-        </property>
-       </widget>
-      </item>
-      <item row="1" column="5">
-       <widget class="QSlider" name="topTime">
-        <property name="toolTip">
-         <string>Horizontal sync pulse length adjustment</string>
-        </property>
-        <property name="minimum">
-         <number>-30</number>
-        </property>
-        <property name="maximum">
-         <number>30</number>
-        </property>
-        <property name="singleStep">
-         <number>1</number>
-        </property>
-        <property name="pageStep">
-         <number>1</number>
-        </property>
-        <property name="value">
-         <number>0</number>
-        </property>
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
         </property>
        </widget>
       </item>
@@ -950,38 +1013,6 @@
         </property>
        </widget>
       </item>
-      <item row="0" column="3">
-       <spacer name="horizontalSpacer_2">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-      <item row="1" column="2">
-       <widget class="QLabel" name="lineTimeText">
-        <property name="minimumSize">
-         <size>
-          <width>62</width>
-          <height>0</height>
-         </size>
-        </property>
-        <property name="toolTip">
-         <string>Effective line length value</string>
-        </property>
-        <property name="text">
-         <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;right&quot;&gt;&amp;mu;S&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
-       </widget>
-      </item>
      </layout>
     </item>
    </layout>
@@ -994,6 +1025,12 @@
      <width>680</width>
      <height>461</height>
     </rect>
+   </property>
+   <property name="sizePolicy">
+    <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+     <horstretch>0</horstretch>
+     <verstretch>0</verstretch>
+    </sizepolicy>
    </property>
    <property name="minimumSize">
     <size>
@@ -1037,7 +1074,7 @@
        <enum>QLayout::SetMinimumSize</enum>
       </property>
       <item>
-       <widget class="TVScreen" name="screenTV" native="true">
+       <widget class="TVScreenAnalog" name="screenTV" native="true">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
           <horstretch>0</horstretch>
@@ -1065,6 +1102,12 @@
     </widget>
    </widget>
    <widget class="QWidget" name="tabScope">
+    <property name="sizePolicy">
+     <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+      <horstretch>0</horstretch>
+      <verstretch>0</verstretch>
+     </sizepolicy>
+    </property>
     <property name="autoFillBackground">
      <bool>true</bool>
     </property>
@@ -1112,9 +1155,9 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>RollupWidget</class>
+   <class>RollupContents</class>
    <extends>QWidget</extends>
-   <header>gui/rollupwidget.h</header>
+   <header>gui/rollupcontents.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>
@@ -1141,9 +1184,9 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>TVScreen</class>
+   <class>TVScreenAnalog</class>
    <extends>QWidget</extends>
-   <header>gui/tvscreen.h</header>
+   <header>gui/tvscreenanalog.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

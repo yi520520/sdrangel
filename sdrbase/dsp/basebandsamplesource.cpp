@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2016-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,72 +18,11 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include "dsp/basebandsamplesource.h"
-#include "util/message.h"
 
-BasebandSampleSource::BasebandSampleSource() :
-    m_guiMessageQueue(0),
-	m_sampleFifo(48000), // arbitrary, will be adjusted to match device sink FIFO size
-	m_deviceSampleFifo(0)
+BasebandSampleSource::BasebandSampleSource()
 {
-	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()));
-	connect(&m_sampleFifo, SIGNAL(dataWrite(int)), this, SLOT(handleWriteToFifo(int)));
 }
 
 BasebandSampleSource::~BasebandSampleSource()
 {
-}
-
-void BasebandSampleSource::handleInputMessages()
-{
-	Message* message;
-
-	while ((message = m_inputMessageQueue.pop()) != 0)
-	{
-		if (handleMessage(*message))
-		{
-			delete message;
-		}
-	}
-}
-
-void BasebandSampleSource::handleWriteToFifo(int nbSamples)
-{
-    handleWriteToFifo(&m_sampleFifo, nbSamples);
-}
-
-void BasebandSampleSource::handleWriteToDeviceFifo(int nbSamples)
-{
-    handleWriteToFifo(m_deviceSampleFifo, nbSamples);
-}
-
-void BasebandSampleSource::handleWriteToFifo(SampleSourceFifo *sampleFifo, int nbSamples)
-{
-    SampleVector::iterator writeAt;
-    sampleFifo->getWriteIterator(writeAt);
-    pullAudio(nbSamples); // Pre-fetch input audio samples this is mandatory to keep things running smoothly
-
-    for (int i = 0; i < nbSamples; i++)
-    {
-        pull((*writeAt));
-        sampleFifo->bumpIndex(writeAt);
-    }
-}
-
-
-void BasebandSampleSource::setDeviceSampleSourceFifo(SampleSourceFifo *deviceSampleFifo)
-{
-    if (m_deviceSampleFifo != deviceSampleFifo)
-    {
-        if (m_deviceSampleFifo) {
-            qDebug("BasebandSampleSource::setDeviceSampleSourceFifo: disconnect device FIFO %p", m_deviceSampleFifo);
-            disconnect(m_deviceSampleFifo, SIGNAL(dataWrite(int)), this, SLOT(handleWriteToDeviceFifo(int)));
-        }
-
-        if (deviceSampleFifo) {
-            qDebug("BasebandSampleSource::setDeviceSampleSourceFifo: connect device FIFO %p", deviceSampleFifo);
-            connect(deviceSampleFifo, SIGNAL(dataWrite(int)), this, SLOT(handleWriteToDeviceFifo(int)));
-        }
-
-        m_deviceSampleFifo = deviceSampleFifo;
-    }
 }

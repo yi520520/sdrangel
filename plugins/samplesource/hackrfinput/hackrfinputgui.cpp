@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 FuzzyCheese <23639418+FuzzyCheese@users.noreply.github.com> //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,14 +21,14 @@
 
 #include <QDebug>
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include <libhackrf/hackrf.h>
 
 #include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
@@ -35,9 +37,8 @@
 #include "ui_hackrfinputgui.h"
 
 HackRFInputGui::HackRFInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
-	QWidget(parent),
+	DeviceGUI(parent),
 	ui(new Ui::HackRFInputGui),
-	m_deviceUISet(deviceUISet),
 	m_settings(),
     m_sampleRateMode(true),
 	m_forceSettings(true),
@@ -45,11 +46,16 @@ HackRFInputGui::HackRFInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	m_sampleSource(NULL),
 	m_lastEngineState(DeviceAPI::StNotStarted)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_sampleSource = (HackRFInput*) m_deviceUISet->m_deviceAPI->getSampleSource();
 
-    ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#HackRFInputGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesource/hackrfinput/readme.md";
 	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequency->setValueRange(7, 0U, 7250000U);
+	ui->centerFrequency->setValueRange(7, 0U, 9999999U);
 
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
     ui->sampleRate->setValueRange(8, 1000000U, 20000000U);
@@ -58,8 +64,7 @@ HackRFInputGui::HackRFInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
 	displaySettings();
 	displayBandwidths();
@@ -68,11 +73,17 @@ HackRFInputGui::HackRFInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
     m_sampleSource->setMessageQueueToGUI(&m_inputMessageQueue);
 
     sendSettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 }
 
 HackRFInputGui::~HackRFInputGui()
 {
+    qDebug("HackRFInputGui::~HackRFInputGui");
+    m_statusTimer.stop();
+    m_updateTimer.stop();
 	delete ui;
+    qDebug("HackRFInputGui::~HackRFInputGui: end");
 }
 
 void HackRFInputGui::destroy()
@@ -80,32 +91,11 @@ void HackRFInputGui::destroy()
 	delete this;
 }
 
-void HackRFInputGui::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString HackRFInputGui::getName() const
-{
-	return objectName();
-}
-
 void HackRFInputGui::resetToDefaults()
 {
 	m_settings.resetToDefaults();
 	displaySettings();
-	sendSettings();
-}
-
-qint64 HackRFInputGui::getCenterFrequency() const
-{
-	return m_settings.m_centerFrequency;
-}
-
-void HackRFInputGui::setCenterFrequency(qint64 centerFrequency)
-{
-	m_settings.m_centerFrequency = centerFrequency;
-	displaySettings();
+    m_forceSettings = true;
 	sendSettings();
 }
 
@@ -135,7 +125,13 @@ bool HackRFInputGui::handleMessage(const Message& message)
     if (HackRFInput::MsgConfigureHackRF::match(message))
     {
         const HackRFInput::MsgConfigureHackRF& cfg = (HackRFInput::MsgConfigureHackRF&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         blockApplySettings(true);
         displaySettings();
         blockApplySettings(false);
@@ -196,6 +192,28 @@ void HackRFInputGui::updateSampleRateAndFrequency()
     displaySampleRate();
 }
 
+void HackRFInputGui::updateFrequencyLimits()
+{
+    // values in kHz
+    qint64 deltaFrequency = m_settings.m_transverterMode ? m_settings.m_transverterDeltaFrequency/1000 : 0;
+    qint64 minLimit = (0U) + deltaFrequency;
+    qint64 maxLimit = (7250000U) + deltaFrequency;
+
+    if (m_settings.m_transverterMode)
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 999999999 ? 999999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 999999999 ? 999999999 : maxLimit;
+        ui->centerFrequency->setValueRange(9, minLimit, maxLimit);
+    }
+    else
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
+        ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
+    }
+    qDebug("HackRFInputGui::updateFrequencyLimits: delta: %lld min: %lld max: %lld", deltaFrequency, minLimit, maxLimit);
+}
+
 void HackRFInputGui::displaySampleRate()
 {
     ui->sampleRate->blockSignals(true);
@@ -241,22 +259,24 @@ void HackRFInputGui::displaySettings()
 {
     blockApplySettings(true);
 
-	ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
+    ui->transverter->setDeltaFrequency(m_settings.m_transverterDeltaFrequency);
+    ui->transverter->setDeltaFrequencyActive(m_settings.m_transverterMode);
+    ui->transverter->setIQOrder(m_settings.m_iqOrder);
 
+    updateFrequencyLimits();
+
+	ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
 	ui->LOppm->setValue(m_settings.m_LOppmTenths);
 	ui->LOppmText->setText(QString("%1").arg(QString::number(m_settings.m_LOppmTenths/10.0, 'f', 1)));
-
 	ui->dcOffset->setChecked(m_settings.m_dcBlock);
 	ui->iqImbalance->setChecked(m_settings.m_iqCorrection);
+    ui->autoBBF->setChecked(m_settings.m_autoBBF);
 
     displaySampleRate();
 
 	ui->biasT->setChecked(m_settings.m_biasT);
-
 	ui->decim->setCurrentIndex(m_settings.m_log2Decim);
-
 	ui->fcPos->setCurrentIndex((int) m_settings.m_fcPos);
-
 	ui->lnaExt->setChecked(m_settings.m_lnaExt);
 	ui->lnaGainText->setText(tr("%1dB").arg(m_settings.m_lnaGain));
 	ui->lna->setValue(m_settings.m_lnaGain);
@@ -303,52 +323,85 @@ void HackRFInputGui::on_LOppm_valueChanged(int value)
 {
 	m_settings.m_LOppmTenths = value;
 	ui->LOppmText->setText(QString("%1").arg(QString::number(m_settings.m_LOppmTenths/10.0, 'f', 1)));
+    m_settingsKeys.append("LOppmTenths");
 	sendSettings();
 }
 
 void HackRFInputGui::on_dcOffset_toggled(bool checked)
 {
 	m_settings.m_dcBlock = checked;
+    m_settingsKeys.append("dcBlock");
 	sendSettings();
 }
 
 void HackRFInputGui::on_iqImbalance_toggled(bool checked)
 {
 	m_settings.m_iqCorrection = checked;
+    m_settingsKeys.append("iqCorrection");
 	sendSettings();
+}
+
+void HackRFInputGui::on_autoBBF_toggled(bool checked)
+{
+    m_settings.m_autoBBF = checked;
+
+    if (checked)
+    {
+        m_settings.m_bandwidth = hackrf_compute_baseband_filter_bw(m_settings.m_devSampleRate);
+        ui->bbFilter->blockSignals(true);
+        displaySettings();
+        ui->bbFilter->blockSignals(false);
+        m_settingsKeys.append("bandwidth");
+        sendSettings();
+    }
 }
 
 void HackRFInputGui::on_bbFilter_currentIndexChanged(int index)
 {
     int newBandwidth = HackRFBandwidths::getBandwidth(index);
 	m_settings.m_bandwidth = newBandwidth * 1000;
+    ui->autoBBF->setChecked(false);
+    m_settingsKeys.append("bandwidth");
 	sendSettings();
 }
 
 void HackRFInputGui::on_biasT_stateChanged(int state)
 {
 	m_settings.m_biasT = (state == Qt::Checked);
+    m_settingsKeys.append("biasT");
 	sendSettings();
 }
 
 void HackRFInputGui::on_lnaExt_stateChanged(int state)
 {
 	m_settings.m_lnaExt = (state == Qt::Checked);
+    m_settingsKeys.append("lnaExt");
 	sendSettings();
 }
 
 void HackRFInputGui::on_centerFrequency_changed(quint64 value)
 {
 	m_settings.m_centerFrequency = value * 1000;
+    m_settingsKeys.append("centerFrequency");
 	sendSettings();
 }
 
 void HackRFInputGui::on_sampleRate_changed(quint64 value)
 {
     m_settings.m_devSampleRate = value;
+    m_settingsKeys.append("devSampleRate");
 
     if (!m_sampleRateMode) {
         m_settings.m_devSampleRate <<= m_settings.m_log2Decim;
+    }
+
+    if (m_settings.m_autoBBF)
+    {
+        m_settings.m_bandwidth = hackrf_compute_baseband_filter_bw(m_settings.m_devSampleRate);
+        m_settingsKeys.append("bandwidth");
+        ui->bbFilter->blockSignals(true);
+        displaySettings();
+        ui->bbFilter->blockSignals(false);
     }
 
     displayFcTooltip();
@@ -369,12 +422,15 @@ void HackRFInputGui::on_decim_currentIndexChanged(int index)
         m_settings.m_devSampleRate <<= m_settings.m_log2Decim;
     }
 
+    m_settingsKeys.append("log2Decim");
+    m_settingsKeys.append("devSampleRate");
     sendSettings();
 }
 
 void HackRFInputGui::on_fcPos_currentIndexChanged(int index)
 {
     m_settings.m_fcPos = (HackRFInputSettings::fcPos_t) (index < 0 ? 0 : index > 2 ? 2 : index);
+    m_settingsKeys.append("fcPos");
     displayFcTooltip();
     sendSettings();
 }
@@ -386,6 +442,7 @@ void HackRFInputGui::on_lna_valueChanged(int value)
 
 	ui->lnaGainText->setText(tr("%1dB").arg(value));
 	m_settings.m_lnaGain = value;
+    m_settingsKeys.append("lnaGain");
 	sendSettings();
 }
 
@@ -396,6 +453,7 @@ void HackRFInputGui::on_vga_valueChanged(int value)
 
 	ui->vgaText->setText(tr("%1dB").arg(value));
 	m_settings.m_vgaGain = value;
+    m_settingsKeys.append("vgaGain");
 	sendSettings();
 }
 
@@ -406,18 +464,6 @@ void HackRFInputGui::on_startStop_toggled(bool checked)
         HackRFInput::MsgStartStop *message = HackRFInput::MsgStartStop::create(checked);
         m_sampleSource->getInputMessageQueue()->push(message);
     }
-}
-
-void HackRFInputGui::on_record_toggled(bool checked)
-{
-    if (checked) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
-
-    HackRFInput::MsgFileRecord* message = HackRFInput::MsgFileRecord::create(checked);
-    m_sampleSource->getInputMessageQueue()->push(message);
 }
 
 void HackRFInputGui::on_sampleRateMode_toggled(bool checked)
@@ -431,11 +477,27 @@ void HackRFInputGui::updateHardware()
     if (m_doApplySettings)
     {
         qDebug() << "HackRFGui::updateHardware";
-        HackRFInput::MsgConfigureHackRF* message = HackRFInput::MsgConfigureHackRF::create(m_settings, m_forceSettings);
+        HackRFInput::MsgConfigureHackRF* message = HackRFInput::MsgConfigureHackRF::create(m_settings, m_settingsKeys, m_forceSettings);
         m_sampleSource->getInputMessageQueue()->push(message);
         m_forceSettings = false;
+        m_settingsKeys.clear();
         m_updateTimer.stop();
     }
+}
+
+void HackRFInputGui::on_transverter_clicked()
+{
+    m_settings.m_transverterMode = ui->transverter->getDeltaFrequencyAcive();
+    m_settings.m_transverterDeltaFrequency = ui->transverter->getDeltaFrequency();
+    m_settings.m_iqOrder = ui->transverter->getIQOrder();
+    qDebug("HackRFInputGui::on_transverter_clicked: %lld Hz %s", m_settings.m_transverterDeltaFrequency, m_settings.m_transverterMode ? "on" : "off");
+    updateFrequencyLimits();
+    m_settings.m_centerFrequency = ui->centerFrequency->getValueNew()*1000;
+    m_settingsKeys.append("transverterMode");
+    m_settingsKeys.append("transverterDeltaFrequency");
+    m_settingsKeys.append("iqOrder");
+    m_settingsKeys.append("centerFrequency");
+    sendSettings();
 }
 
 void HackRFInputGui::blockApplySettings(bool block)
@@ -475,19 +537,45 @@ void HackRFInputGui::updateStatus()
 
 void HackRFInputGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void HackRFInputGui::makeUIConnections()
+{
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &HackRFInputGui::on_centerFrequency_changed);
+    QObject::connect(ui->sampleRate, &ValueDial::changed, this, &HackRFInputGui::on_sampleRate_changed);
+    QObject::connect(ui->LOppm, &QSlider::valueChanged, this, &HackRFInputGui::on_LOppm_valueChanged);
+    QObject::connect(ui->dcOffset, &ButtonSwitch::toggled, this, &HackRFInputGui::on_dcOffset_toggled);
+    QObject::connect(ui->iqImbalance, &ButtonSwitch::toggled, this, &HackRFInputGui::on_iqImbalance_toggled);
+    QObject::connect(ui->autoBBF, &ButtonSwitch::toggled, this, &HackRFInputGui::on_autoBBF_toggled);
+    QObject::connect(ui->biasT, &QCheckBox::stateChanged, this, &HackRFInputGui::on_biasT_stateChanged);
+    QObject::connect(ui->decim, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &HackRFInputGui::on_decim_currentIndexChanged);
+    QObject::connect(ui->fcPos, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &HackRFInputGui::on_fcPos_currentIndexChanged);
+    QObject::connect(ui->lnaExt, &QCheckBox::stateChanged, this, &HackRFInputGui::on_lnaExt_stateChanged);
+    QObject::connect(ui->lna, &QSlider::valueChanged, this, &HackRFInputGui::on_lna_valueChanged);
+    QObject::connect(ui->bbFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &HackRFInputGui::on_bbFilter_currentIndexChanged);
+    QObject::connect(ui->vga, &QSlider::valueChanged, this, &HackRFInputGui::on_vga_valueChanged);
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &HackRFInputGui::on_startStop_toggled);
+    QObject::connect(ui->sampleRateMode, &QToolButton::toggled, this, &HackRFInputGui::on_sampleRateMode_toggled);
+    QObject::connect(ui->transverter, &TransverterButton::clicked, this, &HackRFInputGui::on_transverter_clicked);
 }

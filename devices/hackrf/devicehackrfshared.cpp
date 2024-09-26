@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2017, 2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,5 +21,4 @@
 
 MESSAGE_CLASS_DEFINITION(DeviceHackRFShared::MsgSynchronizeFrequency, Message)
 
-const float  DeviceHackRFShared::m_sampleFifoLengthInSeconds = 0.25;
-const int    DeviceHackRFShared::m_sampleFifoMinSize = 150000; // 600kS/s knee
+const unsigned int DeviceHackRFShared::m_sampleFifoMinRate = 48000; // 48kS/s knee

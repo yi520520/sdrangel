@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021 Andreas Baulig <free.geronimo@hotmail.de>                  //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,10 +21,14 @@
 #ifndef DEVICES_PLUTOSDR_DEVICEPLUTOSDRSCAN_H_
 #define DEVICES_PLUTOSDR_DEVICEPLUTOSDRSCAN_H_
 
+#include <QString>
+
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 
+#include "plugin/plugininterface.h"
 #include "export.h"
 
 class DEVICES_API DevicePlutoSDRScan
@@ -40,11 +47,12 @@ public:
     const std::string* getSerialAt(unsigned int index) const ;
     const std::string* getURIFromSerial(const std::string& serial) const;
     void getSerials(std::vector<std::string>& serials) const;
+    void enumOriginDevices(const QString& hardwareId, PluginInterface::OriginDevices& originDevices);
 
 private:
-    std::vector<DeviceScan> m_scans;
-    std::map<std::string, DeviceScan*> m_serialMap;
-    std::map<std::string, DeviceScan*> m_urilMap;
+    std::vector<std::shared_ptr<DeviceScan>> m_scans;
+    std::map<std::string, std::shared_ptr<DeviceScan>> m_serialMap;
+    std::map<std::string, std::shared_ptr<DeviceScan>> m_urilMap;
 };
 
 

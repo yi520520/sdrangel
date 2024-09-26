@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -27,10 +30,10 @@
 #include "testsourcesettings.h"
 
 class DeviceAPI;
-class TestSourceThread;
-class FileRecord;
+class TestSourceWorker;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 
 class TestSourceInput : public DeviceSampleSource {
     Q_OBJECT
@@ -40,42 +43,25 @@ public:
 
 	public:
 		const TestSourceSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
 		bool getForce() const { return m_force; }
 
-		static MsgConfigureTestSource* create(const TestSourceSettings& settings, bool force)
-		{
-			return new MsgConfigureTestSource(settings, force);
+		static MsgConfigureTestSource* create(const TestSourceSettings& settings, const QList<QString>& settingsKeys, bool force) {
+			return new MsgConfigureTestSource(settings, settingsKeys, force);
 		}
 
 	private:
 		TestSourceSettings m_settings;
+        QList<QString> m_settingsKeys;
 		bool m_force;
 
-		MsgConfigureTestSource(const TestSourceSettings& settings, bool force) :
+		MsgConfigureTestSource(const TestSourceSettings& settings, const QList<QString>& settingsKeys, bool force) :
 			Message(),
 			m_settings(settings),
+            m_settingsKeys(settingsKeys),
 			m_force(force)
 		{ }
 	};
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
-        { }
-    };
 
     class MsgStartStop : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -135,21 +121,29 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const TestSourceSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            TestSourceSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 private:
 	DeviceAPI *m_deviceAPI;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
 	QMutex m_mutex;
 	TestSourceSettings m_settings;
-	TestSourceThread* m_testSourceThread;
+	TestSourceWorker *m_testSourceWorker;
+    QThread *m_testSourceWorkerThread;
 	QString m_deviceDescription;
 	bool m_running;
     const QTimer& m_masterTimer;
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-	bool applySettings(const TestSourceSettings& settings, bool force);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const TestSourceSettings& settings);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const TestSourceSettings& settings, bool force);
+	bool applySettings(const TestSourceSettings& settings, const QList<QString>& settingsKeys, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const TestSourceSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

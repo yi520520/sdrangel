@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
+// Copyright (C) 2018-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,8 +24,7 @@ MESSAGE_CLASS_DEFINITION(DeviceXTRXShared::MsgReportBuddyChange, Message)
 MESSAGE_CLASS_DEFINITION(DeviceXTRXShared::MsgReportClockSourceChange, Message)
 MESSAGE_CLASS_DEFINITION(DeviceXTRXShared::MsgReportDeviceInfo, Message)
 
-const float  DeviceXTRXShared::m_sampleFifoLengthInSeconds = 0.25;
-const int    DeviceXTRXShared::m_sampleFifoMinSize = 48000; // 192kS/s knee
+const unsigned int DeviceXTRXShared::m_sampleFifoMinRate = 48000;
 
 DeviceXTRXShared::DeviceXTRXShared() :
     m_dev(0),

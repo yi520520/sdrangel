@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,7 +21,7 @@
 #include <QTimer>
 #include <QWidget>
 
-#include "plugin/plugininstancegui.h"
+#include "device/devicegui.h"
 #include "util/messagequeue.h"
 
 #include "soapysdrinput.h"
@@ -39,7 +39,7 @@ namespace Ui {
     class SoapySDRInputGui;
 }
 
-class SoapySDRInputGui : public QWidget, public PluginInstanceGUI {
+class SoapySDRInputGui : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -47,16 +47,13 @@ public:
     virtual ~SoapySDRInputGui();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     virtual void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
+
+protected:
+    void resizeEvent(QResizeEvent* size);
 
 private:
     void createRangesControl(
@@ -70,10 +67,10 @@ private:
     void createIndividualGainsControl(const std::vector<DeviceSoapySDRParams::GainSetting>& individualGainsList);
     void createCorrectionsControl();
     void createArgumentsControl(const SoapySDR::ArgInfoList& argInfoList, bool deviceArguments);
+    void makeUIConnections();
 
     Ui::SoapySDRInputGui* ui;
 
-    DeviceUISet* m_deviceUISet;
     bool m_forceSettings;
     bool m_doApplySettings;
     SoapySDRInputSettings m_settings;
@@ -110,6 +107,7 @@ private:
     void updateFrequencyLimits();
     void setCenterFrequencySetting(uint64_t kHzValue);
     void blockApplySettings(bool block);
+    bool handleMessage(const Message& message);
 
 private slots:
     void handleInputMessages();
@@ -137,7 +135,6 @@ private slots:
     void on_fcPos_currentIndexChanged(int index);
     void on_transverter_clicked();
     void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void updateHardware();
     void updateStatus();
     void openDeviceSettingsDialog(const QPoint& p);

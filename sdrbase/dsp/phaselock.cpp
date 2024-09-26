@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2015, 2017-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2016 Ziga S <ziga.svetina@gmail.com>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -16,11 +17,9 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include <math.h>
+#include <cmath>
 #include "dsp/phaselock.h"
 
-#undef M_PI
-#define M_PI		3.14159265358979323846
 
 // Construct phase-locked loop.
 PhaseLock::PhaseLock(Real freq, Real bandwidth, Real minsignal)

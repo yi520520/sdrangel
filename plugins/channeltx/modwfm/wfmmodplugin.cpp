@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,15 +26,17 @@
 #include "wfmmodgui.h"
 #endif
 #include "wfmmod.h"
+#include "wfmmodwebapiadapter.h"
 #include "wfmmodplugin.h"
 
 const PluginDescriptor WFMModPlugin::m_pluginDescriptor = {
-    QString("WFM Modulator"),
-    QString("4.11.5"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    WFMMod::m_channelId,
+    QStringLiteral("WFM Modulator"),
+    QStringLiteral("7.21.2"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 WFMModPlugin::WFMModPlugin(QObject* parent) :
@@ -52,28 +58,39 @@ void WFMModPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI->registerTxChannel(WFMMod::m_channelIdURI, WFMMod::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* WFMModPlugin::createTxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSource *txChannel)
+void WFMModPlugin::createTxChannel(DeviceAPI *deviceAPI, BasebandSampleSource **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		WFMMod *instance = new WFMMod(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* WFMModPlugin::createTxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSource *txChannel) const
+{
+	(void) deviceUISet;
+	(void) txChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* WFMModPlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel)
+ChannelGUI* WFMModPlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel) const
 {
     return WFMModGUI::create(m_pluginAPI, deviceUISet, txChannel);
 }
 #endif
 
-BasebandSampleSource* WFMModPlugin::createTxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* WFMModPlugin::createChannelWebAPIAdapter() const
 {
-    return new WFMMod(deviceAPI);
+	return new WFMModWebAPIAdapter();
 }
-
-ChannelAPI* WFMModPlugin::createTxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new WFMMod(deviceAPI);
-}
-
-

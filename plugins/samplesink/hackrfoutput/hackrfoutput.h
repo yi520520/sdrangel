@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -41,20 +44,22 @@ public:
 
 	public:
 		const HackRFOutputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
 		bool getForce() const { return m_force; }
 
-		static MsgConfigureHackRF* create(const HackRFOutputSettings& settings, bool force)
-		{
-			return new MsgConfigureHackRF(settings, force);
+		static MsgConfigureHackRF* create(const HackRFOutputSettings& settings, const QList<QString>& settingsKeys, bool force) {
+			return new MsgConfigureHackRF(settings, settingsKeys, force);
 		}
 
 	private:
 		HackRFOutputSettings m_settings;
+        QList<QString> m_settingsKeys;
 		bool m_force;
 
-		MsgConfigureHackRF(const HackRFOutputSettings& settings, bool force) :
+		MsgConfigureHackRF(const HackRFOutputSettings& settings, const QList<QString>& settingsKeys, bool force) :
 			Message(),
 			m_settings(settings),
+            m_settingsKeys(settingsKeys),
 			m_force(force)
 		{ }
 	};
@@ -134,6 +139,15 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const HackRFOutputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            HackRFOutputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 private:
 	DeviceAPI *m_deviceAPI;
 	QMutex m_mutex;
@@ -148,11 +162,10 @@ private:
 
     bool openDevice();
     void closeDevice();
-	bool applySettings(const HackRFOutputSettings& settings, bool force);
+	bool applySettings(const HackRFOutputSettings& settings, const QList<QString>& settingsKeys, bool force);
 //	hackrf_device *open_hackrf_from_sequence(int sequence);
-	void setDeviceCenterFrequency(quint64 freq_hz, qint32 LOppmTenths);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const HackRFOutputSettings& settings);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const HackRFOutputSettings& settings, bool force);
+	void setDeviceCenterFrequency(quint64 freq_hz, int loPpmTenths);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const HackRFOutputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,8 +24,6 @@
 #include <QByteArray>
 
 struct FileInputSettings {
-    quint64 m_centerFrequency;
-    qint32  m_sampleRate;
     QString m_fileName;
     quint32 m_accelerationFactor;
     bool m_loop;
@@ -40,6 +40,8 @@ struct FileInputSettings {
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    void applySettings(const QStringList& settingsKeys, const FileInputSettings& settings);
+    QString getDebugString(const QStringList& settingsKeys, bool force=false) const;
     static int getAccelerationIndex(int averaging);
     static int getAccelerationValue(int averagingIndex);
 };

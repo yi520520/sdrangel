@@ -15,7 +15,7 @@ set(soapysdrdevice_HEADERS
 )
 
 include_directories(
-    ${SOAPYSDR_INCLUDE_DIR}
+    ${SOAPYSDR_INCLUDE_DIRS}
 )
 
 add_library(soapysdrdevice SHARED
@@ -26,11 +26,16 @@ set_target_properties(soapysdrdevice
     PROPERTIES DEFINE_SYMBOL "devices_EXPORTS")
 
 target_link_libraries(soapysdrdevice
-    ${SOAPYSDR_LIBRARY}
+    ${SOAPYSDR_LINK_LIBRARIES}
+    ${SOAPYSDR_LIBRARIES}
     sdrbase
 )
 
-if(ENABLE_EXTERNAL_LIBRARIES AND NOT LINUX)
+target_link_directories(soapysdrdevice PRIVATE
+    ${SOAPYSDR_LIBRARY_DIRS}
+)
+
+if(SOAPYSDR_EXTERNAL AND NOT LINUX)
     add_dependencies(soapysdrdevice soapysdr)
 endif()
 

@@ -14,9 +14,11 @@ This plugin can be used to view digital amateur analog television transmissions 
 
 The whole bandwidth available to the channel is used. That is it runs at the device sample rate possibly downsampled by a power of two in the source plugin.
 
-&#9888; Note that DVB-S2 support is experimental. You may need to move some settings back and forth to achieve constellation lock and decode. For exmple change mode or slightly move back and forth center frequency.
+&#9888; Note that DVB-S2 support is experimental. You may need to move some settings back and forth to achieve constellation lock and decode. For example change mode or slightly move back and forth center frequency.
 
 <h2>Interface</h2>
+
+The top and bottom bars of the channel window are described [here](../../../sdrgui/channel/readme.md)
 
 ![DATV Demodulator plugin GUI](../../../doc/img/DATVDemod_plugin.png)
 
@@ -40,17 +42,35 @@ Power of signal received in the channel (dB)
 
 ![DATV Demodulator plugin DATV GUI](../../../doc/img/DATVDemod_pluginDATV.png)
 
-<h4>B.3: Output transport stream to UDP</h4>
+<h4>B.3: MER estimation</h4>
+
+This gauge gives the MER estimation. The averaged value appears on the right.
+
+<h4>B.4: CNR estimation</h4>
+
+This gauge gives the CNR estimation. The averaged value appears on the right. Estimation is made comparing spectrum power in the center of the passband compared to the sides. The passband is the one presented to the demodulator and is always twice the symbol rate. the "center" is estimated at 60% of the full passband. Note that the RF filter comes before that and may change the aspect of the spectrum thus the best estimation is obtained when the RF filter width is close to twice the symbol rate and the surroundings are quiet. This also means that you have to apply the correct symbol rate.
+
+<h4>B.5: Output transport stream to UDP</h4>
 
 Activate output of transport stream to UDP with 7 TS blocks per UDP frame
 
-<h4>B.4: UDP address</h4>
+<h4>B.6: UDP address</h4>
 
 This is the address of the TS UDP
 
-<h4>B.5: UDP port</h4>
+<h4>B.7: UDP port</h4>
 
 This is the port of the TS UDP
+
+<h4>B.8: UDP streaming indicator</h4>
+
+Indicator turns green if UDP data is streaming to destination
+
+<h4>B.9: Video player enable and indicator</h4>
+
+Use the checkbox to enable or disable the internal video player. The indicator next turns green if the video player thread is active.
+
+Use this control to disable the video player if it causes too many crashes...
 
 <h4>B.1: Symbol constellation</h4>
 
@@ -72,7 +92,7 @@ Depends on the standard.
   - DVB-S: Normally only QPSK and BPSK (later addition) are supported in the standard but amateur radio use has a little bit abused of the standard so PSK6, QAM16, QAM64 and QAM256 are also supported
   - DVB-S2: QPSK, PSK8, APSK16, APSK32, APSK64e (DVB-S2X)
 
-The constallations are as follows:
+The constellations are as follows:
 
   - BPSK: binary phase shift keying. Symbols are in &#960;/4 and -3&#960;/4 positions.
   - QPSK: quadrature phase shift keying. Symbols are in &#960;/4, 3&#960;/4, -3&#960;/4 and -&#960;/4 positions.
@@ -88,9 +108,13 @@ The constallations are as follows:
 
 This controls the expected symbol rate in symbols per second
 
+<h5>B.2a.3a: Set standard DATV symbol rate</h5>
+
+Use this dial to flip through standard DATV symbol rates: 25, 33, 66, 125, 250, 333, 500, 1000, 1500, 2000 kSym/S
+
 <h5>B.2a.4: FEC rate</h5>
 
-Dpends on the standard and modulation
+Depends on the standard and modulation
 
   - DVB-S with all modulations: 1/2 , 2/3 , 3/4, 5/6 and 7/8.
   - DVB-S2 and QPSK: 1/4, 1/3, 2/5, 1/2, 3/5, 2/3, 3/4, 4/5, 5/6, 8/9, 9/10
@@ -127,17 +151,23 @@ Push this button when you are lost...
 
   - FIR Linear
   - FIR Nearest
-  - RRC (Root Raised Cosine): when selected additional controls for roll-off factor (%) and excursion (dB) are provided.
+  - RRC (Root Raised Cosine).
+
+  When RRC is selected the additional controls for roll-off factor (%) and envelope excursion (dB) are effective. The lower the roll-off factor the steeper the sides of the filter. A higher value of the envelope excursion may help on weak signals.
+
+  Practically the RRC filter is mandatory for proper decoding of normal to weak signals. Strong signals may decode in any condition.
 
 <h5>B.2a.12: Amount of data decoded</h5>
 
-Automatically adjusts unit (kB, MB, ...)
+Amount data received in the video player. If the video player is disabled this is the amount of data sent via UDP. Automatically adjusts unit (kB, MB, ...)
 
 <h5>B.2a.13: Stream speed</h5>
 
+Current data flow in the video player. If the video player is disabled this is the flow sent via UDP.
+
 <h5>B.2a.14: Buffer status</h5>
 
-Gauge that shows percentage of buffer queue length
+Gauge that shows percentage of video player buffer queue length
 
 <h4>B.2b: DATV signal settings (DVB-S2 specific)</h4>
 
@@ -154,6 +184,25 @@ The mode and rate selection can be done manually but if a discrepancy in the num
 <h5>B.2b.5: DVB-S specific controls</h5>
 
 The controls specific to DVB-S are disabled and greyed out. These are: Fast Lock, Allow Drift, Hard Metric and Viterbi.
+
+<h5>B.2b.6: DVB-S2 specific - Soft LDPC decoder</h5>
+
+It can be used to decode signals lower that ~10 db MER which is the limit of LDPC hard decoding as explained next (B.2b.7). Video degrades progressively down to about 7.5 dB MER and drops below this limit.
+
+Right clicking on this control opens a dialog where you can choose:
+
+  - The `ldpctool` executable. Obsolete.
+  - The maximum of retries in LDPC decoding from 1 to 8.
+
+<h5>B.2b.7: DVB-S2 specific - LDPC maximum number of bit flips allowed</h5>
+
+May vary between 0 and 500. On strong signals (17 dB SNR or more) you may set it to 0 thus saving processing on occasional bit flips that will not cause significant degradation. When SNR decreases you may set it to a medium value of about 200 allowing bit flips corrections to take place and decoding of signals down to about 10dB MER. A higher value towards the maximum (500) will not make a significant difference and is allowed mostly for experimentation.
+
+If you have enough processing power it is fine to always leave it at 200.
+
+Comparatively:
+  - with max = 0 you need ~15 dB MER which corresponds to ~16 dB CNR
+  - with max = 200 you need ~10 dB MER which corresponds to ~13 dB CNR
 
 <h3>C: DATV video stream</h3>
 

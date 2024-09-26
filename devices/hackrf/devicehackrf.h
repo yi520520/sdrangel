@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,6 +22,7 @@
 
 #include "libhackrf/hackrf.h"
 
+#include "plugin/plugininterface.h"
 #include "export.h"
 
 class DEVICES_API DeviceHackRF
@@ -28,6 +31,8 @@ public:
     static DeviceHackRF& instance();
     static hackrf_device *open_hackrf(int sequence);
     static hackrf_device *open_hackrf(const char * const serial);
+    static void enumOriginDevices(const QString& hardwareId, PluginInterface::OriginDevices& originDevices);
+    static void setDevicePPMCorrection(hackrf_device *dev, qint32 loPPMTenths);
 protected:
     DeviceHackRF();
     DeviceHackRF(const DeviceHackRF&) {}

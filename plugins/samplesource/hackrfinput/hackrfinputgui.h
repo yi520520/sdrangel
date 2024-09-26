@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 FuzzyCheese <23639418+FuzzyCheese@users.noreply.github.com> //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,7 @@
 #ifndef INCLUDE_HACKRFINPUTGUI_H
 #define INCLUDE_HACKRFINPUTGUI_H
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -34,7 +36,7 @@ namespace Ui {
 	class HackRFInputGui;
 }
 
-class HackRFInputGui : public QWidget, public PluginInstanceGUI {
+class HackRFInputGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -50,22 +52,16 @@ public:
 	virtual ~HackRFInputGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::HackRFInputGui* ui;
 
-	DeviceUISet* m_deviceUISet;
 	HackRFInputSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
 	bool m_forceSettings;
 	bool m_doApplySettings;
@@ -83,7 +79,10 @@ private:
 	void displayBandwidths();
 	void sendSettings();
     void updateSampleRateAndFrequency();
+    void updateFrequencyLimits();
     void blockApplySettings(bool block);
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
@@ -92,6 +91,7 @@ private slots:
 	void on_LOppm_valueChanged(int value);
 	void on_dcOffset_toggled(bool checked);
 	void on_iqImbalance_toggled(bool checked);
+	void on_autoBBF_toggled(bool checked);
 	void on_biasT_stateChanged(int state);
 	void on_decim_currentIndexChanged(int index);
 	void on_fcPos_currentIndexChanged(int index);
@@ -100,8 +100,8 @@ private slots:
 	void on_bbFilter_currentIndexChanged(int index);
 	void on_vga_valueChanged(int value);
 	void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void on_sampleRateMode_toggled(bool checked);
+    void on_transverter_clicked();
 	void updateHardware();
 	void updateStatus();
     void openDeviceSettingsDialog(const QPoint& p);

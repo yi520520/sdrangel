@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2020 Vort <vvort@yandex.ru>                                     //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,90 +19,94 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "atvdemodsettings.h"
 
 ATVDemodSettings::ATVDemodSettings() :
-    m_channelMarker(0)
+    m_channelMarker(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
 
 void ATVDemodSettings::resetToDefaults()
 {
-    m_lineTimeFactor = 0;
-    m_topTimeFactor = 0;
-    m_fpsIndex = 1; // 25 FPS
-    m_halfImage = false; // m_fltRatioOfRowsToDisplay = 1.0
-    m_RFBandwidthFactor = 10;
-    m_OppBandwidthFactor = 10;
-    m_nbLinesIndex = 1; // 625 lines
-
-    m_intFrequencyOffset = 0;
-    m_enmModulation = ATV_FM1;
-    m_fltRFBandwidth = 0;
-    m_fltRFOppBandwidth = 0;
-    m_blnFFTFiltering = false;
-    m_blndecimatorEnable = false;
-    m_fltBFOFrequency = 0.0f;
+    m_inputFrequencyOffset = 0;
+    m_bfoFrequency = 0.0f;
+    m_atvModulation = ATV_FM1;
     m_fmDeviation = 0.5f;
-
-    m_intSampleRate = 0;
-    m_enmATVStandard = ATVStdPAL625;
-    m_intNumberOfLines = 625;
-    m_fltLineDuration = 0.0f;
-    m_fltTopDuration = 0.0f;
-    m_fltFramePerS = 25.0f;
-    m_fltRatioOfRowsToDisplay = 1.0f;
-    m_fltVoltLevelSynchroTop = 0.0f;
-    m_fltVoltLevelSynchroBlack = 1.0f;
-    m_blnHSync = false;
-    m_blnVSync = false;
-    m_blnInvertVideo = false;
-    m_intVideoTabIndex = 0;
-    m_fltLineTimeMultiplier = 1.0f;
-    m_fltTopTimeMultiplier = 1.0f;
-    m_rfSliderDivisor = 1;
-
-    m_intTVSampleRate = 0;
-    m_intNumberSamplePerLine = 0;
-
+    m_amScalingFactor = 100;
+    m_amOffsetFactor = 0;
+    m_fftFiltering = false;
+    m_fftOppBandwidth = 0;
+    m_fftBandwidth = 6000;
+    m_nbLines = 625;
+    m_fps = 25;
+    m_atvStd = ATVStdPAL625;
+    m_hSync = false;
+    m_vSync = false;
+    m_invertVideo = false;
+    m_halfFrames = false; // m_fltRatioOfRowsToDisplay = 1.0
+    m_levelSynchroTop = 0.15f;
+    m_levelBlack = 0.3f;
     m_rgbColor = QColor(255, 255, 255).rgb();
     m_title = "ATV Demodulator";
     m_udpAddress = "127.0.0.1";
     m_udpPort = 9999;
+    m_streamIndex = 0;
+    m_useReverseAPI = false;
+    m_reverseAPIAddress = "127.0.0.1";
+    m_reverseAPIPort = 8888;
+    m_reverseAPIDeviceIndex = 0;
+    m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray ATVDemodSettings::serialize() const
 {
     SimpleSerializer s(1);
 
-    s.writeS32(1, m_intFrequencyOffset);
+    s.writeS64(1, m_inputFrequencyOffset);
     s.writeU32(2, m_rgbColor);
-    s.writeS32(3, roundf(m_fltVoltLevelSynchroTop*1000.0));   // mV
-    s.writeS32(4, roundf(m_fltVoltLevelSynchroBlack*1000.0)); // mV
-    s.writeS32(5, m_lineTimeFactor);      // added UI
-    s.writeS32(6, m_topTimeFactor);       // added UI
-    s.writeS32(7, m_enmModulation);
-    s.writeS32(8, m_fpsIndex);            // added UI
-    s.writeBool(9, m_blnHSync);
-    s.writeBool(10,m_blnVSync);
-    s.writeBool(11, m_halfImage);         // added UI
-    s.writeS32(12, m_RFBandwidthFactor);  // added UI
-    s.writeS32(13, m_OppBandwidthFactor); // added UI
-    s.writeS32(14, roundf(m_fltBFOFrequency));
-    s.writeBool(15, m_blnInvertVideo);
-    s.writeS32(16, m_nbLinesIndex);       // added UI
+    s.writeS32(3, roundf(m_levelSynchroTop*1000.0)); // mV
+    s.writeS32(4, roundf(m_levelBlack*1000.0));      // mV
+    s.writeS32(7, m_atvModulation);
+    s.writeS32(8, m_fps);
+    s.writeBool(9, m_hSync);
+    s.writeBool(10,m_vSync);
+    s.writeBool(11, m_halfFrames);
+    s.writeU32(12, m_fftBandwidth);
+    s.writeU32(13, m_fftOppBandwidth);
+    s.writeS32(14, m_bfoFrequency);
+    s.writeBool(15, m_invertVideo);
+    s.writeS32(16, m_nbLines);
     s.writeS32(17, roundf(m_fmDeviation * 500.0));
-    s.writeS32(18, m_enmATVStandard);
+    s.writeS32(18, m_atvStd);
 
     if (m_channelMarker) {
         s.writeBlob(19, m_channelMarker->serialize());
     }
 
     s.writeString(20, m_title);
+    s.writeS32(21, m_streamIndex);
+    s.writeS32(22, m_amScalingFactor);
+    s.writeS32(23, m_amOffsetFactor);
+    s.writeBool(24, m_fftFiltering);
+
+    if (m_rollupState) {
+        s.writeBlob(25, m_rollupState->serialize());
+    }
+
+    s.writeBool(26, m_useReverseAPI);
+    s.writeString(27, m_reverseAPIAddress);
+    s.writeU32(28, m_reverseAPIPort);
+    s.writeU32(29, m_reverseAPIDeviceIndex);
+    s.writeU32(30, m_reverseAPIChannelIndex);
+    s.writeS32(31, m_workspaceIndex);
+    s.writeBlob(32, m_geometryBytes);
+    s.writeBool(33, m_hidden);
 
     return s.final();
 }
@@ -119,33 +125,68 @@ bool ATVDemodSettings::deserialize(const QByteArray& arrData)
     {
         QByteArray bytetmp;
         int tmp;
+        uint32_t utmp;
 
-        d.readS32(1, &m_intFrequencyOffset, 0);
+        d.readS64(1, &m_inputFrequencyOffset, 0);
         // TODO: rgb color
         d.readS32(3, &tmp, 100);
-        m_fltVoltLevelSynchroTop = tmp / 1000.0f;
+        m_levelSynchroTop = tmp / 1000.0f;
         d.readS32(4, &tmp, 310);
-        m_fltVoltLevelSynchroBlack = tmp / 1000.0f;
-        d.readS32(5, &m_lineTimeFactor, 0); // added UI
-        d.readS32(6, &m_topTimeFactor, 0); // added UI
+        m_levelBlack = tmp / 1000.0f;
         d.readS32(7, &tmp, 0);
-        m_enmModulation = static_cast<ATVModulation>(tmp);
-        d.readS32(8, &m_fpsIndex, 1); // added UI
-        d.readBool(9, &m_blnHSync, false);
-        d.readBool(10, &m_blnVSync, false);
-        d.readBool(11, &m_halfImage, false); // added UI
-        d.readS32(12, &m_RFBandwidthFactor, 10); // added UI
-        d.readS32(13, &m_OppBandwidthFactor, 10); // added UI
-        d.readS32(14, &tmp, 10);
-        m_fltBFOFrequency = static_cast<float>(tmp);
-        d.readBool(15, &m_blnInvertVideo, false);
-        d.readS32(16, &m_nbLinesIndex, 1); // added UI
+        m_atvModulation = static_cast<ATVModulation>(tmp);
+        d.readS32(8, &tmp, 25);
+        int fpsIndex = getFpsIndex(tmp);
+        m_fps = getFps(fpsIndex);
+        d.readBool(9, &m_hSync, false);
+        d.readBool(10, &m_vSync, false);
+        d.readBool(11, &m_halfFrames, false);
+        d.readU32(12, &m_fftBandwidth, 6000);
+        d.readU32(13, &m_fftOppBandwidth, 0);
+        d.readS32(14, &m_bfoFrequency, 0);
+        d.readBool(15, &m_invertVideo, false);
+        d.readS32(16, &tmp, 625);
+        int nbLinesIndex = getNumberOfLinesIndex(tmp);
+        m_nbLines = getNumberOfLines(nbLinesIndex);
         d.readS32(17, &tmp, 250);
         m_fmDeviation = tmp / 500.0f;
         d.readS32(18, &tmp, 1);
-        m_enmATVStandard = static_cast<ATVStd>(tmp);
 
-        // TODO: calculate values from UI values
+        if (m_channelMarker)
+        {
+            d.readBlob(19, &bytetmp);
+            m_channelMarker->deserialize(bytetmp);
+        }
+
+        m_atvStd = static_cast<ATVStd>(tmp);
+        d.readS32(21, &m_streamIndex, 0);
+        d.readS32(22, &m_amScalingFactor, 100);
+        d.readS32(23, &m_amOffsetFactor, 0);
+        d.readBool(24, &m_fftFiltering, false);
+
+        if (m_rollupState)
+        {
+            d.readBlob(25, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readBool(26, &m_useReverseAPI, false);
+        d.readString(27, &m_reverseAPIAddress, "127.0.0.1");
+        d.readU32(28, &utmp, 0);
+
+        if ((utmp > 1023) && (utmp < 65535)) {
+            m_reverseAPIPort = utmp;
+        } else {
+            m_reverseAPIPort = 8888;
+        }
+
+        d.readU32(29, &utmp, 0);
+        m_reverseAPIDeviceIndex = utmp > 99 ? 99 : utmp;
+        d.readU32(30, &utmp, 0);
+        m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
+        d.readS32(31, &m_workspaceIndex, 0);
+        d.readBlob(32, &m_geometryBytes);
+        d.readBool(33, &m_hidden, false);
 
         return true;
     }
@@ -156,55 +197,47 @@ bool ATVDemodSettings::deserialize(const QByteArray& arrData)
     }
 }
 
-int ATVDemodSettings::getEffectiveSampleRate()
-{
-    return m_blndecimatorEnable ? m_intTVSampleRate : m_intSampleRate;
-}
-
-
-float ATVDemodSettings::getFps(int fpsIndex)
+int ATVDemodSettings::getFps(int fpsIndex)
 {
     switch(fpsIndex)
     {
     case 0:
-        return 30.0f;
+        return 30;
         break;
     case 2:
-        return 20.0f;
+        return 20;
         break;
     case 3:
-        return 16.0f;
+        return 16;
         break;
     case 4:
-        return 12.0f;
+        return 12;
         break;
     case 5:
-        return 10.0f;
+        return 10;
         break;
     case 6:
-        return 8.0f;
+        return 8;
         break;
     case 7:
-        return 5.0f;
+        return 5;
         break;
     case 8:
-        return 2.0f;
+        return 2;
         break;
     case 9:
-        return 1.0f;
+        return 1;
         break;
     case 1:
     default:
-        return 25.0f;
+        return 25;
         break;
     }
 }
 
-int ATVDemodSettings::getFpsIndex(float fps)
+int ATVDemodSettings::getFpsIndex(int fps)
 {
-    int fpsi = roundf(fps);
-
-    if (fpsi <= 1) {
+    if (fps <= 1) {
         return 9;
     } else if (fps <= 2) {
         return 8;
@@ -232,42 +265,45 @@ int ATVDemodSettings::getNumberOfLines(int nbLinesIndex)
     switch(nbLinesIndex)
     {
     case 0:
-        return 640;
-        break;
-    case 2:
-        return 525;
-        break;
-    case 3:
-        return 480;
-        break;
-    case 4:
-        return 405;
-        break;
-    case 5:
-        return 360;
-        break;
-    case 6:
-        return 343;
-        break;
-    case 7:
-        return 240;
-        break;
-    case 8:
-        return 180;
-        break;
-    case 9:
-        return 120;
-        break;
-    case 10:
-        return 90;
-        break;
-    case 11:
-        return 60;
-        break;
-    case 12:
-        return 32;
+        return 819;
         break;
     case 1:
+        return 640;
+        break;
+    case 3:
+        return 525;
+        break;
+    case 4:
+        return 480;
+        break;
+    case 5:
+        return 405;
+        break;
+    case 6:
+        return 360;
+        break;
+    case 7:
+        return 343;
+        break;
+    case 8:
+        return 240;
+        break;
+    case 9:
+        return 180;
+        break;
+    case 10:
+        return 120;
+        break;
+    case 11:
+        return 90;
+        break;
+    case 12:
+        return 60;
+        break;
+    case 13:
+        return 32;
+        break;
+    case 2:
     default:
         return 625;
         break;
@@ -277,120 +313,65 @@ int ATVDemodSettings::getNumberOfLines(int nbLinesIndex)
 int ATVDemodSettings::getNumberOfLinesIndex(int nbLines)
 {
     if (nbLines <= 32) {
-        return 12;
+        return 13;
     } else if (nbLines <= 60) {
-        return 11;
+        return 12;
     } else if (nbLines <= 90) {
-        return 10;
+        return 11;
     } else if (nbLines <= 120) {
-        return 9;
+        return 10;
     } else if (nbLines <= 180) {
-        return 8;
+        return 9;
     } else if (nbLines <= 240) {
-        return 7;
+        return 8;
     } else if (nbLines <= 343) {
-        return 6;
+        return 7;
     } else if (nbLines <= 360) {
-        return 5;
+        return 6;
     } else if (nbLines <= 405) {
-        return 4;
+        return 5;
     } else if (nbLines <= 480) {
-        return 3;
+        return 4;
     } else if (nbLines <= 525) {
-        return 2;
+        return 3;
     } else if (nbLines <= 625) {
-        return 1;
+        return 2;
+    } else if (nbLines <= 640) {
+        return 2;
     } else {
         return 0;
     }
 }
 
-float ATVDemodSettings::getNominalLineTime(int nbLinesIndex, int fpsIndex)
+float ATVDemodSettings::getNominalLineTime(int nbLines, int fps)
 {
-    float fps = getFps(fpsIndex);
-    int   nbLines = getNumberOfLines(nbLinesIndex);
-
-    return 1.0f / (nbLines * fps);
+    return 1.0f / ((float) nbLines * (float) fps);
 }
 
-/**
- * calculates m_fltLineTimeMultiplier
- */
-void ATVDemodSettings::lineTimeUpdate()
+int ATVDemodSettings::getRFSliderDivisor(unsigned int sampleRate)
 {
-    float nominalLineTime = getNominalLineTime(m_nbLinesIndex, m_fpsIndex);
-    int lineTimeScaleFactor = (int) std::log10(nominalLineTime);
-
-    if (getEffectiveSampleRate() == 0) {
-        m_fltLineTimeMultiplier = std::pow(10.0, lineTimeScaleFactor-3);
-    } else {
-        m_fltLineTimeMultiplier = 1.0f / getEffectiveSampleRate();
-    }
-}
-
-float ATVDemodSettings::getLineTime()
-{
-    return getNominalLineTime(m_nbLinesIndex, m_fpsIndex) + m_fltLineTimeMultiplier * m_lineTimeFactor;
-}
-
-int ATVDemodSettings::getLineTimeFactor()
-{
-    return roundf((m_fltLineDuration - getNominalLineTime(m_nbLinesIndex, m_fpsIndex)) / m_fltLineTimeMultiplier);
-}
-
-/**
- * calculates m_fltTopTimeMultiplier
- */
-void ATVDemodSettings::topTimeUpdate()
-{
-    float nominalTopTime = getNominalLineTime(m_nbLinesIndex, m_fpsIndex) * (4.7f / 64.0f);
-    int topTimeScaleFactor = (int) std::log10(nominalTopTime);
-
-    if (getEffectiveSampleRate() == 0) {
-        m_fltTopTimeMultiplier = std::pow(10.0, topTimeScaleFactor-3);
-    } else {
-        m_fltTopTimeMultiplier = 1.0f / getEffectiveSampleRate();
-    }
-}
-
-float ATVDemodSettings::getTopTime()
-{
-    return getNominalLineTime(m_nbLinesIndex, m_fpsIndex) * (4.7f / 64.0f) + m_fltTopTimeMultiplier * m_topTimeFactor;
-}
-
-int ATVDemodSettings::getTopTimeFactor()
-{
-    return roundf((m_fltTopDuration - getNominalLineTime(m_nbLinesIndex, m_fpsIndex) * (4.7f / 64.0f)) / m_fltLineTimeMultiplier);
-}
-
-void ATVDemodSettings::convertFromUIValues()
-{
-    lineTimeUpdate();
-    m_fltLineDuration = getLineTime();
-    topTimeUpdate();
-    m_fltTopDuration = getTopTime();
-    m_fltRFBandwidth = m_RFBandwidthFactor * getRFSliderDivisor() * 1.0f;
-    m_fltRFOppBandwidth = m_OppBandwidthFactor * getRFSliderDivisor() * 1.0f;
-    m_fltFramePerS = getFps(m_fpsIndex);
-    m_intNumberOfLines = getNumberOfLines(m_nbLinesIndex);
-}
-
-void ATVDemodSettings::convertToUIValues()
-{
-    m_lineTimeFactor = getTopTimeFactor();
-    m_topTimeFactor = getTopTimeFactor();
-    m_RFBandwidthFactor = roundf(m_fltRFBandwidth / getRFSliderDivisor());
-    m_RFBandwidthFactor = m_RFBandwidthFactor < 1 ? 1 : m_RFBandwidthFactor;
-    m_OppBandwidthFactor = roundf(m_fltRFOppBandwidth / getRFSliderDivisor());
-    m_fpsIndex = getFpsIndex(m_fltFramePerS);
-    m_nbLinesIndex = getNumberOfLinesIndex(m_intNumberOfLines);
-}
-
-int ATVDemodSettings::getRFSliderDivisor()
-{
-    int sampleRate = getEffectiveSampleRate();
     int scaleFactor = (int) std::log10(sampleRate/2);
     return std::pow(10.0, scaleFactor-1);
 }
 
+float ATVDemodSettings::getRFBandwidthDivisor(ATVModulation modulation)
+{
+    switch(modulation)
+    {
+    case ATV_USB:
+    case ATV_LSB:
+        return 1.05f;
+        break;
+    case ATV_FM1:
+    case ATV_FM2:
+    case ATV_AM:
+    default:
+        return 2.2f;
+    }
+}
 
+void ATVDemodSettings::getBaseValues(int sampleRate, int linesPerSecond, uint32_t& nbPointsPerLine)
+{
+    nbPointsPerLine = sampleRate / linesPerSecond;
+    nbPointsPerLine = nbPointsPerLine == 0 ? 1 : nbPointsPerLine;
+}

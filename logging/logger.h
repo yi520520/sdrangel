@@ -10,7 +10,7 @@
 #include <QThreadStorage>
 #include <QHash>
 #include <QStringList>
-#include <QMutex>
+#include <QRecursiveMutex>
 #include <QObject>
 #include "logglobal.h"
 #include "logmessage.h"
@@ -66,7 +66,7 @@ public:
       Constructor.
       @param msgFormat Format of the decoration, e.g. "{timestamp} {type} thread={thread}: {msg}"
       @param timestampFormat Format of timestamp, e.g. "yyyy-MM-dd HH:mm:ss.zzz"
-      @param minLevel Minimum severity that genertes an output (0=debug, 1=warning, 2=critical, 3=fatal).
+      @param minLevel Minimum severity that generates an output (0=debug, 1=warning, 2=critical, 3=fatal).
       @param bufferSize Size of the backtrace buffer, number of messages per thread. 0=disabled.
       @param parent Parent object
       @see LogMessage for a description of the message decoration.
@@ -139,7 +139,7 @@ protected:
     int bufferSize;
 
     /** Used to synchronize access of concurrent threads */
-    static QMutex mutex;
+    static QRecursiveMutex mutex;
 
     /**
       Decorate and write a log message to stderr. Override this method

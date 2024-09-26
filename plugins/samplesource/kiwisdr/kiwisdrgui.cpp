@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Vort                                                       //
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2019-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Vort <vvort@yandex.ru>                                     //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,27 +23,22 @@
 #include <QDateTime>
 #include <QString>
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include "ui_kiwisdrgui.h"
-#include "plugin/pluginapi.h"
 #include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
-#include "util/db.h"
-
-#include "mainwindow.h"
 
 #include "kiwisdrgui.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 
 KiwiSDRGui::KiwiSDRGui(DeviceUISet *deviceUISet, QWidget* parent) :
-    QWidget(parent),
+    DeviceGUI(parent),
     ui(new Ui::KiwiSDRGui),
-    m_deviceUISet(deviceUISet),
     m_settings(),
     m_doApplySettings(true),
     m_forceSettings(true),
@@ -51,6 +47,8 @@ KiwiSDRGui::KiwiSDRGui(DeviceUISet *deviceUISet, QWidget* parent) :
     m_lastEngineState(DeviceAPI::StNotStarted)
 {
     qDebug("KiwiSDRGui::KiwiSDRGui");
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_sampleSource = m_deviceUISet->m_deviceAPI->getSampleSource();
 
 	m_statusTooltips.push_back("Idle");          // 0
@@ -65,11 +63,16 @@ KiwiSDRGui::KiwiSDRGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	m_statusColors.push_back("rgb(232, 85, 85)");   // Error (red)
 	m_statusColors.push_back("rgb(232, 85, 232)");  // Disconnected (magenta)
 
-    ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#KiwiSDRGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesource/kiwisdr/readme.md";
     ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-    ui->centerFrequency->setValueRange(7, 0, 9999999);
+    ui->centerFrequency->setValueRange(9, 0, 999999999);
 
     displaySettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 
     connect(&m_updateTimer, SIGNAL(timeout()), this, SLOT(updateHardware()));
     connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
@@ -78,8 +81,7 @@ KiwiSDRGui::KiwiSDRGui(DeviceUISet *deviceUISet, QWidget* parent) :
     connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
     m_sampleSource->setMessageQueueToGUI(&m_inputMessageQueue);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 }
 
 KiwiSDRGui::~KiwiSDRGui()
@@ -92,32 +94,11 @@ void KiwiSDRGui::destroy()
     delete this;
 }
 
-void KiwiSDRGui::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString KiwiSDRGui::getName() const
-{
-    return objectName();
-}
-
 void KiwiSDRGui::resetToDefaults()
 {
     m_settings.resetToDefaults();
     displaySettings();
-    sendSettings();
-}
-
-qint64 KiwiSDRGui::getCenterFrequency() const
-{
-    return m_settings.m_centerFrequency;
-}
-
-void KiwiSDRGui::setCenterFrequency(qint64 centerFrequency)
-{
-    m_settings.m_centerFrequency = centerFrequency;
-    displaySettings();
+    m_forceSettings = true;
     sendSettings();
 }
 
@@ -151,6 +132,7 @@ void KiwiSDRGui::on_startStop_toggled(bool checked)
 void KiwiSDRGui::on_centerFrequency_changed(quint64 value)
 {
     m_settings.m_centerFrequency = value * 1000;
+    m_settingsKeys.append("centerFrequency");
     sendSettings();
 }
 
@@ -161,31 +143,30 @@ void KiwiSDRGui::on_serverAddress_returnPressed()
 
 void KiwiSDRGui::on_serverAddressApplyButton_clicked()
 {
-	m_settings.m_serverAddress = ui->serverAddress->text();
+	QString serverAddress = ui->serverAddress->text();
+    QUrl url(serverAddress);
+
+    if (QStringList{"ws", "wss", "http", "https"}.contains(url.scheme())) {
+        m_settings.m_serverAddress = QString("%1:%2").arg(url.host()).arg(url.port());
+    } else {
+        m_settings.m_serverAddress = serverAddress;
+    }
+
+    m_settingsKeys.append("serverAddress");
 	sendSettings();
 }
 
 void KiwiSDRGui::on_dcBlock_toggled(bool checked)
 {
 	m_settings.m_dcBlock = checked;
+    m_settingsKeys.append("dcBlock");
 	sendSettings();
-}
-
-void KiwiSDRGui::on_record_toggled(bool checked)
-{
-    if (checked) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
-
-	KiwiSDRInput::MsgFileRecord* message = KiwiSDRInput::MsgFileRecord::create(checked);
-    m_sampleSource->getInputMessageQueue()->push(message);
 }
 
 void KiwiSDRGui::on_agc_toggled(bool checked)
 {
 	m_settings.m_useAGC = checked;
+    m_settingsKeys.append("useAGC");
 	sendSettings();
 }
 
@@ -193,6 +174,7 @@ void KiwiSDRGui::on_gain_valueChanged(int value)
 {
 	m_settings.m_gain = value;
 	ui->gainText->setText(QString::number(m_settings.m_gain) + " dB");
+    m_settingsKeys.append("gain");
 	sendSettings();
 }
 
@@ -221,9 +203,10 @@ void KiwiSDRGui::updateHardware()
 {
     if (m_doApplySettings)
     {
-		KiwiSDRInput::MsgConfigureKiwiSDR* message = KiwiSDRInput::MsgConfigureKiwiSDR::create(m_settings, m_forceSettings);
+		KiwiSDRInput::MsgConfigureKiwiSDR* message = KiwiSDRInput::MsgConfigureKiwiSDR::create(m_settings, m_settingsKeys, m_forceSettings);
         m_sampleSource->getInputMessageQueue()->push(message);
         m_forceSettings = false;
+        m_settingsKeys.clear();
         m_updateTimer.stop();
     }
 }
@@ -263,7 +246,13 @@ bool KiwiSDRGui::handleMessage(const Message& message)
     {
         qDebug("KiwiSDRGui::handleMessage: MsgConfigureKiwiSDR");
         const KiwiSDRInput::MsgConfigureKiwiSDR& cfg = (KiwiSDRInput::MsgConfigureKiwiSDR&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         displaySettings();
         return true;
     }
@@ -330,19 +319,40 @@ void KiwiSDRGui::updateSampleRateAndFrequency()
 
 void KiwiSDRGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settingsKeys.append("useReverseAPI");
+        m_settingsKeys.append("reverseAPIAddress");
+        m_settingsKeys.append("reverseAPIPort");
+        m_settingsKeys.append("reverseAPIDeviceIndex");
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void KiwiSDRGui::makeUIConnections()
+{
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &KiwiSDRGui::on_startStop_toggled);
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &KiwiSDRGui::on_centerFrequency_changed);
+    QObject::connect(ui->gain, &QSlider::valueChanged, this, &KiwiSDRGui::on_gain_valueChanged);
+    QObject::connect(ui->agc, &QToolButton::toggled, this, &KiwiSDRGui::on_agc_toggled);
+    QObject::connect(ui->serverAddress, &QLineEdit::returnPressed, this, &KiwiSDRGui::on_serverAddress_returnPressed);
+    QObject::connect(ui->serverAddressApplyButton, &QPushButton::clicked, this, &KiwiSDRGui::on_serverAddressApplyButton_clicked);
+    QObject::connect(ui->dcBlock, &ButtonSwitch::toggled, this, &KiwiSDRGui::on_dcBlock_toggled);
 }

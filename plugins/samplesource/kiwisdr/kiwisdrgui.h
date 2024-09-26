@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Vort                                                       //
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2017, 2019-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2019 Vort <vvort@yandex.ru>                                     //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,7 +20,7 @@
 #ifndef _KIWISDR_KIWISDRGUI_H_
 #define _KIWISDR_KIWISDRGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -34,7 +35,7 @@ namespace Ui {
 	class KiwiSDRGui;
 }
 
-class KiwiSDRGui : public QWidget, public PluginInstanceGUI {
+class KiwiSDRGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -42,22 +43,16 @@ public:
 	virtual ~KiwiSDRGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::KiwiSDRGui* ui;
 
-	DeviceUISet* m_deviceUISet;
 	KiwiSDRSettings m_settings;
+    QList<QString> m_settingsKeys;
     QTimer m_updateTimer;
     QTimer m_statusTimer;
 	bool m_doApplySettings;
@@ -75,12 +70,13 @@ private:
 	void displaySettings();
 	void sendSettings();
     void updateSampleRateAndFrequency();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
 	void on_startStop_toggled(bool checked);
     void on_centerFrequency_changed(quint64 value);
-	void on_record_toggled(bool checked);
 	void on_gain_valueChanged(int value);
 	void on_agc_toggled(bool checked);
 	void on_serverAddress_returnPressed();

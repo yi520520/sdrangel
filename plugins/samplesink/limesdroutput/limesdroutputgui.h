@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef PLUGINS_SAMPLESOURCE_LIMESDROUTPUT_LIMESDROUTPUTGUI_H_
 #define PLUGINS_SAMPLESOURCE_LIMESDROUTPUT_LIMESDROUTPUTGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -33,7 +34,7 @@ namespace Ui {
     class LimeSDROutputGUI;
 }
 
-class LimeSDROutputGUI : public QWidget, public PluginInstanceGUI {
+class LimeSDROutputGUI : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -41,23 +42,17 @@ public:
     virtual ~LimeSDROutputGUI();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
 
 private:
     Ui::LimeSDROutputGUI* ui;
 
-    DeviceUISet* m_deviceUISet;
     LimeSDROutput* m_limeSDROutput; //!< Same object as above but gives easy access to LimeSDROutput methods and attributes that are used intensively
     LimeSDROutputSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
     QTimer m_updateTimer;
     QTimer m_statusTimer;
@@ -77,9 +72,12 @@ private:
     void setCenterFrequencySetting(uint64_t kHzValue);
     void sendSettings();
     void updateSampleRateAndFrequency();
+    void checkLPF();
     void updateDACRate();
     void updateFrequencyLimits();
     void blockApplySettings(bool block);
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();

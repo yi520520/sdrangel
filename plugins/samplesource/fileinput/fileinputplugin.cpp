@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,6 @@
 #include <QtPlugin>
 
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 
 #ifdef SERVER_MODE
 #include "fileinput.h"
@@ -26,18 +27,20 @@
 #include "fileinputgui.h"
 #endif
 #include "fileinputplugin.h"
+#include "fileinputwebapiadapter.h"
 
 const PluginDescriptor FileInputPlugin::m_pluginDescriptor = {
-	QString("File device input"),
-    QString("4.11.0"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("FileInput"),
+	QStringLiteral("File device input"),
+    QStringLiteral("7.21.4"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString FileInputPlugin::m_hardwareID = "FileInput";
-const QString FileInputPlugin::m_deviceTypeID = FILEINPUT_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "FileInput";
+static constexpr const char* const m_deviceTypeID = FILEINPUT_DEVICE_TYPE_ID;
 
 FileInputPlugin::FileInputPlugin(QObject* parent) :
 	QObject(parent)
@@ -54,26 +57,51 @@ void FileInputPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleSource(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices FileInputPlugin::enumSampleSources()
+void FileInputPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
+{
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+    originDevices.append(OriginDevice(
+        "FileInput",
+        m_hardwareID,
+        QString(),
+        0,
+        1, // nb Rx
+        0  // nb Tx
+    ));
+
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices FileInputPlugin::enumSampleSources(const OriginDevices& originDevices)
 {
 	SamplingDevices result;
 
-    result.append(SamplingDevice(
-            "FileInput",
-            m_hardwareID,
-            m_deviceTypeID,
-            QString::null,
-            0,
-            PluginInterface::SamplingDevice::BuiltInDevice,
-            PluginInterface::SamplingDevice::StreamSingleRx,
-            1,
-            0));
+	for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == m_hardwareID)
+        {
+            result.append(SamplingDevice(
+                it->displayableName,
+                m_hardwareID,
+                m_deviceTypeID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::BuiltInDevice,
+                PluginInterface::SamplingDevice::StreamSingleRx,
+                1,
+                0
+            ));
+        }
+    }
 
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* FileInputPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* FileInputPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -84,7 +112,7 @@ PluginInstanceGUI* FileInputPlugin::createSampleSourcePluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* FileInputPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* FileInputPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -115,3 +143,7 @@ DeviceSampleSource *FileInputPlugin::createSampleSourcePluginInstance(const QStr
     }
 }
 
+DeviceWebAPIAdapter *FileInputPlugin::createDeviceWebAPIAdapter() const
+{
+    return new FileInputWebAPIAdapter();
+}

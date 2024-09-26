@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2016-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -58,7 +60,7 @@ public:
     bool getRelease() const { return m_release; }
     QString getKeyLabel() const;
 
-    void run(const QString& apiAddress, int apiPort, int deviceSetIndex);
+    void run(const QString& apiAddress, int apiPort, int deviceSetIndex = 0);
     void kill();
     QProcess::ProcessState getLastProcessState() const;
     bool getLastProcessError(QProcess::ProcessError& error) const;

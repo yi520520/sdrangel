@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,14 +22,16 @@
 #include "chanalyzer.h"
 #include "chanalyzerplugin.h"
 #include "chanalyzergui.h"
+#include "chanalyzerwebapiadapter.h"
 
 const PluginDescriptor ChannelAnalyzerPlugin::m_pluginDescriptor = {
-	QString("Channel Analyzer"),
-	QString("4.5.1"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    ChannelAnalyzer::m_channelId,
+	QStringLiteral("Channel Analyzer"),
+    QStringLiteral("7.20.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 ChannelAnalyzerPlugin::ChannelAnalyzerPlugin(QObject* parent) :
@@ -50,18 +53,28 @@ void ChannelAnalyzerPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI->registerRxChannel(ChannelAnalyzer::m_channelIdURI, ChannelAnalyzer::m_channelId, this);
 }
 
-PluginInstanceGUI* ChannelAnalyzerPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+void ChannelAnalyzerPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
+{
+	if (bs || cs)
+	{
+		ChannelAnalyzer *instance = new ChannelAnalyzer(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+ChannelGUI* ChannelAnalyzerPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
     return ChannelAnalyzerGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 }
 
-BasebandSampleSink* ChannelAnalyzerPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* ChannelAnalyzerPlugin::createChannelWebAPIAdapter() const
 {
-    return new ChannelAnalyzer(deviceAPI);
+	return new ChannelAnalyzerWebAPIAdapter();
 }
-
-ChannelAPI* ChannelAnalyzerPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new ChannelAnalyzer(deviceAPI);
-}
-

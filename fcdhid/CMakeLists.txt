@@ -1,30 +1,34 @@
 project(fcdhid)
 
 set(fcdhid_SOURCES
-    	../custom/apple/apple_compat.c
-	hid-libusb.c
-	fcdhid.c
+    ../custom/apple/apple_compat.c
+    fcdhid.c
 )
 
 set(fcdhid_HEADERS
-	fcdhid.h
-	hid-libusb.h
-	hidapi.h
+    fcdhid.h
 )
 
 include_directories(
-        ${LIBUSB_INCLUDE_DIR}
-        ${ICONV_INCLUDE_DIR}
-        ${CUSTOM_APPLE_INCLUDE}
+    ${LIBUSB_INCLUDE_DIR}
+	${HIDAPI_INCLUDE_DIRS}
+    ${ICONV_INCLUDE_DIR}
+    ${CUSTOM_APPLE_INCLUDE}
 )
 
 add_library(fcdhid SHARED
-	${fcdhid_SOURCES}
+    ${fcdhid_SOURCES}
 )
 
 target_link_libraries(fcdhid
-        ${LIBUSB_LIBRARIES}
-        ${ICONV_LIBRARY}
+    ${LIBUSB_LIBRARIES}
+	${HIDAPI_LIBRARIES}
+    ${ICONV_LIBRARY}
 )
+
+set_target_properties(fcdhid PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS true)
+if (MSVC)
+    set_target_properties(fcdhid PROPERTIES INTERPROCEDURAL_OPTIMIZATION false)
+endif()
 
 install(TARGETS fcdhid DESTINATION ${INSTALL_LIB_DIR})

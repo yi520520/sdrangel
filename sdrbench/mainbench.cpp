@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2023 Daniele Forsi <iu5hkx@gmail.com>                           //
 //                                                                               //
 // Swagger server adapter interface                                              //
 //                                                                               //
@@ -19,8 +22,6 @@
 
 #include <QDebug>
 #include <QElapsedTimer>
-
-#include "ambe/ambeengine.h"
 
 #include "mainbench.h"
 
@@ -47,8 +48,10 @@ void MainBench::run()
         << " testStr: " << m_parser.getTestStr()
         << " testType: " << (int) m_parser.getTestType()
         << " nsamples: " << m_parser.getNbSamples()
-        << " repet: " << m_parser.getRepetition()
-        << " log2f: " << m_parser.getLog2Factor();
+        << " repeat: " << m_parser.getRepetition()
+        << " log2f: " << m_parser.getLog2Factor()
+        << " file: " << m_parser.getFileName()
+        << " args: " << m_parser.getArgsStr();
 
     if (m_parser.getTestType() == ParserBench::TestDecimatorsII) {
         testDecimateII();
@@ -62,8 +65,14 @@ void MainBench::run()
         testDecimateFI();
     } else if (m_parser.getTestType() == ParserBench::TestDecimatorsFF) {
         testDecimateFF();
-    } else if (m_parser.getTestType() == ParserBench::TestAMBE) {
-        testAMBE();
+    } else if (m_parser.getTestType() == ParserBench::TestGolay2312) {
+        testGolay2312();
+    } else if (m_parser.getTestType() == ParserBench::TestFT8) {
+        testFT8(m_parser.getFileName(), m_parser.getArgsStr());
+    } else if (m_parser.getTestType() == ParserBench::TestCallsign) {
+        testCallsign(m_parser.getArgsStr());
+    } else if (m_parser.getTestType() == ParserBench::TestFT8Protocols) {
+        testFT8Protocols(m_parser.getArgsStr());
     } else {
         qDebug() << "MainBench::run: unknown test type: " << m_parser.getTestType();
     }
@@ -193,18 +202,6 @@ void MainBench::testDecimateFF()
 
     qDebug() << "MainBench::testDecimateFF: cleanup test data";
     delete[] buf;
-}
-
-void MainBench::testAMBE()
-{
-    qDebug() << "MainBench::testAMBE";
-    AMBEEngine ambeEngine;
-    std::vector<QString> ambeDevices;
-    ambeEngine.scan(ambeDevices);
-
-    for (std::vector<QString>::const_iterator it = ambeDevices.begin(); it != ambeDevices.end(); ++it) {
-        qDebug("MainBench::testAMBE: detected AMBE device %s", qPrintable(*it));
-    }
 }
 
 void MainBench::decimateII(const qint16* buf, int len)

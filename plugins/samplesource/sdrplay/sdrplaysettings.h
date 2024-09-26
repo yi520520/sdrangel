@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2016, 2018-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -45,7 +48,7 @@ struct SDRPlaySettings {
 	bool m_lnaOn;
 	bool m_mixerAmpOn;
 	int  m_basebandGain;
-    QString m_fileRecordName;
+    bool m_iqOrder;
     bool     m_useReverseAPI;
     QString  m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
@@ -55,26 +58,8 @@ struct SDRPlaySettings {
 	void resetToDefaults();
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
-
-	void debug(const char *title) const
-	{
-	    qDebug() << QString(title)
-	            << ": m_centerFrequency: " << m_centerFrequency
-	            << " m_tunerGain: " << m_tunerGain
-	            << " m_LOppmTenths: " << m_LOppmTenths
-	            << " m_frequencyBandIndex: " << m_frequencyBandIndex
-	            << " m_ifFrequencyIndex: " << m_ifFrequencyIndex
-	            << " m_bandwidthIndex: " << m_bandwidthIndex
-	            << " m_devSampleRateIndex: " << m_devSampleRateIndex
-	            << " m_log2Decim: " << m_log2Decim
-	            << " m_fcPos: " << m_fcPos
-	            << " m_dcBlock: " << m_dcBlock
-	            << " m_iqCorrection: " << m_iqCorrection
-	            << " m_tunerGainMode: " << m_tunerGainMode
-	            << " m_lnaOn: " << m_lnaOn
-	            << " m_mixerAmpOn: " << m_mixerAmpOn
-	            << " m_basebandGain: " << m_basebandGain;
-	}
+    void applySettings(const QStringList& settingsKeys, const SDRPlaySettings& settings);
+    QString getDebugString(const QStringList& settingsKeys, bool force=false) const;
 };
 
 #endif /* _SDRPLAY_SDRPLAYSETTINGS_H_ */

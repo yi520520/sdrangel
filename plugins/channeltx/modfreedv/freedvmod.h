@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,35 +24,27 @@
 #include <iostream>
 #include <fstream>
 
-#include <QMutex>
+#include <QRecursiveMutex>
 #include <QNetworkRequest>
 
 #include "dsp/basebandsamplesource.h"
+#include "dsp/spectrumvis.h"
 #include "channel/channelapi.h"
-#include "dsp/basebandsamplesink.h"
-#include "dsp/ncof.h"
-#include "dsp/interpolator.h"
-#include "util/movingaverage.h"
-#include "dsp/agc.h"
-#include "dsp/fftfilt.h"
-#include "dsp/cwkeyer.h"
-#include "audio/audiofifo.h"
-#include "audio/audioresampler.h"
 #include "util/message.h"
 
 #include "freedvmodsettings.h"
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 class DeviceAPI;
-class ThreadedBasebandSampleSource;
-class UpChannelizer;
+class CWKeyer;
+class FreeDVModBaseband;
+class ObjectPipe;
 
 struct freedv;
 
 class FreeDVMod : public BasebandSampleSource, public ChannelAPI {
-    Q_OBJECT
-
 public:
     class MsgConfigureFreeDVMod : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -72,29 +66,6 @@ public:
             Message(),
             m_settings(settings),
             m_force(force)
-        { }
-    };
-
-    class MsgConfigureChannelizer : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        int getSampleRate() const { return m_sampleRate; }
-        int getCenterFrequency() const { return m_centerFrequency; }
-
-        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
-        {
-            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
-        }
-
-    private:
-        int m_sampleRate;
-        int  m_centerFrequency;
-
-        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
-            Message(),
-            m_sampleRate(sampleRate),
-            m_centerFrequency(centerFrequency)
         { }
     };
 
@@ -206,26 +177,29 @@ public:
     //=================================================================
 
     FreeDVMod(DeviceAPI *deviceAPI);
-    ~FreeDVMod();
+    virtual ~FreeDVMod();
     virtual void destroy() { delete this; }
+    virtual void setDeviceAPI(DeviceAPI *deviceAPI);
+    virtual DeviceAPI *getDeviceAPI() { return m_deviceAPI; }
 
-    void setSpectrumSampleSink(BasebandSampleSink* sampleSink) { m_sampleSink = sampleSink; }
-
-    virtual void pull(Sample& sample);
-    virtual void pullAudio(int nbSamples);
     virtual void start();
     virtual void stop();
-    virtual bool handleMessage(const Message& cmd);
+    virtual void pull(SampleVector::iterator& begin, unsigned int nbSamples);
+    virtual void pushMessage(Message *msg) { m_inputMessageQueue.push(msg); }
+    virtual QString getSourceName() { return objectName(); }
 
     virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual QString getIdentifier() const { return objectName(); }
     virtual void getTitle(QString& title) { title = m_settings.m_title; }
     virtual qint64 getCenterFrequency() const { return m_settings.m_inputFrequencyOffset; }
+    virtual void setCenterFrequency(qint64 frequency);
 
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
 
     virtual int getNbSinkStreams() const { return 1; }
     virtual int getNbSourceStreams() const { return 0; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
 
     virtual qint64 getStreamCenterFrequency(int streamIndex, bool sinkElseSource) const
     {
@@ -238,6 +212,10 @@ public:
                 SWGSDRangel::SWGChannelSettings& response,
                 QString& errorMessage);
 
+    virtual int webapiWorkspaceGet(
+            SWGSDRangel::SWGWorkspaceInfo& response,
+            QString& errorMessage);
+
     virtual int webapiSettingsPutPatch(
                 bool force,
                 const QStringList& channelSettingsKeys,
@@ -248,26 +226,27 @@ public:
                 SWGSDRangel::SWGChannelReport& response,
                 QString& errorMessage);
 
-    uint32_t getAudioSampleRate() const { return m_audioSampleRate; }
-    uint32_t getModemSampleRate() const { return m_modemSampleRate; }
-    double getMagSq() const { return m_magsq; }
-    Real getLowCutoff() const { return m_lowCutoff; }
-    Real getHiCutoff() const { return m_hiCutoff; }
+    static void webapiFormatChannelSettings(
+        SWGSDRangel::SWGChannelSettings& response,
+        const FreeDVModSettings& settings);
 
-    CWKeyer *getCWKeyer() { return &m_cwKeyer; }
+    static void webapiUpdateChannelSettings(
+            FreeDVModSettings& settings,
+            const QStringList& channelSettingsKeys,
+            SWGSDRangel::SWGChannelSettings& response);
 
-    static const QString m_channelIdURI;
-    static const QString m_channelId;
+    SpectrumVis *getSpectrumVis() { return &m_spectrumVis; }
+    int getAudioSampleRate() const;
+    uint32_t getModemSampleRate() const;
+    Real getLowCutoff() const;
+    Real getHiCutoff() const;
+    double getMagSq() const;
+    CWKeyer *getCWKeyer();
+    void setLevelMeter(QObject *levelMeter);
+    uint32_t getNumberOfDeviceStreams() const;
 
-signals:
-	/**
-	 * Level changed
-	 * \param rmsLevel RMS level in range 0.0 - 1.0
-	 * \param peakLevel Peak level in range 0.0 - 1.0
-	 * \param numSamples Number of audio samples analyzed
-	 */
-	void levelChanged(qreal rmsLevel, qreal peakLevel, int numSamples);
-
+    static const char* const m_channelIdURI;
+    static const char* const m_channelId;
 
 private:
     enum RateState {
@@ -276,86 +255,42 @@ private:
     };
 
     DeviceAPI* m_deviceAPI;
-    ThreadedBasebandSampleSource* m_threadedChannelizer;
-    UpChannelizer* m_channelizer;
-
-    int m_basebandSampleRate;
-    int m_outputSampleRate;
-    int m_modemSampleRate;
-    int m_inputFrequencyOffset;
-    Real m_lowCutoff;
-    Real m_hiCutoff;
+    QThread *m_thread;
+    FreeDVModBaseband* m_basebandSource;
     FreeDVModSettings m_settings;
+    SpectrumVis m_spectrumVis;
 
-    NCOF m_carrierNco;
-    NCOF m_toneNco;
-    Complex m_modSample;
-    Interpolator m_interpolator;
-    Real m_interpolatorDistance;
-    Real m_interpolatorDistanceRemain;
-    bool m_interpolatorConsumed;
-	fftfilt* m_SSBFilter;
-	Complex* m_SSBFilterBuffer;
-	int m_SSBFilterBufferIndex;
-	static const int m_ssbFftLen;
-
-	BasebandSampleSink* m_sampleSink;
 	SampleVector m_sampleBuffer;
-
-    fftfilt::cmplx m_sum;
-    int m_undersampleCount;
-    int m_sumCount;
-
-    double m_magsq;
-    MovingAverageUtil<double, double, 16> m_movingAverage;
-
-    quint32 m_audioSampleRate;
-    AudioVector m_audioBuffer;
-    uint m_audioBufferFill;
-    AudioFifo m_audioFifo;
-
-    QMutex m_settingsMutex;
+    QRecursiveMutex m_settingsMutex;
 
     std::ifstream m_ifstream;
     QString m_fileName;
     quint64 m_fileSize;     //!< raw file size (bytes)
     quint32 m_recordLength; //!< record length in seconds computed from file size
-    int m_inputSampleRate;  //!< speech (input) sample rate (fixed 8000 S/s)
-
-    quint32 m_levelCalcCount;
-    Real m_peakLevel;
-    Real m_levelSum;
-    CWKeyer m_cwKeyer;
+    int m_fileSampleRate;  //!< speech (input) sample rate (fixed 8000 S/s)
 
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-    struct freedv *m_freeDV;
-    int m_nSpeechSamples;
-    int m_nNomModemSamples;
-    int m_iSpeech;
-    int m_iModem;
-    int16_t *m_speechIn;
-    int16_t *m_modOut;
-    float m_scaleFactor; //!< divide by this amount to scale from int16 to float in [-1.0, 1.0] interval
-    AudioResampler m_audioResampler;
-
-    static const int m_levelNbSamples;
-
-    void applyAudioSampleRate(int sampleRate);
-    void applyChannelSettings(int basebandSampleRate, int outputSampleRate, int inputFrequencyOffset, bool force = false);
+    virtual bool handleMessage(const Message& cmd);
     void applySettings(const FreeDVModSettings& settings, bool force = false);
-    void applyFreeDVMode(FreeDVModSettings::FreeDVMode mode);
-    void pullAF(Complex& sample);
-    void calculateLevel(Complex& sample);
-    void calculateLevel(qint16& sample);
-    void modulateSample();
     void openFileStream();
     void seekFileStream(int seekPercentage);
-    void webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& response, const FreeDVModSettings& settings);
     void webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response);
     void webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const FreeDVModSettings& settings, bool force);
     void webapiReverseSendCWSettings(const CWKeyerSettings& settings);
+    void sendChannelSettings(
+        const QList<ObjectPipe*>& pipes,
+        QList<QString>& channelSettingsKeys,
+        const FreeDVModSettings& settings,
+        bool force
+    );
+    void webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const FreeDVModSettings& settings,
+        bool force
+    );
 
 private slots:
     void networkManagerFinished(QNetworkReply *reply);

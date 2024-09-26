@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015-2019 F4EXB                                                 //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,9 +22,11 @@
 
 #include <QTreeWidgetItem>
 #include <QMessageBox>
+#include <QFileDialog>
 
 #include "audio/audiodevicemanager.h"
 #include "audiodialog.h"
+#include "gui/dialpopup.h"
 #include "ui_audiodialog.h"
 
 AudioDialogX::AudioDialogX(AudioDeviceManager* audioDeviceManager, QWidget* parent) :
@@ -36,16 +40,16 @@ AudioDialogX::AudioDialogX(AudioDeviceManager* audioDeviceManager, QWidget* pare
 	// out panel
 
 	AudioDeviceManager::OutputDeviceInfo outDeviceInfo;
-	QAudioDeviceInfo defaultOutputDeviceInfo = QAudioDeviceInfo::defaultOutputDevice();
+	const AudioDeviceInfo &defaultOutputDeviceInfo = AudioDeviceInfo::defaultOutputDevice();
 	treeItem = new QTreeWidgetItem(ui->audioOutTree);
 	treeItem->setText(1, AudioDeviceManager::m_defaultDeviceName);
 	bool found = m_audioDeviceManager->getOutputDeviceInfo(AudioDeviceManager::m_defaultDeviceName, outDeviceInfo);
 	treeItem->setText(0, found ? "__" : "_D");
 	ui->audioOutTree->setCurrentItem(treeItem);
 
-	const QList<QAudioDeviceInfo>& outputDevices = m_audioDeviceManager->getOutputDevices();
+	const QList<AudioDeviceInfo>& outputDevices = AudioDeviceInfo::availableOutputDevices();
 
-    for(QList<QAudioDeviceInfo>::const_iterator it = outputDevices.begin(); it != outputDevices.end(); ++it)
+    for(QList<AudioDeviceInfo>::const_iterator it = outputDevices.begin(); it != outputDevices.end(); ++it)
     {
         treeItem = new QTreeWidgetItem(ui->audioOutTree);
         treeItem->setText(1, it->deviceName());
@@ -64,16 +68,16 @@ AudioDialogX::AudioDialogX(AudioDeviceManager* audioDeviceManager, QWidget* pare
     // in panel
 
     AudioDeviceManager::InputDeviceInfo inDeviceInfo;
-    QAudioDeviceInfo defaultInputDeviceInfo = QAudioDeviceInfo::defaultInputDevice();
+    AudioDeviceInfo defaultInputDeviceInfo = AudioDeviceInfo::defaultInputDevice();
     treeItem = new QTreeWidgetItem(ui->audioInTree);
     treeItem->setText(1, AudioDeviceManager::m_defaultDeviceName);
     found = m_audioDeviceManager->getInputDeviceInfo(AudioDeviceManager::m_defaultDeviceName, inDeviceInfo);
     treeItem->setText(0, found ? "__" : "_D");
     ui->audioInTree->setCurrentItem(treeItem);
 
-    const QList<QAudioDeviceInfo>& inputDevices = m_audioDeviceManager->getInputDevices();
+    const QList<AudioDeviceInfo>& inputDevices = AudioDeviceInfo::availableInputDevices();
 
-    for(QList<QAudioDeviceInfo>::const_iterator it = inputDevices.begin(); it != inputDevices.end(); ++it)
+    for(QList<AudioDeviceInfo>::const_iterator it = inputDevices.begin(); it != inputDevices.end(); ++it)
     {
         treeItem = new QTreeWidgetItem(ui->audioInTree);
         treeItem->setText(1, it->deviceName());
@@ -94,6 +98,7 @@ AudioDialogX::AudioDialogX(AudioDeviceManager* audioDeviceManager, QWidget* pare
     m_inIndex = -1;
 
 	ui->tabWidget->setCurrentIndex(0);
+    DialPopup::addPopupsToChildDials(this);
 }
 
 AudioDialogX::~AudioDialogX()
@@ -247,16 +252,54 @@ void AudioDialogX::on_decimationFactor_currentIndexChanged(int index)
 
 void AudioDialogX::on_outputUDPChannelCodec_currentIndexChanged(int index)
 {
-    m_outputDeviceInfo.udpChannelCodec = (AudioOutput::UDPChannelCodec) index;
+    m_outputDeviceInfo.udpChannelCodec = (AudioOutputDevice::UDPChannelCodec) index;
     updateOutputSDPString();
     check();
 }
 
 void AudioDialogX::on_outputUDPChannelMode_currentIndexChanged(int index)
 {
-    m_outputDeviceInfo.udpChannelMode = (AudioOutput::UDPChannelMode) index;
+    m_outputDeviceInfo.udpChannelMode = (AudioOutputDevice::UDPChannelMode) index;
     updateOutputSDPString();
     check();
+}
+
+void AudioDialogX::on_record_toggled(bool checked)
+{
+    ui->showFileDialog->setEnabled(!checked);
+    m_outputDeviceInfo.recordToFile = checked;
+}
+
+void AudioDialogX::on_showFileDialog_clicked(bool checked)
+{
+    (void) checked;
+    QFileDialog fileDialog(
+        this,
+        tr("Save record file"),
+        m_outputDeviceInfo.fileRecordName,
+        tr("WAV Files (*.wav)")
+    );
+
+    fileDialog.setOptions(QFileDialog::DontUseNativeDialog);
+    fileDialog.setFileMode(QFileDialog::AnyFile);
+    QStringList fileNames;
+
+    if (fileDialog.exec())
+    {
+        fileNames = fileDialog.selectedFiles();
+
+        if (fileNames.size() > 0)
+        {
+            m_outputDeviceInfo.fileRecordName = fileNames.at(0);
+		    ui->fileNameText->setText(m_outputDeviceInfo.fileRecordName);
+        }
+    }
+}
+
+void AudioDialogX::on_recordSilenceTime_valueChanged(int value)
+{
+    m_outputDeviceInfo.recordSilenceTime = value;
+    ui->recordSilenceText->setText(tr("%1").arg(value / 10.0, 0, 'f', 1));
 }
 
 void AudioDialogX::updateOutputDisplay()
@@ -274,6 +317,11 @@ void AudioDialogX::updateOutputDisplay()
     ui->outputUDPChannelMode->setCurrentIndex((int) m_outputDeviceInfo.udpChannelMode);
     ui->outputUDPChannelCodec->setCurrentIndex((int) m_outputDeviceInfo.udpChannelCodec);
     ui->decimationFactor->setCurrentIndex(m_outputDeviceInfo.udpDecimationFactor == 0 ? 0 : m_outputDeviceInfo.udpDecimationFactor - 1);
+    ui->record->setChecked(m_outputDeviceInfo.recordToFile);
+    ui->fileNameText->setText(m_outputDeviceInfo.fileRecordName);
+    ui->showFileDialog->setEnabled(!m_outputDeviceInfo.recordToFile);
+    ui->recordSilenceTime->setValue(m_outputDeviceInfo.recordSilenceTime);
+    ui->recordSilenceText->setText(tr("%1").arg(m_outputDeviceInfo.recordSilenceTime / 10.0, 0, 'f', 1));
 
     updateOutputSDPString();
 
@@ -290,38 +338,41 @@ void AudioDialogX::updateOutputDeviceInfo()
     m_outputDeviceInfo.udpPort = m_outputUDPPort;
     m_outputDeviceInfo.copyToUDP = ui->outputUDPCopy->isChecked();
     m_outputDeviceInfo.udpUseRTP = ui->outputUDPUseRTP->isChecked();
-    m_outputDeviceInfo.udpChannelMode = (AudioOutput::UDPChannelMode) ui->outputUDPChannelMode->currentIndex();
-    m_outputDeviceInfo.udpChannelCodec = (AudioOutput::UDPChannelCodec) ui->outputUDPChannelCodec->currentIndex();
+    m_outputDeviceInfo.udpChannelMode = (AudioOutputDevice::UDPChannelMode) ui->outputUDPChannelMode->currentIndex();
+    m_outputDeviceInfo.udpChannelCodec = (AudioOutputDevice::UDPChannelCodec) ui->outputUDPChannelCodec->currentIndex();
     m_outputDeviceInfo.udpDecimationFactor = ui->decimationFactor->currentIndex() + 1;
+    m_outputDeviceInfo.recordToFile = ui->record->isChecked();
+    m_outputDeviceInfo.fileRecordName = ui->fileNameText->text();
+    m_outputDeviceInfo.recordSilenceTime = ui->recordSilenceTime->value();
 }
 
 void AudioDialogX::updateOutputSDPString()
 {
     QString format;
-    int nChannels = m_outputDeviceInfo.udpChannelMode == AudioOutput::UDPChannelStereo ? 2 : 1;
+    int nChannels = m_outputDeviceInfo.udpChannelMode == AudioOutputDevice::UDPChannelStereo ? 2 : 1;
     uint32_t effectiveSampleRate = m_outputDeviceInfo.sampleRate / (m_outputDeviceInfo.udpDecimationFactor == 0 ? 1 : m_outputDeviceInfo.udpDecimationFactor);
 
     switch (m_outputDeviceInfo.udpChannelCodec)
     {
-    case AudioOutput::UDPCodecALaw:
+    case AudioOutputDevice::UDPCodecALaw:
         format = "PCMA";
         break;
-    case AudioOutput::UDPCodecULaw:
+    case AudioOutputDevice::UDPCodecULaw:
         format = "PCMU";
         break;
-    case AudioOutput::UDPCodecG722:
+    case AudioOutputDevice::UDPCodecG722:
         format = "G722";
         effectiveSampleRate /= 2; // codec does a decimation by 2
         break;
-    case AudioOutput::UDPCodecL8:
+    case AudioOutputDevice::UDPCodecL8:
         format = "L8";
         break;
-    case AudioOutput::UDPCodecOpus:
+    case AudioOutputDevice::UDPCodecOpus:
         format = "opus";
         nChannels = 2; // always 2 even for mono
         effectiveSampleRate = 48000; // always 48000 regardless of input rate
         break;
-    case AudioOutput::UDPCodecL16:
+    case AudioOutputDevice::UDPCodecL16:
     default:
         format = "L16";
         break;
@@ -332,28 +383,28 @@ void AudioDialogX::updateOutputSDPString()
 
 void AudioDialogX::check()
 {
-    int nChannels = m_outputDeviceInfo.udpChannelMode == AudioOutput::UDPChannelStereo ? 2 : 1;
+    int nChannels = m_outputDeviceInfo.udpChannelMode == AudioOutputDevice::UDPChannelStereo ? 2 : 1;
     uint32_t decimationFactor = m_outputDeviceInfo.udpDecimationFactor == 0 ? 1 : m_outputDeviceInfo.udpDecimationFactor;
 
-    if (m_outputDeviceInfo.udpChannelCodec == AudioOutput::UDPCodecALaw)
+    if (m_outputDeviceInfo.udpChannelCodec == AudioOutputDevice::UDPCodecALaw)
     {
         if ((nChannels != 1) || (m_outputDeviceInfo.sampleRate/decimationFactor != 8000)) {
             QMessageBox::information(this, tr("Message"), tr("PCMA must be 8000 Hz single channel"));
         }
     }
-    else if (m_outputDeviceInfo.udpChannelCodec == AudioOutput::UDPCodecULaw)
+    else if (m_outputDeviceInfo.udpChannelCodec == AudioOutputDevice::UDPCodecULaw)
     {
         if ((nChannels != 1) || (m_outputDeviceInfo.sampleRate/decimationFactor != 8000)) {
             QMessageBox::information(this, tr("Message"), tr("PCMU must be 8000 Hz single channel"));
         }
     }
-    else if (m_outputDeviceInfo.udpChannelCodec == AudioOutput::UDPCodecG722)
+    else if (m_outputDeviceInfo.udpChannelCodec == AudioOutputDevice::UDPCodecG722)
     {
         if ((nChannels != 1) || (m_outputDeviceInfo.sampleRate/decimationFactor != 16000)) {
             QMessageBox::information(this, tr("Message"), tr("G722 must be 16000 Hz single channel"));
         }
     }
-    else if (m_outputDeviceInfo.udpChannelCodec == AudioOutput::UDPCodecOpus)
+    else if (m_outputDeviceInfo.udpChannelCodec == AudioOutputDevice::UDPCodecOpus)
     {
         int effectiveSampleRate = m_outputDeviceInfo.sampleRate/decimationFactor;
         if ((effectiveSampleRate != 48000) && (effectiveSampleRate != 24000) && (effectiveSampleRate != 16000) && (effectiveSampleRate != 12000)) {

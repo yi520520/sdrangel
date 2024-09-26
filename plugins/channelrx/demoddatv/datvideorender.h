@@ -1,4 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2018-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 // Copyright (C) 2018 F4HKW                                                      //
 // for F4EXB / SDRAngel                                                          //
 //                                                                               //
@@ -23,6 +24,8 @@
 #include <QIODevice>
 #include <QThread>
 #include <QWidget>
+#include <QTextStream>
+#include <QDebug>
 
 #include "datvideostream.h"
 #include "gui/tvscreen.h"
@@ -66,8 +69,13 @@ struct DataTSMetaData2
 
     DataTSMetaData2()
     {
-        PID = -1;
+        reset();
+    }
+
+    void reset()
+    {
         CodecID = -1;
+        PID = -1;
         Program = "";
         Stream = "";
         Width = -1;
@@ -75,10 +83,25 @@ struct DataTSMetaData2
         BitRate = -1;
         Channels = -1;
         CodecDescription = "";
+
         OK_Data = false;
         OK_Decoding = false;
         OK_TransportStream = false;
         OK_VideoStream = false;
+    }
+
+    void formatString(QString &s)
+    {
+        QTextStream out(&s);
+        out << " CodecID:" << CodecID
+            << " PID:" << PID
+            << " Program:" << Program
+            << " Stream:" << Stream
+            << " Width:" << Width
+            << " Height:" << Height
+            << " BitRate:" << BitRate
+            << " Channels:" << Channels
+            << " CodecDescription:" << CodecDescription;
     }
 };
 
@@ -90,13 +113,13 @@ class DATVideoRender : public TVScreen
     explicit DATVideoRender(QWidget *parent);
     ~DATVideoRender();
 
-    void SetFullScreen(bool blnFullScreen);
-
-    bool OpenStream(DATVideostream *objDevice);
-    bool RenderStream();
-    bool CloseStream(QIODevice *objDevice);
+    void setFullScreen(bool blnFullScreen);
 
     void setAudioFIFO(AudioFifo *fifo) { m_audioFifo = fifo; }
+    bool openStream(DATVideostream *objDevice);
+    bool renderStream();
+    bool closeStream(QIODevice *objDevice);
+
     int getVideoStreamIndex() const { return m_videoStreamIndex; }
     int getAudioStreamIndex() const { return m_audioStreamIndex; }
 
@@ -107,19 +130,13 @@ class DATVideoRender : public TVScreen
     bool getAudioDecodeOK() const { return m_audioDecodeOK; }
     bool getVideoDecodeOK() const { return m_videoDecodeOK; }
 
-    struct DataTSMetaData2 MetaData;
-
   private:
+    struct DataTSMetaData2 m_metaData;
     QWidget *m_parentWidget;
     Qt::WindowFlags m_originalWindowFlags;
     QSize m_originalSize;
-
-    bool m_running;
     bool m_isFullScreen;
-
-    bool m_isFFMPEGInitialized;
     bool m_isOpen;
-
     SwsContext *m_swsCtx;
     AVFormatContext *m_formatCtx;
     AVCodecContext *m_videoDecoderCtx;
@@ -134,10 +151,9 @@ class DATVideoRender : public TVScreen
     bool m_audioMute;
     bool m_videoMute;
     float m_audioVolume;
-    bool m_updateAudioResampler;
 
-    uint8_t *m_pbytDecodedData[4];
-    int m_pintDecodedLineSize[4];
+    uint8_t *m_decodedData[4];
+    int m_decodedLineSize[4];
 
     int m_frameCount;
     int m_videoStreamIndex;
@@ -149,11 +165,13 @@ class DATVideoRender : public TVScreen
     bool m_audioDecodeOK;
     bool m_videoDecodeOK;
 
-    bool InitializeFFMPEG();
-    bool PreprocessStream();
-    void ResetMetaData();
+    static int ReadFunction(void *opaque, uint8_t *buf, int buf_size);
+    static int64_t SeekFunction(void *opaque, int64_t offset, int whence);
 
-    int new_decode(AVCodecContext *avctx, AVFrame *frame, int *got_frame, AVPacket *pkt);
+    bool preprocessStream();
+    void resetMetaData();
+
+    int newDecode(AVCodecContext *avctx, AVFrame *frame, int *got_frame, AVPacket *pkt);
     void setResampler();
 
   protected:
@@ -183,42 +201,43 @@ class DATVideoRenderThread : public QThread
 
     void setStreamAndRenderer(DATVideoRender *renderer, DATVideostream *stream)
     {
+        m_renderingVideo = false;
         m_renderer = renderer;
         m_stream = stream;
-        m_renderingVideo = false;
     }
 
     void run()
     {
-        if (m_renderingVideo)
-        {
+        if (m_renderingVideo) {
             return;
         }
 
-        if ((m_renderer == nullptr) || (m_stream == nullptr))
-        {
+        if ((m_renderer == nullptr) || (m_stream == nullptr)) {
             return;
         }
 
-        m_renderingVideo = m_renderer->OpenStream(m_stream);
+        m_renderingVideo = m_renderer->openStream(m_stream);
 
-        if (!m_renderingVideo)
-        {
+        if (!m_renderingVideo) {
             return;
         }
 
-        while ((m_renderer->RenderStream()) && (m_renderingVideo == true))
+        while ((m_renderingVideo == true) && (m_renderer))
         {
+            if (!m_renderer->renderStream()) {
+                break;
+            }
         }
 
-        m_renderer->CloseStream(m_stream);
+        m_renderer->closeStream(m_stream);
         m_renderingVideo = false;
     }
 
-    void stopRendering()
-    {
+    void stopRendering() {
         m_renderingVideo = false;
     }
+
+    static const int videoThreadTimeoutMs = 1000;
 
   private:
     DATVideoRender *m_renderer;

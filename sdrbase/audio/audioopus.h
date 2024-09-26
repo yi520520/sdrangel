@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,10 +23,10 @@
 #define SDRBASE_AUDIO_AUDIOOPUS_H_
 
 #include <stdint.h>
-#include <QMutex>
+#include <QRecursiveMutex>
 #include "export.h"
 
-class OpusEncoder;
+struct OpusEncoder;
 
 class SDRBASE_API AudioOpus
 {
@@ -40,7 +43,7 @@ public:
 private:
     OpusEncoder *m_encoderState;
     bool m_encoderOK;
-    QMutex m_mutex;
+    QRecursiveMutex m_mutex;
 };
 
 #endif /* SDRBASE_AUDIO_AUDIOOPUS_H_ */

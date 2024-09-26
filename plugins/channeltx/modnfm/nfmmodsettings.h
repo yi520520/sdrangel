@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,6 +23,9 @@
 
 #include <QByteArray>
 
+#include "dsp/cwkeyersettings.h"
+#include "dsp/dsptypes.h"
+
 class Serializable;
 
 struct NFMModSettings
@@ -33,10 +39,11 @@ struct NFMModSettings
         NFMModInputCWTone
     } NFMModInputAF;
 
-    static const int m_nbRfBW;
+    static const int m_nbChannelSpacings;
+    static const int m_channelSpacings[];
     static const int m_rfBW[];
-    static const int m_nbCTCSSFreqs;
-    static const float m_ctcssFreqs[];
+    static const int m_afBW[];
+    static const int m_fmDev[];
 
     qint64 m_inputFrequencyOffset;
     Real m_rfBandwidth;
@@ -48,6 +55,11 @@ struct NFMModSettings
     bool m_playLoop;
     bool m_ctcssOn;
     int  m_ctcssIndex;
+    bool m_dcsOn;
+    int m_dcsCode;
+    bool m_dcsPositive;
+    bool m_preEmphasisOn;
+    bool m_bpfOn;
     quint32 m_rgbColor;
     QString m_title;
     NFMModInputAF m_modAFInput;
@@ -55,24 +67,42 @@ struct NFMModSettings
     QString m_feedbackAudioDeviceName; //!< This is the audio device you send the audio samples to for audio feedback
     float m_feedbackVolumeFactor;
     bool m_feedbackAudioEnable;
+    bool m_compressorEnable;
+    int m_streamIndex;
     bool m_useReverseAPI;
     QString m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
     uint16_t m_reverseAPIDeviceIndex;
     uint16_t m_reverseAPIChannelIndex;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
 
     Serializable *m_channelMarker;
     Serializable *m_cwKeyerGUI;
 
+    CWKeyerSettings m_cwKeyerSettings; //!< For standalone deserialize operation (without m_cwKeyerGUI)
+    Serializable *m_rollupState;
+
     NFMModSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     void setCWKeyerGUI(Serializable *cwKeyerGUI) { m_cwKeyerGUI = cwKeyerGUI; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    const CWKeyerSettings& getCWKeyerSettings() const { return m_cwKeyerSettings; }
+    void setCWKeyerSettings(const CWKeyerSettings& cwKeyerSettings) { m_cwKeyerSettings = cwKeyerSettings; }
 
+    static int getChannelSpacing(int index);
+    static int getChannelSpacingIndex(int channelSpacing);
     static int getRFBW(int index);
     static int getRFBWIndex(int rfbw);
+    static int getAFBW(int index);
+    static int getAFBWIndex(int afbw);
+    static int getFMDev(int index);
+    static int getFMDevIndex(int fmDev);
+    static int getNbCTCSSFreq();
     static float getCTCSSFreq(int index);
     static int getCTCSSFreqIndex(float ctcssFreq);
 };

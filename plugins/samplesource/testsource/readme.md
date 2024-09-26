@@ -28,10 +28,6 @@ Device start / stop button.
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon, plug back in and start again.
 
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
-
 <h4>1.4: Stream sample rate</h4>
 
 Baseband I/Q sample rate in kS/s. This is the device to host sample rate (3) divided by the decimation factor (4).
@@ -54,7 +50,7 @@ The I/Q stream from the generator is downsampled by a power of two before being 
 
 This exercises the decimation chain.
 
-<h4>2.3: Baseband center frequency position relative the center frequency</h4>
+<h4>2.3: Baseband center frequency position relative to the center frequency</h4>
 
   - **Cen**: the decimation operation takes place around the center frequency Fs
   - **Inf**: the decimation operation takes place around Fs - Fc.
@@ -77,7 +73,7 @@ This is the sample size in number of bits. It corresponds to the actual sample s
 
 This controls the generator sample rate in samples per second.
 
-<h3>4: Modulation</h4>
+<h3>4: Modulation</h3>
 
   - **No**: No modulation
   - **AM**: Amplitude modulation (AM)

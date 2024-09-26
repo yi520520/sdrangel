@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015-2018 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -25,7 +28,6 @@
 #include <QNetworkRequest>
 
 #include "dsp/devicesamplesource.h"
-#include "audio/audioinput.h"
 #include "audio/audiofifo.h"
 
 #include "fcdprosettings.h"
@@ -40,7 +42,6 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class DeviceAPI;
 class FCDProThread;
-class FileRecord;
 
 class FCDProInput : public DeviceSampleSource {
     Q_OBJECT
@@ -50,42 +51,25 @@ public:
 
 	public:
 		const FCDProSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
 		bool getForce() const { return m_force; }
 
-		static MsgConfigureFCDPro* create(const FCDProSettings& settings, bool force)
-		{
-			return new MsgConfigureFCDPro(settings, force);
+		static MsgConfigureFCDPro* create(const FCDProSettings& settings, const QList<QString>& settingsKeys, bool force) {
+			return new MsgConfigureFCDPro(settings, settingsKeys, force);
 		}
 
 	private:
 		FCDProSettings m_settings;
+        QList<QString> m_settingsKeys;
 		bool m_force;
 
-		MsgConfigureFCDPro(const FCDProSettings& settings, bool force) :
+		MsgConfigureFCDPro(const FCDProSettings& settings, const QList<QString>& settingsKeys, bool force) :
 			Message(),
 			m_settings(settings),
+            m_settingsKeys(settingsKeys),
 			m_force(force)
 		{ }
 	};
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
-        { }
-    };
 
     class MsgStartStop : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -145,6 +129,15 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const FCDProSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            FCDProSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     void set_center_freq(double freq);
 	void set_bias_t(bool on);
 	void set_lnaGain(int index);
@@ -167,14 +160,12 @@ public:
 private:
 	DeviceAPI *m_deviceAPI;
 	hid_device *m_dev;
-    AudioInput m_fcdAudioInput;
     AudioFifo m_fcdFIFO;
 	QMutex m_mutex;
 	FCDProSettings m_settings;
 	FCDProThread* m_FCDThread;
 	QString m_deviceDescription;
 	bool m_running;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
@@ -182,10 +173,9 @@ private:
     void closeDevice();
     bool openFCDAudio(const char *filename);
     void closeFCDAudio();
-	void applySettings(const FCDProSettings& settings, bool force);
+	void applySettings(const FCDProSettings& settings, const QList<QString>& settingsKeys, bool force);
 
-	void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const FCDProSettings& settings);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const FCDProSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const FCDProSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

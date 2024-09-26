@@ -60,13 +60,13 @@ uint32_t RTPRandom::PickSeed()
     x = (uint32_t) getpid();
 #endif
     QDateTime currentDateTime = QDateTime::currentDateTime();
-    x += currentDateTime.toTime_t();
+    x += currentDateTime.toSecsSinceEpoch();
 #if defined(WIN32)
     x += QDateTime::currentMSecsSinceEpoch() % 1000;
 #else
     x += (uint32_t)clock();
 #endif
-    x ^= (uint32_t)((uint8_t *)this - (uint8_t *)0);
+    x ^= (uint32_t)(size_t)this;
     return x;
 }
 

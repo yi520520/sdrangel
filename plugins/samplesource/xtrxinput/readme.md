@@ -44,6 +44,8 @@ For a group the syntax is the same but the group name is prefixed with `@` like:
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![LimeSDR input plugin GUI](../../../doc/img/XTRXInput_plugin.png)
 
 <h3>1: Common stream parameters</h3>
@@ -61,10 +63,6 @@ Device start / stop button.
   - Blue triangle icon: device is ready and can be started
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon to stop, plug back in, check the source on the sampling devices control panel and start again.
-
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
 
 <h4>1.4: ADC sample rate</h4>
 
@@ -165,11 +163,11 @@ This is the Rx hardware filter bandwidth in kHz in the LMS7002M device for the g
 
 <h2>7: LMS002M power saving mode</h2>
 
-<h3>8: Gain settings</h2>
+<h3>8: Gain settings</h3>
 
 ![LimeSDR input plugin gain GUI](../../../doc/img/LimeSDRInput_plugin_9.png)
 
-<h4>8.1: Gain mode</h2>
+<h4>8.1: Gain mode</h4>
 
 Use this combo to select either the automatic gain (Aut) or the manual (Man) gain setting. Automatic gain sets the global gain using a predefined table for LNA, TIA and PGA gain blocks. This global gain is set with button 9.2. When manual gain is engaged the LNA, TIA and PGA gains can be set independently with the 9.3, 9.4 and 9.5 buttons respectively.
 
@@ -181,7 +179,7 @@ Use this button to adjust the global gain of the LNA, TIA and PGA. LimeSuite sof
 
 <h4>8.3: LNA manual gain</h4>
 
-Use this button to adjust the gain of tha LNA when manual gain mode is set (9.1). Gain can be set between 1 and 30 dB in 1 dB steps. However the hardware has 3 dB steps for the lower gain values so increasing or decreasing by one step does not always produce a change. The value in dB appears at the right of the button.
+Use this button to adjust the gain of the LNA when manual gain mode is set (9.1). Gain can be set between 1 and 30 dB in 1 dB steps. However the hardware has 3 dB steps for the lower gain values so increasing or decreasing by one step does not always produce a change. The value in dB appears at the right of the button.
 
 <h4>8.4: TIA manual gain</h4>
 
@@ -189,7 +187,7 @@ Use this combo to select the TIA gain in dB when manual gain mode is set (9.1). 
 
 <h4>8.5: PGA manual gain</h4>
 
-Use this button to adjust the gain of tha PGA when manual gain mode is set (9.1). Gain can be set between 0 and 32 dB in 1 dB steps. The value in dB appears at the right of the button.
+Use this button to adjust the gain of the PGA when manual gain mode is set (9.1). Gain can be set between 0 and 32 dB in 1 dB steps. The value in dB appears at the right of the button.
 
 <h3>9: Antenna select</h3>
 

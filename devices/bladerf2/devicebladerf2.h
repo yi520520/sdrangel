@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,6 +23,7 @@
 #include <stdint.h>
 #include <libbladeRF.h>
 
+#include "plugin/plugininterface.h"
 #include "export.h"
 
 class DEVICES_API DeviceBladeRF2
@@ -29,6 +32,7 @@ public:
     DeviceBladeRF2();
     ~DeviceBladeRF2();
 
+    static void enumOriginDevices(const QString& hardwareId, PluginInterface::OriginDevices& originDevices);
     bool open(const char *serial);
     void close();
 
@@ -39,14 +43,14 @@ public:
     void closeRx(int channel);
     void closeTx(int channel);
 
-    void getFrequencyRangeRx(uint64_t& min, uint64_t& max, int& step);
-    void getFrequencyRangeTx(uint64_t& min, uint64_t& max, int& step);
-    void getSampleRateRangeRx(int& min, int& max, int& step);
-    void getSampleRateRangeTx(int& min, int& max, int& step);
-    void getBandwidthRangeRx(int& min, int& max, int& step);
-    void getBandwidthRangeTx(int& min, int& max, int& step);
-    void getGlobalGainRangeRx(int& min, int& max, int& step);
-    void getGlobalGainRangeTx(int& min, int& max, int& step);
+    void getFrequencyRangeRx(uint64_t& min, uint64_t& max, int& step, float& scale);
+    void getFrequencyRangeTx(uint64_t& min, uint64_t& max, int& step, float& scale);
+    void getSampleRateRangeRx(int& min, int& max, int& step, float& scale);
+    void getSampleRateRangeTx(int& min, int& max, int& step, float& scale);
+    void getBandwidthRangeRx(int& min, int& max, int& step, float& scale);
+    void getBandwidthRangeTx(int& min, int& max, int& step, float& scale);
+    void getGlobalGainRangeRx(int& min, int& max, int& step, float& scale);
+    void getGlobalGainRangeTx(int& min, int& max, int& step, float& scale);
     int  getGainModesRx(const bladerf_gain_modes**);
     void setBiasTeeRx(bool enable);
     void setBiasTeeTx(bool enable);

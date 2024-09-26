@@ -1,120 +1,84 @@
-// This file is part of LeanSDR Copyright (C) 2016-2018 <pabr@pabr.org>.
-// See the toplevel README for more information.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2018-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>              //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                                //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                          //
+//                                                                                   //
+// This file is part of LeanSDR Copyright (C) 2016-2019 <pabr@pabr.org>.             //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 
 #ifndef LEANSDR_MATH_H
 #define LEANSDR_MATH_H
 
-#include <math.h>
+#include <cmath>
+#include <complex>
 #include <stdint.h>
-
-#ifndef M_PI
-#    define M_PI 3.14159265358979323846
-#endif
 
 namespace leansdr
 {
 
 template <typename T>
-struct complex
-{
-    T re, im;
-    complex() {}
-    complex(T x) : re(x), im(0) {}
-    complex(T x, T y) : re(x), im(y) {}
-    inline void operator+=(const complex<T> &x)
-    {
-        re += x.re;
-        im += x.im;
-    }
-    inline void operator*=(const complex<T> &c)
-    {
-        T tre = re * c.re - im * c.im;
-        im = re * c.im + im * c.re;
-        re = tre;
-    }
-    inline void operator*=(const T &k)
-    {
-        re *= k;
-        im *= k;
-    }
-};
-
-template <typename T>
-complex<T> operator+(const complex<T> &a, const complex<T> &b)
-{
-    return complex<T>(a.re + b.re, a.im + b.im);
-}
-
-template <typename T>
-complex<T> operator*(const complex<T> &a, const complex<T> &b)
-{
-    return complex<T>(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
-}
-
-template <typename T>
-complex<T> operator*(const complex<T> &a, const T &k)
-{
-    return complex<T>(a.re * k, a.im * k);
-}
-
-template <typename T>
-complex<T> operator*(const T &k, const complex<T> &a)
-{
-    return complex<T>(k * a.re, k * a.im);
-}
-
-template <typename T>
 T dotprod(const T *u, const T *v, int n)
 {
     T acc = 0;
-    while (n--)
+
+    while (n--) {
         acc += (*u++) * (*v++);
+    }
+
     return acc;
 }
 
 template <typename T>
-inline T cnorm2(const complex<T> &u)
+inline T cnorm2(const std::complex<T> &u)
 {
-    return u.re * u.re + u.im * u.im;
+    return u.real() * u.real() + u.imag() * u.imag();
 }
 
 template <typename T>
-T cnorm2(const complex<T> *p, int n)
+T cnorm2(const std::complex<T> *p, int n)
 {
     T res = 0;
-    for (; n--; ++p)
+
+    for (; n--; ++p) {
         res += cnorm2(*p);
+    }
+
     return res;
 }
 
 // Return conj(u)*v
 template <typename T>
-inline complex<T> conjprod(const complex<T> &u, const complex<T> &v)
+inline std::complex<T> conjprod(const std::complex<T> &u, const std::complex<T> &v)
 {
-    return complex<T>(u.re * v.re + u.im * v.im,
-                      u.re * v.im - u.im * v.re);
+    return std::complex<T>(
+        u.real() * v.real() + u.imag() * v.imag(),
+        u.real() * v.imag() - u.imag() * v.real()
+    );
 }
 
 // Return sum(conj(u[i])*v[i])
 template <typename T>
-complex<T> conjprod(const complex<T> *u, const complex<T> *v, int n)
+std::complex<T> conjprod(const std::complex<T> *u, const std::complex<T> *v, int n)
 {
-    complex<T> acc = 0;
-    while (n--)
+    std::complex<T> acc = 0;
+
+    while (n--) {
         acc += conjprod(*u++, *v++);
+    }
+
     return acc;
 }
 
@@ -133,26 +97,89 @@ int log2i(uint64_t x);
 
 struct trig16
 {
-    complex<float> lut[65536]; // TBD static and shared
+    std::complex<float> lut[65536]; // TBD static and shared
+
     trig16()
     {
         for (int a = 0; a < 65536; ++a)
         {
             float af = a * 2 * M_PI / 65536;
-            lut[a].re = cosf(af);
-            lut[a].im = sinf(af);
+            lut[a] = {cosf(af), sinf(af)};
         }
     }
-    inline const complex<float> &expi(uint16_t a) const
+
+    inline const std::complex<float> &expi(uint16_t a) const
     {
         return lut[a];
     }
+
     // a must fit in a int32_t, otherwise behaviour is undefined
-    inline const complex<float> &expi(float a) const
+    inline const std::complex<float> &expi(float a) const
     {
         return expi((uint16_t)(int16_t)(int32_t)a);
     }
 };
+
+// Modulo with signed result in [-m/2..m/2[
+
+inline float fmodfs(float v, float m)
+{
+    v = fmodf(v, m);
+    return (v>=m/2) ? v-m : (v<-m/2) ? v+m : v;
+}
+
+inline double rand_compat()
+{
+#ifdef WIN32
+    return double(rand())/RAND_MAX;
+#else
+    return drand48();
+#endif
+}
+
+// Simple statistics
+
+template<typename T>
+struct statistics
+{
+    statistics() {
+        reset();
+    }
+
+    void reset()
+    {
+        vm1 = vm2 = 0;
+        count = 0;
+        vmin = vmax = 99;/*comp warning*/
+    }
+
+    void add(const T &v)
+    {
+        vm1 += v;
+        vm2 += v*v;
+
+        if ( count == 0 ) {
+            vmin = vmax = v;
+        } else if (
+            v < vmin ) { vmin = v;
+        } else if ( v > vmax ) {
+            vmax = v;
+        }
+
+        ++count;
+    }
+
+    T average() { return vm1 / count; }
+    T variance() { return vm2/count - (vm1/count)*(vm1/count); }
+    T stddev() { return gen_sqrt(variance()); }
+    T min() { return vmin; }
+    T max() { return vmax; }
+
+private:
+    T vm1, vm2;    // Moments
+    T vmin, vmax;  // Range
+    int count;     // Number of samples in vm1, vm2
+};  // statistics
 
 } // namespace leansdr
 

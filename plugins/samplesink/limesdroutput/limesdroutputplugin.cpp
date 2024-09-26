@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,13 +19,11 @@
 
 #include <QtPlugin>
 
-#include <regex>
 #include <string>
 
 #include "lime/LimeSuite.h"
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
-#include "limesdr/devicelimesdrparam.h"
+#include "limesdr/devicelimesdr.h"
 
 #ifdef SERVER_MODE
 #include "limesdroutput.h"
@@ -31,18 +31,20 @@
 #include "limesdroutputgui.h"
 #endif
 #include "limesdroutputplugin.h"
+#include "limesdroutputwebapiadapter.h"
 
 const PluginDescriptor LimeSDROutputPlugin::m_pluginDescriptor = {
-    QString("LimeSDR Output"),
-    QString("4.5.5"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("LimeSDR"),
+    QStringLiteral("LimeSDR Output"),
+    QStringLiteral("7.20.0"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString LimeSDROutputPlugin::m_hardwareID = "LimeSDR";
-const QString LimeSDROutputPlugin::m_deviceTypeID = LIMESDROUTPUT_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "LimeSDR";
+static constexpr const char* const m_deviceTypeID = LIMESDROUTPUT_DEVICE_TYPE_ID;
 
 LimeSDROutputPlugin::LimeSDROutputPlugin(QObject* parent) :
     QObject(parent)
@@ -59,60 +61,49 @@ void LimeSDROutputPlugin::initPlugin(PluginAPI* pluginAPI)
     pluginAPI->registerSampleSink(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices LimeSDROutputPlugin::enumSampleSinks()
+void LimeSDROutputPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
 {
-    lms_info_str_t* deviceList;
-    int nbDevices;
-    SamplingDevices result;
-
-    if ((nbDevices = LMS_GetDeviceList(0)) <= 0)
-    {
-        qDebug("LimeSDROutputPlugin::enumSampleSources: Could not find any LimeSDR device");
-        return result; // empty result
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
     }
 
-    deviceList = new lms_info_str_t[nbDevices];
+    DeviceLimeSDR::enumOriginDevices(m_hardwareID, originDevices);
+	listedHwIds.append(m_hardwareID);
+}
 
-    if (LMS_GetDeviceList(deviceList) < 0)
+PluginInterface::SamplingDevices LimeSDROutputPlugin::enumSampleSinks(const OriginDevices& originDevices)
+{
+	SamplingDevices result;
+
+	for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
     {
-        qDebug("LimeSDROutputPlugin::enumSampleSources: Could not obtain LimeSDR devices information");
-        delete[] deviceList;
-        return result; // empty result
-    }
-    else
-    {
-        for (int i = 0; i < nbDevices; i++)
+        if (it->hardwareId == m_hardwareID)
         {
-            std::string serial("N/D");
-            findSerial((const char *) deviceList[i], serial);
-
-            DeviceLimeSDRParams limeSDRParams;
-            limeSDRParams.open(deviceList[i]);
-            limeSDRParams.close();
-
-            for (unsigned int j = 0; j < limeSDRParams.m_nbTxChannels; j++)
+            for (int j = 0; j < it->nbTxStreams; j++)
             {
-                qDebug("LimeSDROutputPlugin::enumSampleSources: device #%d channel %u: %s", i, j, (char *) deviceList[i]);
-                QString displayedName(QString("LimeSDR[%1:%2] %3").arg(i).arg(j).arg(serial.c_str()));
-                result.append(SamplingDevice(displayedName,
-                        m_hardwareID,
-                        m_deviceTypeID,
-                        QString(deviceList[i]),
-                        i,
-                        PluginInterface::SamplingDevice::PhysicalDevice,
-                        PluginInterface::SamplingDevice::StreamSingleTx,
-                        limeSDRParams.m_nbTxChannels,
-                        j));
+                qDebug("LimeSDROutputPlugin::enumSampleSinks: device #%d channel %u: %s", it->sequence, j, qPrintable(it->serial));
+                QString displayedName = it->displayableName;
+                displayedName.replace(QString("$1]"), QString("%1]").arg(j));
+                result.append(SamplingDevice(
+                    displayedName,
+                    it->hardwareId,
+                    m_deviceTypeID,
+                    it->serial,
+                    it->sequence,
+                    PluginInterface::SamplingDevice::PhysicalDevice,
+                    PluginInterface::SamplingDevice::StreamSingleTx,
+                    it->nbTxStreams,
+                    j
+                ));
             }
         }
     }
 
-    delete[] deviceList;
     return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* LimeSDROutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* LimeSDROutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -123,7 +114,7 @@ PluginInstanceGUI* LimeSDROutputPlugin::createSampleSinkPluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* LimeSDROutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* LimeSDROutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -141,24 +132,6 @@ PluginInstanceGUI* LimeSDROutputPlugin::createSampleSinkPluginInstanceGUI(
 }
 #endif
 
-bool LimeSDROutputPlugin::findSerial(const char *lmsInfoStr, std::string& serial)
-{
-    std::regex serial_reg("serial=([0-9,A-F]+)");
-    std::string input(lmsInfoStr);
-    std::smatch result;
-    std::regex_search(input, result, serial_reg);
-
-    if (result[1].str().length()>0)
-    {
-        serial = result[1].str();
-        return true;
-    }
-    else
-    {
-        return false;
-    }
-}
-
 DeviceSampleSink* LimeSDROutputPlugin::createSampleSinkPluginInstance(const QString& sinkId, DeviceAPI *deviceAPI)
 {
     if(sinkId == m_deviceTypeID)
@@ -172,3 +145,7 @@ DeviceSampleSink* LimeSDROutputPlugin::createSampleSinkPluginInstance(const QStr
     }
 }
 
+DeviceWebAPIAdapter *LimeSDROutputPlugin::createDeviceWebAPIAdapter() const
+{
+    return new LimeSDROutputWebAPIAdapter();
+}

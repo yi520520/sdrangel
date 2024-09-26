@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // Remtoe sink channel (Rx) data blocks queue                                    //
 //                                                                               //
@@ -29,48 +33,44 @@
 
 RemoteDataQueue::RemoteDataQueue(QObject* parent) :
 	QObject(parent),
-	m_lock(QMutex::Recursive),
 	m_queue()
 {
 }
 
 RemoteDataQueue::~RemoteDataQueue()
 {
-	RemoteDataBlock* data;
+	RemoteDataFrame* data;
 
-	while ((data = pop()) != 0)
+	while ((data = pop()) != nullptr)
 	{
 		qDebug() << "RemoteDataQueue::~RemoteDataQueue: data block was still in queue";
 		delete data;
 	}
 }
 
-void RemoteDataQueue::push(RemoteDataBlock* data, bool emitSignal)
+void RemoteDataQueue::push(RemoteDataFrame* data, bool emitSignal)
 {
 	if (data)
 	{
 		m_lock.lock();
-		m_queue.append(data);
+		m_queue.enqueue(data);
+		// qDebug("RemoteDataQueue::push: %d", m_queue.size());
 		m_lock.unlock();
 	}
 
-	if (emitSignal)
-	{
+	if (emitSignal) {
 		emit dataBlockEnqueued();
 	}
 }
 
-RemoteDataBlock* RemoteDataQueue::pop()
+RemoteDataFrame* RemoteDataQueue::pop()
 {
 	QMutexLocker locker(&m_lock);
 
-	if (m_queue.isEmpty())
-	{
-		return 0;
-	}
-	else
-	{
-		return m_queue.takeFirst();
+	if (m_queue.isEmpty()) {
+		return nullptr;
+	} else {
+		return m_queue.dequeue();
 	}
 }
 

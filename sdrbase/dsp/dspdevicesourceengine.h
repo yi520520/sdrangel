@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2019, 2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,26 +22,23 @@
 #ifndef INCLUDE_DSPDEVICEENGINE_H
 #define INCLUDE_DSPDEVICEENGINE_H
 
-#include <QThread>
+#include <QObject>
 #include <QTimer>
 #include <QMutex>
 #include <QWaitCondition>
 #include "dsp/dsptypes.h"
-#include "dsp/fftwindow.h"
 #include "util/messagequeue.h"
-#include "util/syncmessenger.h"
 #include "export.h"
 #include "util/movingaverage.h"
 
 class DeviceSampleSource;
 class BasebandSampleSink;
-class ThreadedBasebandSampleSink;
 
-class SDRBASE_API DSPDeviceSourceEngine : public QThread {
+class SDRBASE_API DSPDeviceSourceEngine : public QObject {
 	Q_OBJECT
 
 public:
-	enum State {
+	enum class State {
 		StNotStarted,  //!< engine is before initialization
 		StIdle,        //!< engine is idle
 		StReady,       //!< engine is ready to run
@@ -46,17 +46,14 @@ public:
 		StError        //!< engine is in error
 	};
 
-	DSPDeviceSourceEngine(uint uid, QObject* parent = NULL);
-	~DSPDeviceSourceEngine();
+	DSPDeviceSourceEngine(uint uid, QObject* parent = nullptr);
+	~DSPDeviceSourceEngine() final;
 
 	uint getUID() const { return m_uid; }
 
 	MessageQueue* getInputMessageQueue() { return &m_inputMessageQueue; }
 
-	void start(); //!< This thread start
-	void stop();  //!< This thread stop
-
-	bool initAcquisition(); //!< Initialize acquisition sequence
+	bool initAcquisition() const; //!< Initialize acquisition sequence
 	bool startAcquisition(); //!< Start acquisition sequence
 	void stopAcquistion();   //!< Stop acquisition sequence
 
@@ -67,21 +64,17 @@ public:
 	void addSink(BasebandSampleSink* sink); //!< Add a sample sink
 	void removeSink(BasebandSampleSink* sink); //!< Remove a sample sink
 
-	void addThreadedSink(ThreadedBasebandSampleSink* sink); //!< Add a sample sink that will run on its own thread
-	void removeThreadedSink(ThreadedBasebandSampleSink* sink); //!< Remove a sample sink that runs on its own thread
-
 	void configureCorrections(bool dcOffsetCorrection, bool iqImbalanceCorrection); //!< Configure DSP corrections
 
 	State state() const { return m_state; } //!< Return DSP engine current state
 
-	QString errorMessage(); //!< Return the current error message
-	QString sourceDeviceDescription(); //!< Return the source device description
+	QString errorMessage() const; //!< Return the current error message
+	QString sourceDeviceDescription() const; //!< Return the source device description
 
 private:
 	uint m_uid; //!< unique ID
 
 	MessageQueue m_inputMessageQueue;  //<! Input message queue. Post here.
-	SyncMessenger m_syncMessenger;     //!< Used to process messages synchronously with the thread
 
 	State m_state;
 
@@ -91,18 +84,17 @@ private:
 	DeviceSampleSource* m_deviceSampleSource;
 	int m_sampleSourceSequence;
 
-	typedef std::list<BasebandSampleSink*> BasebandSampleSinks;
+	using BasebandSampleSinks = std::list<BasebandSampleSink *>;
 	BasebandSampleSinks m_basebandSampleSinks; //!< sample sinks within main thread (usually spectrum, file output)
-
-	typedef std::list<ThreadedBasebandSampleSink*> ThreadedBasebandSampleSinks;
-	ThreadedBasebandSampleSinks m_threadedBasebandSampleSinks; //!< sample sinks on their own threads (usually channels)
 
 	uint m_sampleRate;
 	quint64 m_centerFrequency;
+    bool m_realElseComplex;
 
 	bool m_dcOffsetCorrection;
 	bool m_iqImbalanceCorrection;
-	double m_iOffset, m_qOffset;
+	double m_iOffset;
+	double m_qOffset;
 
 	MovingAverageUtil<int32_t, int64_t, 1024> m_iBeta;
     MovingAverageUtil<int32_t, int64_t, 1024> m_qBeta;
@@ -130,8 +122,6 @@ private:
 	qint32 m_qRange;
 	qint32 m_imbalance;
 
-	void run();
-
 	void iqCorrections(SampleVector::iterator begin, SampleVector::iterator end, bool imbalanceCorrection);
 	void dcOffset(SampleVector::iterator begin, SampleVector::iterator end);
 	void imbalance(SampleVector::iterator begin, SampleVector::iterator end);
@@ -141,13 +131,17 @@ private:
 	State gotoInit();     //!< Go to the acquisition init state from idle
 	State gotoRunning();  //!< Go to the running state from ready state
 	State gotoError(const QString& errorMsg); //!< Go to an error state
+	void setState(State state);
 
 	void handleSetSource(DeviceSampleSource* source); //!< Manage source setting
+    bool handleMessage(const Message& cmd);
 
 private slots:
 	void handleData(); //!< Handle data when samples from source FIFO are ready to be processed
 	void handleInputMessages(); //!< Handle input message queue
-	void handleSynchronousMessages(); //!< Handle synchronous messages with the thread
+
+signals:
+	void stateChanged();
 };
 
 #endif // INCLUDE_DSPDEVICEENGINE_H

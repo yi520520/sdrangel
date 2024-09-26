@@ -1,5 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -31,42 +36,17 @@
 #include "dsp/basebandsamplesource.h"
 #include "channel/channelapi.h"
 #include "util/message.h"
-#include "util/movingaverage.h"
 #include "filesourcesettings.h"
 
-class ThreadedBasebandSampleSource;
-class UpChannelizer;
-class DeviceAPI;
-class FileSourceThread;
 class QNetworkAccessManager;
 class QNetworkReply;
 
+class DeviceAPI;
+class FileSourceBaseband;
+class ObjectPipe;
+
 class FileSource : public BasebandSampleSource, public ChannelAPI {
-    Q_OBJECT
-
 public:
-    class MsgConfigureChannelizer : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        int getLog2Interp() const { return m_log2Interp; }
-        int getFilterChainHash() const { return m_filterChainHash; }
-
-        static MsgConfigureChannelizer* create(unsigned int m_log2Interp, unsigned int m_filterChainHash) {
-            return new MsgConfigureChannelizer(m_log2Interp, m_filterChainHash);
-        }
-
-    private:
-        unsigned int m_log2Interp;
-        unsigned int m_filterChainHash;
-
-        MsgConfigureChannelizer(unsigned int log2Interp, unsigned int filterChainHash) :
-            Message(),
-            m_log2Interp(log2Interp),
-            m_filterChainHash(filterChainHash)
-        { }
-    };
-
     class MsgConfigureFileSource : public Message {
         MESSAGE_CLASS_DECLARATION
 
@@ -89,46 +69,6 @@ public:
             m_force(force)
         { }
     };
-
-    class MsgSampleRateNotification : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        static MsgSampleRateNotification* create(int sampleRate) {
-            return new MsgSampleRateNotification(sampleRate);
-        }
-
-        int getSampleRate() const { return m_sampleRate; }
-
-    private:
-
-        MsgSampleRateNotification(int sampleRate) :
-            Message(),
-            m_sampleRate(sampleRate)
-        { }
-
-        int m_sampleRate;
-    };
-
-	class MsgConfigureFileSourceName : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		const QString& getFileName() const { return m_fileName; }
-
-		static MsgConfigureFileSourceName* create(const QString& fileName)
-		{
-			return new MsgConfigureFileSourceName(fileName);
-		}
-
-	private:
-		QString m_fileName;
-
-		MsgConfigureFileSourceName(const QString& fileName) :
-			Message(),
-			m_fileName(fileName)
-		{ }
-	};
 
 	class MsgConfigureFileSourceWork : public Message {
 		MESSAGE_CLASS_DECLARATION
@@ -207,121 +147,27 @@ public:
 		{ }
 	};
 
-    class MsgPlayPause : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getPlayPause() const { return m_playPause; }
-
-        static MsgPlayPause* create(bool playPause) {
-            return new MsgPlayPause(playPause);
-        }
-
-    protected:
-        bool m_playPause;
-
-        MsgPlayPause(bool playPause) :
-            Message(),
-            m_playPause(playPause)
-        { }
-    };
-
-	class MsgReportFileSourceStreamData : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		int getSampleRate() const { return m_sampleRate; }
-		quint32 getSampleSize() const { return m_sampleSize; }
-		quint64 getCenterFrequency() const { return m_centerFrequency; }
-        quint64 getStartingTimeStamp() const { return m_startingTimeStamp; }
-        quint64 getRecordLength() const { return m_recordLength; }
-
-		static MsgReportFileSourceStreamData* create(int sampleRate,
-		        quint32 sampleSize,
-				quint64 centerFrequency,
-                quint64 startingTimeStamp,
-                quint64 recordLength)
-		{
-			return new MsgReportFileSourceStreamData(sampleRate, sampleSize, centerFrequency, startingTimeStamp, recordLength);
-		}
-
-	protected:
-		int m_sampleRate;
-		quint32 m_sampleSize;
-		quint64 m_centerFrequency;
-        quint64 m_startingTimeStamp;
-        quint64 m_recordLength;
-
-		MsgReportFileSourceStreamData(int sampleRate,
-		        quint32 sampleSize,
-				quint64 centerFrequency,
-                quint64 startingTimeStamp,
-                quint64 recordLength) :
-			Message(),
-			m_sampleRate(sampleRate),
-			m_sampleSize(sampleSize),
-			m_centerFrequency(centerFrequency),
-			m_startingTimeStamp(startingTimeStamp),
-			m_recordLength(recordLength)
-		{ }
-	};
-
-	class MsgReportFileSourceStreamTiming : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-        quint64 getSamplesCount() const { return m_samplesCount; }
-
-        static MsgReportFileSourceStreamTiming* create(quint64 samplesCount)
-		{
-			return new MsgReportFileSourceStreamTiming(samplesCount);
-		}
-
-	protected:
-        quint64 m_samplesCount;
-
-        MsgReportFileSourceStreamTiming(quint64 samplesCount) :
-			Message(),
-			m_samplesCount(samplesCount)
-		{ }
-	};
-
-	class MsgReportHeaderCRC : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		bool isOK() const { return m_ok; }
-
-		static MsgReportHeaderCRC* create(bool ok) {
-			return new MsgReportHeaderCRC(ok);
-		}
-
-	protected:
-		bool m_ok;
-
-		MsgReportHeaderCRC(bool ok) :
-			Message(),
-			m_ok(ok)
-		{ }
-	};
-
     FileSource(DeviceAPI *deviceAPI);
-    ~FileSource();
-
+    virtual ~FileSource();
     virtual void destroy() { delete this; }
+    virtual void setDeviceAPI(DeviceAPI *deviceAPI);
+    virtual DeviceAPI *getDeviceAPI() { return m_deviceAPI; }
 
-    virtual void pull(Sample& sample);
-    virtual void pullAudio(int nbSamples);
     virtual void start();
     virtual void stop();
-    virtual bool handleMessage(const Message& cmd);
+    virtual void pull(SampleVector::iterator& begin, unsigned int nbSamples);
+    virtual void pushMessage(Message *msg) { m_inputMessageQueue.push(msg); }
+    virtual QString getSourceName() { return objectName(); }
 
     virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual QString getIdentifier() const { return objectName(); }
     virtual void getTitle(QString& title) { title = m_settings.m_title; }
     virtual qint64 getCenterFrequency() const { return 0; }
+    virtual void setCenterFrequency(qint64) {}
 
     virtual int getNbSinkStreams() const { return 0; }
     virtual int getNbSourceStreams() const { return 1; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
 
     virtual qint64 getStreamCenterFrequency(int streamIndex, bool sinkElseSource) const
     {
@@ -337,6 +183,10 @@ public:
             SWGSDRangel::SWGChannelSettings& response,
             QString& errorMessage);
 
+    virtual int webapiWorkspaceGet(
+            SWGSDRangel::SWGWorkspaceInfo& response,
+            QString& errorMessage);
+
     virtual int webapiSettingsPutPatch(
             bool force,
             const QStringList& channelSettingsKeys,
@@ -347,85 +197,66 @@ public:
             SWGSDRangel::SWGChannelReport& response,
             QString& errorMessage);
 
+    virtual int webapiActionsPost(
+            const QStringList& channelActionsKeys,
+            SWGSDRangel::SWGChannelActions& query,
+            QString& errorMessage);
+
+    static void webapiFormatChannelSettings(
+        SWGSDRangel::SWGChannelSettings& response,
+        const FileSourceSettings& settings);
+
+    static void webapiUpdateChannelSettings(
+            FileSourceSettings& settings,
+            const QStringList& channelSettingsKeys,
+            SWGSDRangel::SWGChannelSettings& response);
+
     /** Set center frequency given in Hz */
-    void setCenterFrequency(uint64_t centerFrequency) { m_centerFrequency = centerFrequency; }
+    void setCenterFrequency(uint64_t centerFrequency) { m_frequencyOffset = centerFrequency; }
 
     /** Set sample rate given in Hz */
-    void setSampleRate(uint32_t sampleRate) { m_sampleRate = sampleRate; }
+    void setSampleRate(uint32_t sampleRate) { m_basebandSampleRate = sampleRate; }
 
-    quint64 getSamplesCount() const { return m_samplesCount; }
-    double getMagSq() const { return m_magsq; }
+    double getMagSq() const;
+    void getMagSqLevels(double& avg, double& peak, int& nbSamples) const;
+    void setMessageQueueToGUI(MessageQueue* queue) final;
+    uint32_t getNumberOfDeviceStreams() const;
 
-    void getMagSqLevels(double& avg, double& peak, int& nbSamples)
-    {
-        if (m_magsqCount > 0)
-        {
-            m_magsq = m_magsqSum / m_magsqCount;
-            m_magSqLevelStore.m_magsq = m_magsq;
-            m_magSqLevelStore.m_magsqPeak = m_magsqPeak;
-        }
-
-        avg = m_magSqLevelStore.m_magsq;
-        peak = m_magSqLevelStore.m_magsqPeak;
-        nbSamples = m_magsqCount == 0 ? 1 : m_magsqCount;
-
-        m_magsqSum = 0.0f;
-        m_magsqPeak = 0.0f;
-        m_magsqCount = 0;
-    }
-
-    static const QString m_channelIdURI;
-    static const QString m_channelId;
+    static const char* const m_channelIdURI;
+    static const char* const m_channelId;
 
 private:
-    struct MagSqLevelsStore
-    {
-        MagSqLevelsStore() :
-            m_magsq(1e-12),
-            m_magsqPeak(1e-12)
-        {}
-        double m_magsq;
-        double m_magsqPeak;
-    };
-
     DeviceAPI* m_deviceAPI;
-    QMutex m_mutex;
-    ThreadedBasebandSampleSource* m_threadedChannelizer;
-    UpChannelizer* m_channelizer;
+    QThread *m_thread;
+    FileSourceBaseband* m_basebandSource;
     FileSourceSettings m_settings;
-	std::ifstream m_ifstream;
-	QString m_fileName;
-	quint32 m_sampleSize;
-	quint64 m_centerFrequency;
-    int64_t m_frequencyOffset;
-    uint32_t m_fileSampleRate;
-    quint64 m_samplesCount;
-    uint32_t m_sampleRate;
-    uint32_t m_deviceSampleRate;
-    quint64 m_recordLength; //!< record length in seconds computed from file size
-    quint64 m_startingTimeStamp;
-	QTimer m_masterTimer;
-    bool m_running;
+
+    SampleVector m_sampleBuffer;
+    QRecursiveMutex m_settingsMutex;
+    uint64_t m_frequencyOffset;
+    uint32_t m_basebandSampleRate;
+
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-    double m_linearGain;
-	double m_magsq;
-	double m_magsqSum;
-	double m_magsqPeak;
-    int  m_magsqCount;
-    MagSqLevelsStore m_magSqLevelStore;
-	MovingAverageUtil<Real, double, 16> m_movingAverage;
-
-	void openFileStream();
-	void seekFileStream(int seekMillis);
-    void handleEOF();
+    virtual bool handleMessage(const Message& cmd);
     void applySettings(const FileSourceSettings& settings, bool force = false);
-    void validateFilterChainHash(FileSourceSettings& settings);
+    static void validateFilterChainHash(FileSourceSettings& settings);
     void calculateFrequencyOffset();
-    void webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& response, const FileSourceSettings& settings);
     void webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response);
     void webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const FileSourceSettings& settings, bool force);
+    void sendChannelSettings(
+        const QList<ObjectPipe*>& pipes,
+        QList<QString>& channelSettingsKeys,
+        const FileSourceSettings& settings,
+        bool force
+    );
+    void webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const FileSourceSettings& settings,
+        bool force
+    );
 
 private slots:
     void networkManagerFinished(QNetworkReply *reply);

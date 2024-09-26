@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -16,47 +17,25 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include <QDebug>
-
 #include "devicesamplemimo.h"
 
 DeviceSampleMIMO::DeviceSampleMIMO() :
-    m_guiMessageQueue(0)
+    m_guiMessageQueue(nullptr)
 {
 	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()));
 }
 
-DeviceSampleMIMO::~DeviceSampleMIMO()
-{
-}
+DeviceSampleMIMO::~DeviceSampleMIMO() = default;
 
 void DeviceSampleMIMO::handleInputMessages()
 {
 	Message* message;
 
-	while ((message = m_inputMessageQueue.pop()) != 0)
+	while ((message = m_inputMessageQueue.pop()) != nullptr)
 	{
 		if (handleMessage(*message))
 		{
 			delete message;
 		}
 	}
-}
-
-SampleSourceFifo* DeviceSampleMIMO::getSampleSourceFifo(unsigned int index)
-{
-    if (index >= m_sampleSourceFifos.size()) {
-        return nullptr;
-    } else {
-        return &m_sampleSourceFifos[index];
-    }
-}
-
-SampleSinkFifo* DeviceSampleMIMO::getSampleSinkFifo(unsigned int index)
-{
-    if (index >= m_sampleSinkFifos.size()) {
-        return nullptr;
-    } else {
-        return &m_sampleSinkFifos[index];
-    }
 }

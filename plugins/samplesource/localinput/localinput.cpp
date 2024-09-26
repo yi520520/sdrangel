@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -29,14 +30,11 @@
 
 #include "util/simpleserializer.h"
 #include "dsp/dspcommands.h"
-#include "dsp/dspengine.h"
 #include "device/deviceapi.h"
-#include "dsp/filerecord.h"
 
 #include "localinput.h"
 
 MESSAGE_CLASS_DEFINITION(LocalInput::MsgConfigureLocalInput, Message)
-MESSAGE_CLASS_DEFINITION(LocalInput::MsgFileRecord, Message)
 MESSAGE_CLASS_DEFINITION(LocalInput::MsgStartStop, Message)
 MESSAGE_CLASS_DEFINITION(LocalInput::MsgReportSampleRateAndFrequency, Message)
 
@@ -46,23 +44,30 @@ LocalInput::LocalInput(DeviceAPI *deviceAPI) :
     m_centerFrequency(0),
 	m_deviceDescription("LocalInput")
 {
+    m_sampleFifo.setLabel(m_deviceDescription);
 	m_sampleFifo.setSize(96000 * 4);
 
-    m_fileSink = new FileRecord(QString("test_%1.sdriq").arg(m_deviceAPI->getDeviceUID()));
     m_deviceAPI->setNbSourceStreams(1);
-    m_deviceAPI->addAncillarySink(m_fileSink);
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &LocalInput::networkManagerFinished
+    );
 }
 
 LocalInput::~LocalInput()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &LocalInput::networkManagerFinished
+    );
     delete m_networkManager;
 	stop();
-    m_deviceAPI->removeAncillarySink(m_fileSink);
-    delete m_fileSink;
 }
 
 void LocalInput::destroy()
@@ -72,7 +77,7 @@ void LocalInput::destroy()
 
 void LocalInput::init()
 {
-    applySettings(m_settings, true);
+    applySettings(m_settings, QList<QString>(), true);
 }
 
 bool LocalInput::start()
@@ -101,12 +106,12 @@ bool LocalInput::deserialize(const QByteArray& data)
         success = false;
     }
 
-    MsgConfigureLocalInput* message = MsgConfigureLocalInput::create(m_settings, true);
+    MsgConfigureLocalInput* message = MsgConfigureLocalInput::create(m_settings, QList<QString>(), true);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureLocalInput* messageToGUI = MsgConfigureLocalInput::create(m_settings, true);
+        MsgConfigureLocalInput* messageToGUI = MsgConfigureLocalInput::create(m_settings, QList<QString>(), true);
         m_guiMessageQueue->push(messageToGUI);
     }
 
@@ -163,34 +168,7 @@ void LocalInput::setCenterFrequency(qint64 centerFrequency)
 
 bool LocalInput::handleMessage(const Message& message)
 {
-    if (DSPSignalNotification::match(message))
-    {
-        DSPSignalNotification& notif = (DSPSignalNotification&) message;
-        return m_fileSink->handleMessage(notif); // forward to file sink
-    }
-    else if (MsgFileRecord::match(message))
-    {
-        MsgFileRecord& conf = (MsgFileRecord&) message;
-        qDebug() << "LocalInput::handleMessage: MsgFileRecord: " << conf.getStartStop();
-
-        if (conf.getStartStop())
-        {
-            if (m_settings.m_fileRecordName.size() != 0) {
-                m_fileSink->setFileName(m_settings.m_fileRecordName);
-            } else {
-                m_fileSink->genUniqueFileName(m_deviceAPI->getDeviceUID());
-            }
-
-            m_fileSink->startRecording();
-        }
-        else
-        {
-            m_fileSink->stopRecording();
-        }
-
-        return true;
-    }
-    else if (MsgStartStop::match(message))
+    if (MsgStartStop::match(message))
     {
         MsgStartStop& cmd = (MsgStartStop&) message;
         qDebug() << "LocalInput::handleMessage: MsgStartStop: " << (cmd.getStartStop() ? "start" : "stop");
@@ -217,7 +195,7 @@ bool LocalInput::handleMessage(const Message& message)
     {
         qDebug() << "LocalInput::handleMessage:" << message.getIdentifier();
         MsgConfigureLocalInput& conf = (MsgConfigureLocalInput&) message;
-        applySettings(conf.getSettings(), conf.getForce());
+        applySettings(conf.getSettings(), conf.getSettingsKeys(), conf.getForce());
         return true;
     }
 	else
@@ -226,24 +204,14 @@ bool LocalInput::handleMessage(const Message& message)
 	}
 }
 
-void LocalInput::applySettings(const LocalInputSettings& settings, bool force)
+void LocalInput::applySettings(const LocalInputSettings& settings, const QList<QString>& settingsKeys, bool force)
 {
+    qDebug() << "LocalInput::applySettings: force: " << force << settings.getDebugString(settingsKeys, force);
     QMutexLocker mutexLocker(&m_mutex);
     std::ostringstream os;
     QString remoteAddress;
-    QList<QString> reverseAPIKeys;
 
-    if ((m_settings.m_dcBlock != settings.m_dcBlock) || force) {
-        reverseAPIKeys.append("dcBlock");
-    }
-    if ((m_settings.m_iqCorrection != settings.m_iqCorrection) || force) {
-        reverseAPIKeys.append("iqCorrection");
-    }
-    if ((m_settings.m_fileRecordName != settings.m_fileRecordName) || force) {
-        reverseAPIKeys.append("fileRecordName");
-    }
-
-    if ((m_settings.m_dcBlock != settings.m_dcBlock) || (m_settings.m_iqCorrection != settings.m_iqCorrection) || force)
+    if (settingsKeys.contains("dcBlock") || settingsKeys.contains("iqCorrection") || force)
     {
         m_deviceAPI->configureCorrections(settings.m_dcBlock, settings.m_iqCorrection);
         qDebug("LocalInput::applySettings: corrections: DC block: %s IQ imbalance: %s",
@@ -255,21 +223,20 @@ void LocalInput::applySettings(const LocalInputSettings& settings, bool force)
 
     if (settings.m_useReverseAPI)
     {
-        bool fullUpdate = ((m_settings.m_useReverseAPI != settings.m_useReverseAPI) && settings.m_useReverseAPI) ||
-                (m_settings.m_reverseAPIAddress != settings.m_reverseAPIAddress) ||
-                (m_settings.m_reverseAPIPort != settings.m_reverseAPIPort) ||
-                (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex);
-        webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+        bool fullUpdate = (settingsKeys.contains("useReverseAPI") && settings.m_useReverseAPI) ||
+            settingsKeys.contains("reverseAPIAddress") ||
+            settingsKeys.contains("reverseAPIPort") ||
+            settingsKeys.contains("reverseAPIDeviceIndex");
+        webapiReverseSendSettings(settingsKeys, settings, fullUpdate || force);
     }
 
-    m_settings = settings;
-    m_remoteAddress = remoteAddress;
+    if (force) {
+        m_settings = settings;
+    } else {
+        m_settings.applySettings(settingsKeys, settings);
+    }
 
-    qDebug() << "LocalInput::applySettings: "
-            << " m_dcBlock: " << m_settings.m_dcBlock
-            << " m_iqCorrection: " << m_settings.m_iqCorrection
-            << " m_fileRecordName: " << m_settings.m_fileRecordName
-            << " m_remoteAddress: " << m_remoteAddress;
+    m_remoteAddress = remoteAddress;
 }
 
 int LocalInput::webapiRunGet(
@@ -319,15 +286,31 @@ int LocalInput::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     LocalInputSettings settings = m_settings;
+    webapiUpdateDeviceSettings(settings, deviceSettingsKeys, response);
 
+    MsgConfigureLocalInput *msg = MsgConfigureLocalInput::create(settings, deviceSettingsKeys, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureLocalInput *msgToGUI = MsgConfigureLocalInput::create(settings, deviceSettingsKeys, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatDeviceSettings(response, settings);
+    return 200;
+}
+
+void LocalInput::webapiUpdateDeviceSettings(
+        LocalInputSettings& settings,
+        const QStringList& deviceSettingsKeys,
+        SWGSDRangel::SWGDeviceSettings& response)
+{
     if (deviceSettingsKeys.contains("dcBlock")) {
         settings.m_dcBlock = response.getLocalInputSettings()->getDcBlock() != 0;
     }
     if (deviceSettingsKeys.contains("iqCorrection")) {
         settings.m_iqCorrection = response.getLocalInputSettings()->getIqCorrection() != 0;
-    }
-    if (deviceSettingsKeys.contains("fileRecordName")) {
-        settings.m_fileRecordName = *response.getLocalInputSettings()->getFileRecordName();
     }
     if (deviceSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getLocalInputSettings()->getUseReverseApi() != 0;
@@ -341,30 +324,12 @@ int LocalInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("reverseAPIDeviceIndex")) {
         settings.m_reverseAPIDeviceIndex = response.getLocalInputSettings()->getReverseApiDeviceIndex();
     }
-
-    MsgConfigureLocalInput *msg = MsgConfigureLocalInput::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureLocalInput *msgToGUI = MsgConfigureLocalInput::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
-    }
-
-    webapiFormatDeviceSettings(response, settings);
-    return 200;
 }
 
 void LocalInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const LocalInputSettings& settings)
 {
     response.getLocalInputSettings()->setDcBlock(settings.m_dcBlock ? 1 : 0);
     response.getLocalInputSettings()->setIqCorrection(settings.m_iqCorrection);
-
-    if (response.getLocalInputSettings()->getFileRecordName()) {
-        *response.getLocalInputSettings()->getFileRecordName() = settings.m_fileRecordName;
-    } else {
-        response.getLocalInputSettings()->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
 
     response.getLocalInputSettings()->setUseReverseApi(settings.m_useReverseAPI ? 1 : 0);
 
@@ -395,7 +360,7 @@ void LocalInput::webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response
     response.getLocalInputReport()->setSampleRate(m_sampleRate);
 }
 
-void LocalInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const LocalInputSettings& settings, bool force)
+void LocalInput::webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const LocalInputSettings& settings, bool force)
 {
     SWGSDRangel::SWGDeviceSettings *swgDeviceSettings = new SWGSDRangel::SWGDeviceSettings();
     swgDeviceSettings->setDirection(0); // single Rx
@@ -412,9 +377,6 @@ void LocalInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, c
     if (deviceSettingsKeys.contains("iqCorrection") || force) {
         swgLocalInputSettings->setIqCorrection(settings.m_iqCorrection ? 1 : 0);
     }
-    if (deviceSettingsKeys.contains("fileRecordName") || force) {
-        swgLocalInputSettings->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
 
     QString deviceSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/device/settings")
             .arg(settings.m_reverseAPIAddress)
@@ -423,13 +385,14 @@ void LocalInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, c
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
 
     // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
 
     delete swgDeviceSettings;
 }
@@ -448,17 +411,19 @@ void LocalInput::webapiReverseSendStartStop(bool start)
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
+    QNetworkReply *reply;
 
     if (start) {
-        m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
     } else {
-        m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
     }
 
+    buffer->setParent(reply);
     delete swgDeviceSettings;
 }
 
@@ -472,10 +437,13 @@ void LocalInput::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("LocalInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("LocalInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
 }

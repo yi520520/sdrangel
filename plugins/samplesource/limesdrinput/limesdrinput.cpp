@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -33,8 +35,6 @@
 
 #include "device/deviceapi.h"
 #include "dsp/dspcommands.h"
-#include "dsp/filerecord.h"
-#include "dsp/dspengine.h"
 #include "limesdrinput.h"
 #include "limesdrinputthread.h"
 #include "limesdr/devicelimesdrparam.h"
@@ -45,17 +45,19 @@ MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgConfigureLimeSDR, Message)
 MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgGetStreamInfo, Message)
 MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgGetDeviceInfo, Message)
 MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgReportStreamInfo, Message)
-MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgFileRecord, Message)
 MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgStartStop, Message)
+MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgCalibrationResult, Message)
+MESSAGE_CLASS_DEFINITION(LimeSDRInput::MsgSaveReplay, Message)
 
 LimeSDRInput::LimeSDRInput(DeviceAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
     m_settings(),
-    m_limeSDRInputThread(0),
+    m_limeSDRInputThread(nullptr),
     m_deviceDescription("LimeSDRInput"),
     m_running(false),
     m_channelAcquired(false)
 {
+    m_sampleFifo.setLabel(m_deviceDescription);
     m_streamId.handle = 0;
     suspendRxBuddies();
     suspendTxBuddies();
@@ -63,25 +65,31 @@ LimeSDRInput::LimeSDRInput(DeviceAPI *deviceAPI) :
     resumeTxBuddies();
     resumeRxBuddies();
 
-    m_fileSink = new FileRecord(QString("test_%1.sdriq").arg(m_deviceAPI->getDeviceUID()));
     m_deviceAPI->setNbSourceStreams(1);
-    m_deviceAPI->addAncillarySink(m_fileSink);
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &LimeSDRInput::networkManagerFinished
+    );
 }
 
 LimeSDRInput::~LimeSDRInput()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &LimeSDRInput::networkManagerFinished
+    );
     delete m_networkManager;
 
     if (m_running) {
         stop();
     }
 
-    m_deviceAPI->removeAncillarySink(m_fileSink);
-    delete m_fileSink;
     suspendRxBuddies();
     suspendTxBuddies();
     closeDevice();
@@ -333,7 +341,7 @@ bool LimeSDRInput::acquireChannel()
     // set up the stream
 
     m_streamId.channel =  m_deviceShared.m_channel; // channel number
-    m_streamId.fifoSize = 1024 * 1024;              // fifo size in samples (SR / 10 take ~5MS/s)
+    m_streamId.fifoSize = 1024 * 256;               // fifo size in samples
     m_streamId.throughputVsLatency = 0.5;           // optimize for min latency
     m_streamId.isTx = false;                        // RX channel
     m_streamId.dataFmt = lms_stream_t::LMS_FMT_I12; // 12-bit integers
@@ -396,52 +404,61 @@ void LimeSDRInput::releaseChannel()
 
 void LimeSDRInput::init()
 {
-    applySettings(m_settings, true, false);
+    applySettings(m_settings, QList<QString>(), true, false);
 }
 
 bool LimeSDRInput::start()
 {
+    QMutexLocker mutexLocker(&m_mutex);
+
+    if (m_running) {
+        return true;
+    }
+
     if (!m_deviceShared.m_deviceParams->getDevice()) {
         return false;
     }
 
-    if (m_running) { stop(); }
-
-    if (!acquireChannel())
-    {
+    if (!acquireChannel()) {
         return false;
     }
 
     // start / stop streaming is done in the thread.
 
-    m_limeSDRInputThread = new LimeSDRInputThread(&m_streamId, &m_sampleFifo);
+    m_limeSDRInputThread = new LimeSDRInputThread(&m_streamId, &m_sampleFifo, &m_replayBuffer);
     qDebug("LimeSDRInput::start: thread created");
 
-    applySettings(m_settings, true);
-
     m_limeSDRInputThread->setLog2Decimation(m_settings.m_log2SoftDecim);
-
+    m_limeSDRInputThread->setIQOrder(m_settings.m_iqOrder);
     m_limeSDRInputThread->startWork();
-
     m_deviceShared.m_thread = m_limeSDRInputThread;
     m_running = true;
+
+    mutexLocker.unlock();
+    applySettings(m_settings, QList<QString>(), true);
 
     return true;
 }
 
 void LimeSDRInput::stop()
 {
-    qDebug("LimeSDRInput::stop");
+    QMutexLocker mutexLocker(&m_mutex);
 
-    if (m_limeSDRInputThread != 0)
+    if (!m_running) {
+        return;
+    }
+
+    qDebug("LimeSDRInput::stop");
+    m_running = false;
+
+    if (m_limeSDRInputThread)
     {
         m_limeSDRInputThread->stopWork();
         delete m_limeSDRInputThread;
-        m_limeSDRInputThread = 0;
+        m_limeSDRInputThread = nullptr;
     }
 
     m_deviceShared.m_thread = 0;
-    m_running = false;
 
     releaseChannel();
 }
@@ -461,12 +478,12 @@ bool LimeSDRInput::deserialize(const QByteArray& data)
         success = false;
     }
 
-    MsgConfigureLimeSDR* message = MsgConfigureLimeSDR::create(m_settings, true);
+    MsgConfigureLimeSDR* message = MsgConfigureLimeSDR::create(m_settings, QList<QString>(), true);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureLimeSDR* messageToGUI = MsgConfigureLimeSDR::create(m_settings, true);
+        MsgConfigureLimeSDR* messageToGUI = MsgConfigureLimeSDR::create(m_settings, QList<QString>(), true);
         m_guiMessageQueue->push(messageToGUI);
     }
 
@@ -494,12 +511,12 @@ void LimeSDRInput::setCenterFrequency(qint64 centerFrequency)
     LimeSDRInputSettings settings = m_settings;
     settings.m_centerFrequency = centerFrequency - (m_settings.m_ncoEnable ? m_settings.m_ncoFrequency : 0);
 
-    MsgConfigureLimeSDR* message = MsgConfigureLimeSDR::create(settings, false);
+    MsgConfigureLimeSDR* message = MsgConfigureLimeSDR::create(settings, QList<QString>{"centerFrequency"}, false);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureLimeSDR* messageToGUI = MsgConfigureLimeSDR::create(settings, false);
+        MsgConfigureLimeSDR* messageToGUI = MsgConfigureLimeSDR::create(settings, QList<QString>{"centerFrequency"}, false);
         m_guiMessageQueue->push(messageToGUI);
     }
 }
@@ -554,8 +571,7 @@ bool LimeSDRInput::handleMessage(const Message& message)
         MsgConfigureLimeSDR& conf = (MsgConfigureLimeSDR&) message;
         qDebug() << "LimeSDRInput::handleMessage: MsgConfigureLimeSDR";
 
-        if (!applySettings(conf.getSettings(), conf.getForce()))
-        {
+        if (!applySettings(conf.getSettings(), conf.getSettingsKeys(), conf.getForce())) {
             qDebug("LimeSDRInput::handleMessage config error");
         }
 
@@ -603,7 +619,12 @@ bool LimeSDRInput::handleMessage(const Message& message)
 
         if (m_settings.m_ncoEnable) // need to reset NCO after sample rate change
         {
-            applySettings(m_settings, false, true);
+            applySettings(
+                m_settings,
+                QList<QString>{"devSampleRate", "log2HardDecim", "m_centerFrequency"},
+                false,
+                true
+            );
         }
 
         int ncoShift = m_settings.m_ncoEnable ? m_settings.m_ncoFrequency : 0;
@@ -743,28 +764,6 @@ bool LimeSDRInput::handleMessage(const Message& message)
 
         return true;
     }
-    else if (MsgFileRecord::match(message))
-    {
-        MsgFileRecord& conf = (MsgFileRecord&) message;
-        qDebug() << "LimeSDRInput::handleMessage: MsgFileRecord: " << conf.getStartStop();
-
-        if (conf.getStartStop())
-        {
-            if (m_settings.m_fileRecordName.size() != 0) {
-                m_fileSink->setFileName(m_settings.m_fileRecordName);
-            } else {
-                m_fileSink->genUniqueFileName(m_deviceAPI->getDeviceUID());
-            }
-
-            m_fileSink->startRecording();
-        }
-        else
-        {
-            m_fileSink->stopRecording();
-        }
-
-        return true;
-    }
     else if (MsgStartStop::match(message))
     {
         MsgStartStop& cmd = (MsgStartStop&) message;
@@ -788,14 +787,21 @@ bool LimeSDRInput::handleMessage(const Message& message)
 
         return true;
     }
+    else if (MsgSaveReplay::match(message))
+    {
+        MsgSaveReplay& cmd = (MsgSaveReplay&) message;
+        m_replayBuffer.save(cmd.getFilename(), m_settings.m_devSampleRate, getCenterFrequency());
+        return true;
+    }
     else
     {
         return false;
     }
 }
 
-bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool force, bool forceNCOFrequency)
+bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, const QList<QString>& settingsKeys, bool force, bool forceNCOFrequency)
 {
+    qDebug() << "LimeSDRInput::applySettings: force: " << force << settings.getDebugString(settingsKeys, force);
     bool forwardChangeOwnDSP = false;
     bool forwardChangeRxDSP  = false;
     bool forwardChangeAllDSP = false;
@@ -804,46 +810,31 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
     bool ownThreadWasRunning = false;
     bool doCalibration = false;
     bool doLPCalibration = false;
-    bool setAntennaAuto = false;
     double clockGenFreq      = 0.0;
-    QList<QString> reverseAPIKeys;
 
-//  QMutexLocker mutexLocker(&m_mutex);
+    QMutexLocker mutexLocker(&m_mutex);
 
     qint64 deviceCenterFrequency = settings.m_centerFrequency;
     deviceCenterFrequency -= settings.m_transverterMode ? settings.m_transverterDeltaFrequency : 0;
     deviceCenterFrequency = deviceCenterFrequency < 0 ? 0 : deviceCenterFrequency;
 
-    if (LMS_GetClockFreq(m_deviceShared.m_deviceParams->getDevice(), LMS_CLOCK_CGEN, &clockGenFreq) != 0)
-    {
+    if (LMS_GetClockFreq(m_deviceShared.m_deviceParams->getDevice(), LMS_CLOCK_CGEN, &clockGenFreq) != 0) {
         qCritical("LimeSDRInput::applySettings: could not get clock gen frequency");
-    }
-    else
-    {
+    } else {
         qDebug() << "LimeSDRInput::applySettings: clock gen frequency: " << clockGenFreq;
     }
 
     // apply settings
 
-    if ((m_settings.m_dcBlock != settings.m_dcBlock) || force)
-    {
-        reverseAPIKeys.append("dcBlock");
+    if (settingsKeys.contains("dcBlock") || settingsKeys.contains("iqCorrection") || force) {
         m_deviceAPI->configureCorrections(settings.m_dcBlock, settings.m_iqCorrection);
     }
 
-    if ((m_settings.m_iqCorrection != settings.m_iqCorrection) || force)
+    if (settingsKeys.contains("gainMode") || force)
     {
-        reverseAPIKeys.append("iqCorrection");
-        m_deviceAPI->configureCorrections(settings.m_dcBlock, settings.m_iqCorrection);
-    }
-
-    if ((m_settings.m_gainMode != settings.m_gainMode) || force)
-    {
-        reverseAPIKeys.append("gainMode");
-
         if (settings.m_gainMode == LimeSDRInputSettings::GAIN_AUTO)
         {
-            if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+            if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
             {
                 if (LMS_SetGaindB(m_deviceShared.m_deviceParams->getDevice(),
                         LMS_CH_RX,
@@ -861,7 +852,7 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
         else
         {
-            if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+            if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
             {
                 if (DeviceLimeSDR::SetRFELNA_dB(m_deviceShared.m_deviceParams->getDevice(),
                         m_deviceShared.m_channel,
@@ -902,11 +893,9 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_AUTO) && (m_settings.m_gain != settings.m_gain))
+    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_AUTO) && settingsKeys.contains("gain"))
     {
-        reverseAPIKeys.append("gain");
-
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (LMS_SetGaindB(m_deviceShared.m_deviceParams->getDevice(),
                     LMS_CH_RX,
@@ -923,11 +912,9 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_MANUAL) && (m_settings.m_lnaGain != settings.m_lnaGain))
+    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_MANUAL) && settingsKeys.contains("lnaGain"))
     {
-        reverseAPIKeys.append("lnaGain");
-
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (DeviceLimeSDR::SetRFELNA_dB(m_deviceShared.m_deviceParams->getDevice(),
                     m_deviceShared.m_channel,
@@ -943,11 +930,9 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_MANUAL) && (m_settings.m_tiaGain != settings.m_tiaGain))
+    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_MANUAL) && settingsKeys.contains("tiaGain"))
     {
-        reverseAPIKeys.append("tiaGain");
-
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (DeviceLimeSDR::SetRFETIA_dB(m_deviceShared.m_deviceParams->getDevice(),
                     m_deviceShared.m_channel,
@@ -963,11 +948,9 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_MANUAL) && (m_settings.m_pgaGain != settings.m_pgaGain))
+    if ((m_settings.m_gainMode == LimeSDRInputSettings::GAIN_MANUAL) && settingsKeys.contains("pgaGain"))
     {
-        reverseAPIKeys.append("pgaGain");
-
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (DeviceLimeSDR::SetRBBPGA_dB(m_deviceShared.m_deviceParams->getDevice(),
                     m_deviceShared.m_channel,
@@ -983,14 +966,12 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_devSampleRate != settings.m_devSampleRate)
-       || (m_settings.m_log2HardDecim != settings.m_log2HardDecim) || force)
+    if (settingsKeys.contains("devSampleRate")
+       || settingsKeys.contains("log2HardDecim") || force)
     {
-        reverseAPIKeys.append("devSampleRate");
-        reverseAPIKeys.append("log2HardDecim");
         forwardChangeAllDSP = true; //m_settings.m_devSampleRate != settings.m_devSampleRate;
 
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (LMS_SetSampleRateDir(m_deviceShared.m_deviceParams->getDevice(),
                     LMS_CH_RX,
@@ -1011,26 +992,23 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
                         settings.m_devSampleRate,
                         1<<settings.m_log2HardDecim);
             }
+            if (settings.m_devSampleRate != m_settings.m_devSampleRate) {
+                m_replayBuffer.clear();
+            }
         }
     }
 
-    if ((m_settings.m_lpfBW != settings.m_lpfBW) || force)
+    if (settingsKeys.contains("lpfBW") || force)
     {
-        reverseAPIKeys.append("lpfBW");
-
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
-        {
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired) {
             doLPCalibration = true;
         }
     }
 
-    if ((m_settings.m_lpfFIRBW != settings.m_lpfFIRBW) ||
-        (m_settings.m_lpfFIREnable != settings.m_lpfFIREnable) || force)
+    if (settingsKeys.contains("lpfFIRBW") ||
+        settingsKeys.contains("lpfFIREnable") || force)
     {
-        reverseAPIKeys.append("lpfFIRBW");
-        reverseAPIKeys.append("lpfFIREnable");
-
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (LMS_SetGFIRLPF(m_deviceShared.m_deviceParams->getDevice(),
                     LMS_CH_RX,
@@ -1052,14 +1030,12 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_ncoFrequency != settings.m_ncoFrequency) ||
-        (m_settings.m_ncoEnable != settings.m_ncoEnable) || force || forceNCOFrequency)
+    if (settingsKeys.contains("ncoFrequency") ||
+        settingsKeys.contains("ncoEnable") || force || forceNCOFrequency)
     {
-        reverseAPIKeys.append("ncoFrequency");
-        reverseAPIKeys.append("ncoEnable");
         forwardChangeOwnDSP = true;
 
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (DeviceLimeSDR::setNCOFrequency(m_deviceShared.m_deviceParams->getDevice(),
                     LMS_CH_RX,
@@ -1082,31 +1058,34 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_log2SoftDecim != settings.m_log2SoftDecim) || force)
+    if (settingsKeys.contains("log2SoftDecim") || force)
     {
-        reverseAPIKeys.append("log2SoftDecim");
         forwardChangeOwnDSP = true;
         m_deviceShared.m_log2Soft = settings.m_log2SoftDecim; // for buddies
 
-        if (m_limeSDRInputThread != 0)
+        if (m_limeSDRInputThread)
         {
             m_limeSDRInputThread->setLog2Decimation(settings.m_log2SoftDecim);
             qDebug() << "LimeSDRInput::applySettings: set soft decimation to " << (1<<settings.m_log2SoftDecim);
         }
     }
 
-    if ((m_settings.m_antennaPath != settings.m_antennaPath) || force)
+    if (settingsKeys.contains("iqOrder") || force)
     {
-        reverseAPIKeys.append("antennaPath");
+        if (m_limeSDRInputThread) {
+            m_limeSDRInputThread->setIQOrder(settings.m_iqOrder);
+        }
+    }
 
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+    if (settingsKeys.contains("antennaPath") || force)
+    {
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (DeviceLimeSDR::setRxAntennaPath(m_deviceShared.m_deviceParams->getDevice(),
                     m_deviceShared.m_channel,
                     settings.m_antennaPath))
             {
                 doCalibration = true;
-                //setAntennaAuto = (settings.m_antennaPath == 0);
                 qDebug("LimeSDRInput::applySettings: set antenna path to %d on channel %d",
                         (int) settings.m_antennaPath,
                         m_deviceShared.m_channel);
@@ -1119,17 +1098,14 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_centerFrequency != settings.m_centerFrequency)
-        || (m_settings.m_transverterMode != settings.m_transverterMode)
-        || (m_settings.m_transverterDeltaFrequency != settings.m_transverterDeltaFrequency)
-        || setAntennaAuto || force)
+    if (settingsKeys.contains("centerFrequency")
+        || settingsKeys.contains("transverterMode")
+        || settingsKeys.contains("transverterDeltaFrequency")
+        || force)
     {
-        reverseAPIKeys.append("centerFrequency");
-        reverseAPIKeys.append("transverterMode");
-        reverseAPIKeys.append("transverterDeltaFrequency");
         forwardChangeRxDSP = true;
 
-        if (m_deviceShared.m_deviceParams->getDevice() != 0 && m_channelAcquired)
+        if (m_deviceShared.m_deviceParams->getDevice() && m_channelAcquired)
         {
             if (LMS_SetClockFreq(m_deviceShared.m_deviceParams->getDevice(), LMS_CLOCK_SXR, deviceCenterFrequency) < 0)
             {
@@ -1144,12 +1120,9 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         }
     }
 
-    if ((m_settings.m_extClock != settings.m_extClock) ||
-        (settings.m_extClock && (m_settings.m_extClockFreq != settings.m_extClockFreq)) || force)
+    if (settingsKeys.contains("extClock") ||
+        (settings.m_extClock && settingsKeys.contains("extClockFreq")) || force)
     {
-        reverseAPIKeys.append("extClock");
-        reverseAPIKeys.append("extClockFreq");
-
         if (DeviceLimeSDR::setClockSource(m_deviceShared.m_deviceParams->getDevice(),
                 settings.m_extClock,
                 settings.m_extClockFreq))
@@ -1171,47 +1144,60 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
     if ((m_deviceShared.m_deviceParams->m_type != DeviceLimeSDRParams::LimeMini)
         && (m_deviceShared.m_deviceParams->m_type != DeviceLimeSDRParams::LimeUndefined))
     {
-        if ((m_settings.m_gpioDir != settings.m_gpioDir) || force)
+        if (settingsKeys.contains("gpioDir") || force)
         {
-            reverseAPIKeys.append("gpioDir");
-
             if (LMS_GPIODirWrite(m_deviceShared.m_deviceParams->getDevice(), &settings.m_gpioDir, 1) != 0)
             {
-                qCritical("LimeSDROutput::applySettings: could not set GPIO directions to %u", settings.m_gpioDir);
+                qCritical("LimeSDRInput::applySettings: could not set GPIO directions to %u", settings.m_gpioDir);
             }
             else
             {
                 forwardGPIOChange = true;
-                qDebug("LimeSDROutput::applySettings: GPIO directions set to %u", settings.m_gpioDir);
+                qDebug("LimeSDRInput::applySettings: GPIO directions set to %u", settings.m_gpioDir);
             }
         }
 
-        if ((m_settings.m_gpioPins != settings.m_gpioPins) || force)
+        if (settingsKeys.contains("gpioPins") || force)
         {
-            reverseAPIKeys.append("gpioPins");
-
             if (LMS_GPIOWrite(m_deviceShared.m_deviceParams->getDevice(), &settings.m_gpioPins, 1) != 0)
             {
-                qCritical("LimeSDROutput::applySettings: could not set GPIO pins to %u", settings.m_gpioPins);
+                qCritical("LimeSDRInput::applySettings: could not set GPIO pins to %u", settings.m_gpioPins);
             }
             else
             {
                 forwardGPIOChange = true;
-                qDebug("LimeSDROutput::applySettings: GPIO pins set to %u", settings.m_gpioPins);
+                qDebug("LimeSDRInput::applySettings: GPIO pins set to %u", settings.m_gpioPins);
             }
         }
     }
 
     if (settings.m_useReverseAPI)
     {
-        bool fullUpdate = ((m_settings.m_useReverseAPI != settings.m_useReverseAPI) && settings.m_useReverseAPI) ||
-                (m_settings.m_reverseAPIAddress != settings.m_reverseAPIAddress) ||
-                (m_settings.m_reverseAPIPort != settings.m_reverseAPIPort) ||
-                (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex);
-        webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+        bool fullUpdate = (settingsKeys.contains("useReverseAPI") && settings.m_useReverseAPI) ||
+            settingsKeys.contains("reverseAPIAddress") ||
+            settingsKeys.contains("reverseAPIPort") ||
+            settingsKeys.contains("reverseAPIDeviceIndex");
+        webapiReverseSendSettings(settingsKeys, settings, fullUpdate || force);
     }
 
-    m_settings = settings;
+    if (force) {
+        m_settings = settings;
+    } else {
+        m_settings.applySettings(settingsKeys, settings);
+    }
+
+    if (settingsKeys.contains("replayLength") || settingsKeys.contains("devSampleRate") || force) {
+        m_replayBuffer.setSize(m_settings.m_replayLength, m_settings.m_devSampleRate);
+    }
+
+    if (settingsKeys.contains("replayOffset") || settingsKeys.contains("devSampleRate")  || force) {
+        m_replayBuffer.setReadOffset(((unsigned)(m_settings.m_replayOffset * m_settings.m_devSampleRate)) * 2);
+    }
+
+    if (settingsKeys.contains("replayLoop") || force) {
+        m_replayBuffer.setLoop(m_settings.m_replayLoop);
+    }
+
     double clockGenFreqAfter;
 
     if (LMS_GetClockFreq(m_deviceShared.m_deviceParams->getDevice(), LMS_CLOCK_CGEN, &clockGenFreqAfter) != 0)
@@ -1237,17 +1223,19 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
 
         if (doCalibration)
         {
-            if (LMS_Calibrate(m_deviceShared.m_deviceParams->getDevice(),
+            double bw = std::max((double)m_settings.m_devSampleRate, 2500000.0); // Min supported calibration bandwidth is 2.5MHz
+            bool calibrationOK = LMS_Calibrate(m_deviceShared.m_deviceParams->getDevice(),
                     LMS_CH_RX,
                     m_deviceShared.m_channel,
-                    m_settings.m_devSampleRate,
-                    0) < 0)
-            {
+                    bw,
+                    0) == 0;
+            if (!calibrationOK) {
                 qCritical("LimeSDRInput::applySettings: calibration failed on Rx channel %d", m_deviceShared.m_channel);
-            }
-            else
-            {
+            } else {
                 qDebug("LimeSDRInput::applySettings: calibration successful on Rx channel %d", m_deviceShared.m_channel);
+            }
+            if (m_guiMessageQueue) {
+                m_guiMessageQueue->push(MsgCalibrationResult::create(calibrationOK));
             }
         }
 
@@ -1339,7 +1327,6 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
         int sampleRate = m_settings.m_devSampleRate/(1<<m_settings.m_log2SoftDecim);
         int ncoShift = m_settings.m_ncoEnable ? m_settings.m_ncoFrequency : 0;
         DSPSignalNotification *notif = new DSPSignalNotification(sampleRate, m_settings.m_centerFrequency + ncoShift);
-        m_fileSink->handleMessage(*notif); // forward to file sink
         m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 
@@ -1395,30 +1382,11 @@ bool LimeSDRInput::applySettings(const LimeSDRInputSettings& settings, bool forc
 
     QLocale loc;
 
-    qDebug().noquote() << "LimeSDRInput::applySettings: center freq: " << m_settings.m_centerFrequency << " Hz"
-            << " m_transverterMode: " << m_settings.m_transverterMode
-            << " m_transverterDeltaFrequency: " << m_settings.m_transverterDeltaFrequency
-            << " deviceCenterFrequency: " << deviceCenterFrequency
-            << " device stream sample rate: " << loc.toString(m_settings.m_devSampleRate) << "S/s"
-            << " sample rate with soft decimation: " << loc.toString( m_settings.m_devSampleRate/(1<<m_settings.m_log2SoftDecim)) << "S/s"
-            << " ADC sample rate with hard decimation: " << loc.toString(m_settings.m_devSampleRate*(1<<m_settings.m_log2HardDecim)) << "S/s"
-            << " m_log2HardDecim: " << m_settings.m_log2HardDecim
-            << " m_log2SoftDecim: " << m_settings.m_log2SoftDecim
-            << " m_gain: " << m_settings.m_gain
-            << " m_lpfBW: " << loc.toString(static_cast<int>(m_settings.m_lpfBW))
-            << " m_lpfFIRBW: " << loc.toString(static_cast<int>(m_settings.m_lpfFIRBW))
-            << " m_lpfFIREnable: " << m_settings.m_lpfFIREnable
-            << " m_ncoEnable: " << m_settings.m_ncoEnable
-            << " m_ncoFrequency: " << loc.toString(m_settings.m_ncoFrequency)
-            << " m_antennaPath: " << m_settings.m_antennaPath
-            << " m_extClock: " << m_settings.m_extClock
-            << " m_extClockFreq: " << loc.toString(m_settings.m_extClockFreq)
-            << " m_gpioDir: " << m_settings.m_gpioDir
-            << " m_gpioPins: " << m_settings.m_gpioPins
-            << " force: " << force
-            << " forceNCOFrequency: " << forceNCOFrequency
-            << " doCalibration: " << doCalibration
-            << " doLPCalibration: " << doLPCalibration;
+    qDebug().noquote() << "LimeSDRInput::applySettings: center freq: "
+        << " force: " << force
+        << " forceNCOFrequency: " << forceNCOFrequency
+        << " doCalibration: " << doCalibration
+        << " doLPCalibration: " << doLPCalibration;
 
     return true;
 }
@@ -1442,7 +1410,26 @@ int LimeSDRInput::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     LimeSDRInputSettings settings = m_settings;
+    webapiUpdateDeviceSettings(settings, deviceSettingsKeys, response);
 
+    MsgConfigureLimeSDR *msg = MsgConfigureLimeSDR::create(settings, deviceSettingsKeys, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureLimeSDR *msgToGUI = MsgConfigureLimeSDR::create(settings, deviceSettingsKeys, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatDeviceSettings(response, settings);
+    return 200;
+}
+
+void LimeSDRInput::webapiUpdateDeviceSettings(
+        LimeSDRInputSettings& settings,
+        const QStringList& deviceSettingsKeys,
+        SWGSDRangel::SWGDeviceSettings& response)
+{
     if (deviceSettingsKeys.contains("antennaPath")) {
         settings.m_antennaPath = (LimeSDRInputSettings::PathRFE) response.getLimeSdrInputSettings()->getAntennaPath();
     }
@@ -1479,6 +1466,9 @@ int LimeSDRInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("log2SoftDecim")) {
         settings.m_log2SoftDecim = response.getLimeSdrInputSettings()->getLog2SoftDecim();
     }
+    if (deviceSettingsKeys.contains("iqOrder")) {
+        settings.m_iqOrder = response.getLimeSdrInputSettings()->getIqOrder() != 0;
+    }
     if (deviceSettingsKeys.contains("lpfBW")) {
         settings.m_lpfBW = response.getLimeSdrInputSettings()->getLpfBw();
     }
@@ -1506,9 +1496,6 @@ int LimeSDRInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("transverterMode")) {
         settings.m_transverterMode = response.getLimeSdrInputSettings()->getTransverterMode() != 0;
     }
-    if (deviceSettingsKeys.contains("fileRecordName")) {
-        settings.m_fileRecordName = *response.getLimeSdrInputSettings()->getFileRecordName();
-    }
     if (deviceSettingsKeys.contains("gpioDir")) {
         settings.m_gpioDir = response.getLimeSdrInputSettings()->getGpioDir() & 0xFF;
     }
@@ -1527,18 +1514,6 @@ int LimeSDRInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("reverseAPIDeviceIndex")) {
         settings.m_reverseAPIDeviceIndex = response.getLimeSdrInputSettings()->getReverseApiDeviceIndex();
     }
-
-    MsgConfigureLimeSDR *msg = MsgConfigureLimeSDR::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureLimeSDR *msgToGUI = MsgConfigureLimeSDR::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
-    }
-
-    webapiFormatDeviceSettings(response, settings);
-    return 200;
 }
 
 void LimeSDRInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const LimeSDRInputSettings& settings)
@@ -1555,6 +1530,7 @@ void LimeSDRInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& re
     response.getLimeSdrInputSettings()->setLnaGain(settings.m_lnaGain);
     response.getLimeSdrInputSettings()->setLog2HardDecim(settings.m_log2HardDecim);
     response.getLimeSdrInputSettings()->setLog2SoftDecim(settings.m_log2SoftDecim);
+    response.getLimeSdrInputSettings()->setIqOrder(settings.m_iqOrder ? 1 : 0);
     response.getLimeSdrInputSettings()->setLpfBw(settings.m_lpfBW);
     response.getLimeSdrInputSettings()->setLpfFirEnable(settings.m_lpfFIREnable ? 1 : 0);
     response.getLimeSdrInputSettings()->setLpfFirbw(settings.m_lpfFIRBW);
@@ -1564,13 +1540,6 @@ void LimeSDRInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& re
     response.getLimeSdrInputSettings()->setTiaGain(settings.m_tiaGain);
     response.getLimeSdrInputSettings()->setTransverterDeltaFrequency(settings.m_transverterDeltaFrequency);
     response.getLimeSdrInputSettings()->setTransverterMode(settings.m_transverterMode ? 1 : 0);
-
-    if (response.getLimeSdrInputSettings()->getFileRecordName()) {
-        *response.getLimeSdrInputSettings()->getFileRecordName() = settings.m_fileRecordName;
-    } else {
-        response.getLimeSdrInputSettings()->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
-
     response.getLimeSdrInputSettings()->setGpioDir(settings.m_gpioDir);
     response.getLimeSdrInputSettings()->setGpioPins(settings.m_gpioPins);
     response.getLimeSdrInputSettings()->setUseReverseApi(settings.m_useReverseAPI ? 1 : 0);
@@ -1664,7 +1633,7 @@ void LimeSDRInput::webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& respon
     response.getLimeSdrInputReport()->setGpioPins(gpioPins);
 }
 
-void LimeSDRInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const LimeSDRInputSettings& settings, bool force)
+void LimeSDRInput::webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const LimeSDRInputSettings& settings, bool force)
 {
     SWGSDRangel::SWGDeviceSettings *swgDeviceSettings = new SWGSDRangel::SWGDeviceSettings();
     swgDeviceSettings->setDirection(0); // single Rx
@@ -1711,6 +1680,9 @@ void LimeSDRInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys,
     if (deviceSettingsKeys.contains("log2SoftDecim") || force) {
         swgLimeSdrInputSettings->setLog2SoftDecim(settings.m_log2SoftDecim);
     }
+    if (deviceSettingsKeys.contains("iqOrder") || force) {
+        swgLimeSdrInputSettings->setIqOrder(settings.m_iqOrder ? 1 : 0);
+    }
     if (deviceSettingsKeys.contains("lpfBW") || force) {
         swgLimeSdrInputSettings->setLpfBw(settings.m_lpfBW);
     }
@@ -1738,9 +1710,6 @@ void LimeSDRInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys,
     if (deviceSettingsKeys.contains("transverterMode") || force) {
         swgLimeSdrInputSettings->setTransverterMode(settings.m_transverterMode ? 1 : 0);
     }
-    if (deviceSettingsKeys.contains("fileRecordName") || force) {
-        swgLimeSdrInputSettings->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
     if (deviceSettingsKeys.contains("gpioDir") || force) {
         swgLimeSdrInputSettings->setGpioDir(settings.m_gpioDir & 0xFF);
     }
@@ -1755,13 +1724,14 @@ void LimeSDRInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys,
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
 
     // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
 
     delete swgDeviceSettings;
 }
@@ -1780,17 +1750,19 @@ void LimeSDRInput::webapiReverseSendStartStop(bool start)
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
+    QNetworkReply *reply;
 
     if (start) {
-        m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
     } else {
-        m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
     }
 
+    buffer->setParent(reply);
     delete swgDeviceSettings;
 }
 
@@ -1804,10 +1776,13 @@ void LimeSDRInput::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("LimeSDRInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("LimeSDRInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
 }

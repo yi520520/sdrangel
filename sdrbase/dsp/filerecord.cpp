@@ -1,5 +1,12 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015-2018 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2015-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
+// Copyright (C) 2020 Felix Schneider <felix@fx-schneider.de>                    //
+// Copyright (C) 2021, 2023 Jon Beniston, M7RCE <jon@beniston.com>               //
+// Copyright (C) 2021 Andreas Baulig <free.geronimo@hotmail.de>                  //
+// Copyright (C) 2021 Christoph Berg <myon@debian.org>                           //
+// Copyright (C) 2022 CRD716 <crd716@gmail.com>                                  //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,26 +29,26 @@
 #include <QDateTime>
 
 #include "dsp/dspcommands.h"
-#include "util/simpleserializer.h"
 #include "util/message.h"
 
 #include "filerecord.h"
 
-FileRecord::FileRecord() :
-	BasebandSampleSink(),
-    m_fileName("test.sdriq"),
-    m_sampleRate(0),
-    m_centerFrequency(0),
+FileRecord::FileRecord(quint32 sampleRate, quint64 centerFrequency) :
+	FileRecordInterface(),
+    m_fileBase("test"),
+    m_sampleRate(sampleRate),
+    m_centerFrequency(centerFrequency),
 	m_recordOn(false),
     m_recordStart(false),
-    m_byteCount(0)
+    m_byteCount(0),
+    m_msShift(0)
 {
-	setObjectName("FileSink");
+	setObjectName("FileRecord");
 }
 
-FileRecord::FileRecord(const QString& filename) :
-    BasebandSampleSink(),
-    m_fileName(filename),
+FileRecord::FileRecord(const QString& fileBase) :
+    FileRecordInterface(),
+    m_fileBase(fileBase),
     m_sampleRate(0),
     m_centerFrequency(0),
     m_recordOn(false),
@@ -56,11 +63,11 @@ FileRecord::~FileRecord()
     stopRecording();
 }
 
-void FileRecord::setFileName(const QString& filename)
+void FileRecord::setFileName(const QString& fileBase)
 {
     if (!m_recordOn)
     {
-        m_fileName = filename;
+        m_fileBase = fileBase;
     }
 }
 
@@ -75,7 +82,10 @@ void FileRecord::genUniqueFileName(uint deviceUID, int istream)
 
 void FileRecord::feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool positiveOnly)
 {
+    QMutexLocker mutexLocker(&m_mutex);
+
     (void) positiveOnly;
+
     // if no recording is active, send the samples to /dev/null
     if(!m_recordOn)
         return;
@@ -102,39 +112,91 @@ void FileRecord::stop()
     stopRecording();
 }
 
-void FileRecord::startRecording()
+bool FileRecord::startRecording()
 {
+    QMutexLocker mutexLocker(&m_mutex);
+
+    if (m_recordOn) {
+        stopRecording();
+    }
+
+#ifdef ANDROID
+    if (!m_sampleFile.isOpen())
+#else
     if (!m_sampleFile.is_open())
+#endif
     {
     	qDebug() << "FileRecord::startRecording";
-        m_sampleFile.open(m_fileName.toStdString().c_str(), std::ios::binary);
+#ifdef ANDROID
+        // FIXME: No idea how to write to a file where the filename doesn't come from the file picker
+        m_currentFileName = m_fileBase + ".sdriq";
+        m_sampleFile.setFileName(m_currentFileName);
+        if (!m_sampleFile.open(QIODevice::ReadWrite))
+        {
+            qWarning() << "FileRecord::startRecording: failed to open file: " << m_currentFileName << " error " << m_sampleFile.error();
+            return false;
+        }
+#else
+        m_currentFileName = m_fileBase + "." + QDateTime::currentDateTimeUtc().toString("yyyy-MM-ddTHH_mm_ss_zzz") + ".sdriq"; // Don't use QString::arg on Android, as filename can contain %2
+        m_sampleFile.open(m_currentFileName.toStdString().c_str(), std::ios::binary);
+        if (!m_sampleFile.is_open())
+        {
+            qWarning() << "FileRecord::startRecording: failed to open file: " << m_currentFileName;
+            return false;
+        }
+#endif
         m_recordOn = true;
         m_recordStart = true;
         m_byteCount = 0;
     }
+    return true;
 }
 
-void FileRecord::stopRecording()
+bool FileRecord::stopRecording()
 {
+    QMutexLocker mutexLocker(&m_mutex);
+
+#ifdef ANDROID
+    if (m_sampleFile.isOpen())
+#else
     if (m_sampleFile.is_open())
+#endif
     {
     	qDebug() << "FileRecord::stopRecording";
         m_sampleFile.close();
         m_recordOn = false;
         m_recordStart = false;
+#ifdef ANDROID
+#else
+        if (m_sampleFile.bad())
+        {
+            qWarning() << "FileRecord::stopRecording: an error occurred while writing to " << m_currentFileName;
+            return false;
+        }
+#endif
     }
+    return true;
 }
 
 bool FileRecord::handleMessage(const Message& message)
 {
 	if (DSPSignalNotification::match(message))
 	{
+        QMutexLocker mutexLocker(&m_mutex);
 		DSPSignalNotification& notif = (DSPSignalNotification&) message;
-		m_sampleRate = notif.getSampleRate();
-		m_centerFrequency = notif.getCenterFrequency();
-		qDebug() << "FileRecord::handleMessage: DSPSignalNotification: m_inputSampleRate: " << m_sampleRate
-				<< " m_centerFrequency: " << m_centerFrequency;
-		return true;
+		quint32 sampleRate = notif.getSampleRate();
+		qint64 centerFrequency = notif.getCenterFrequency();
+		qDebug() << "FileRecord::handleMessage: DSPSignalNotification: inputSampleRate: " << sampleRate
+				<< " centerFrequency: " << centerFrequency;
+
+        if (m_recordOn && (m_sampleRate != sampleRate)) {
+            startRecording();
+        }
+
+        m_sampleRate = sampleRate;
+        m_centerFrequency = centerFrequency;
+
+        return true;
 	}
     else
     {
@@ -142,23 +204,13 @@ bool FileRecord::handleMessage(const Message& message)
     }
 }
 
-void FileRecord::handleConfigure(const QString& fileName)
-{
-    if (fileName != m_fileName)
-    {
-        stopRecording();
-    }
-
-	m_fileName = fileName;
-}
-
 void FileRecord::writeHeader()
 {
     Header header;
     header.sampleRate = m_sampleRate;
     header.centerFrequency = m_centerFrequency;
-    std::time_t ts = time(0);
-    header.startTimeStamp = ts;
+    qint64 ts = QDateTime::currentMSecsSinceEpoch();
+    header.startTimeStamp = (quint64)(ts + m_msShift);
     header.sampleSize = SDR_RX_SAMP_SZ;
     header.filler = 0;
 
@@ -173,7 +225,23 @@ bool FileRecord::readHeader(std::ifstream& sampleFile, Header& header)
     return header.crc32 == crc32.checksum();
 }
 
+bool FileRecord::readHeader(QFile& sampleFile, Header& header)
+{
+    sampleFile.read((char *) &header, sizeof(Header));
+    boost::crc_32_type crc32;
+    crc32.process_bytes(&header, 28);
+    return header.crc32 == crc32.checksum();
+}
+
 void FileRecord::writeHeader(std::ofstream& sampleFile, Header& header)
+{
+    boost::crc_32_type crc32;
+    crc32.process_bytes(&header, 28);
+    header.crc32 = crc32.checksum();
+    sampleFile.write((const char *) &header, sizeof(Header));
+}
+
+void FileRecord::writeHeader(QFile& sampleFile, Header& header)
 {
     boost::crc_32_type crc32;
     crc32.process_bytes(&header, 28);

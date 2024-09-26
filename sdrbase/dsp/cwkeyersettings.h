@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2016-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,8 +24,9 @@
 #include <QByteArray>
 
 #include "export.h"
+#include "settings/serializable.h"
 
-class SDRBASE_API CWKeyerSettings
+class SDRBASE_API CWKeyerSettings: public Serializable
 {
 public:
     typedef enum
@@ -52,6 +54,8 @@ public:
 
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    virtual void formatTo(SWGSDRangel::SWGObject *swgObject) const;
+    virtual void updateFrom(const QStringList& keys, const SWGSDRangel::SWGObject *swgObject);
 };
 
 

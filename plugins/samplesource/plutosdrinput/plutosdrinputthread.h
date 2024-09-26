@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -42,6 +45,7 @@ public:
     virtual bool isRunning() { return m_running; }
     void setLog2Decimation(unsigned int log2_decim);
     void setFcPos(int fcPos);
+    void setIQOrder(bool iqOrder) { m_iqOrder = iqOrder; }
 
 private:
     QMutex m_startWaitMutex;
@@ -49,7 +53,7 @@ private:
     bool m_running;
 
     DevicePlutoSDRBox *m_plutoBox;
-    int16_t *m_buf;               //!< holds I+Q values of each sample from devce
+    int16_t *m_buf;               //!< holds I+Q values of each sample from device
     int16_t *m_bufConv;           //!< holds I+Q values of each sample converted to host format via iio_channel_convert
     uint32_t m_blockSizeSamples;  //!< buffer sizes in number of (I,Q) samples
     SampleVector m_convertBuffer; //!< vector of (I,Q) samples used for decimation and scaling conversion
@@ -59,12 +63,14 @@ private:
     unsigned int m_log2Decim; // soft decimation
     int m_fcPos;
     float m_phasor;
+    bool m_iqOrder;
 
-    Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12> m_decimators;
+    Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12, true> m_decimatorsIQ;
+    Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12, false> m_decimatorsQI;
 
     void run();
-    void convert(const qint16* buf, qint32 len);
-
+    void convertIQ(const qint16* buf, qint32 len);
+    void convertQI(const qint16* buf, qint32 len);
 };
 
 

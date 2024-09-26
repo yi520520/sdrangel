@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef PLUGINS_SAMPLESOURCE_BLADERF2INPUT_BLADERF2INPUTGUI_H_
 #define PLUGINS_SAMPLESOURCE_BLADERF2INPUT_BLADERF2INPUTGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -32,7 +33,7 @@ namespace Ui {
     class Bladerf2InputGui;
 }
 
-class BladeRF2InputGui : public QWidget, public PluginInstanceGUI {
+class BladeRF2InputGui : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -40,24 +41,18 @@ public:
     virtual ~BladeRF2InputGui();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     virtual void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
 
 private:
     Ui::Bladerf2InputGui* ui;
 
-    DeviceUISet* m_deviceUISet;
     bool m_forceSettings;
     bool m_doApplySettings;
     BladeRF2InputSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
     QTimer m_updateTimer;
     QTimer m_statusTimer;
@@ -67,6 +62,10 @@ private:
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
     int m_lastEngineState;
     MessageQueue m_inputMessageQueue;
+    int m_gainMin;
+    int m_gainMax;
+    int m_gainStep;
+    float m_gainScale;
 
     void displaySettings();
     void displaySampleRate();
@@ -75,7 +74,11 @@ private:
     void updateSampleRateAndFrequency();
     void updateFrequencyLimits();
     void setCenterFrequencySetting(uint64_t kHzValue);
+    float getGainDB(int gainValue);
+    int getGainValue(float gainDB);
     void blockApplySettings(bool block);
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
@@ -92,12 +95,10 @@ private slots:
     void on_gain_valueChanged(int value);
     void on_transverter_clicked();
     void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void on_sampleRateMode_toggled(bool checked);
     void updateHardware();
     void updateStatus();
     void openDeviceSettingsDialog(const QPoint& p);
-
 };
 
 #endif /* PLUGINS_SAMPLESOURCE_BLADERF2INPUT_BLADERF2INPUTGUI_H_ */

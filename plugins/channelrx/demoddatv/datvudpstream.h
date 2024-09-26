@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,21 +23,26 @@
 #include <QUdpSocket>
 #include <QHostAddress>
 #include <QString>
+#include <QObject>
 
-class QString;
-
-class DATVUDPStream
+class DATVUDPStream : public QObject
 {
+    Q_OBJECT
 public:
     DATVUDPStream(int tsBlockSize);
     ~DATVUDPStream();
 
     void pushData(const char *chrData, int nbTSBlocks);
+    void resetTotalReceived();
     void setActive(bool active) { m_active = active; }
+    bool isActive() const { return m_active; }
     bool setAddress(const QString& address) { return m_address.setAddress(address); }
     void setPort(quint16 port) { m_port = port; }
 
     static const int m_tsBlocksPerFrame;
+
+signals:
+    void fifoData(int dataBytes, int percentBuffer, qint64 totalReceived);
 
 private:
     bool m_active;
@@ -46,6 +52,9 @@ private:
     int m_tsBlockSize;
     int m_tsBlockIndex;
     char *m_tsBuffer;
+    int m_dataBytes;
+    qint64 m_totalBytes;
+    int m_fifoSignalCount;
 };
 
 #endif // DATVUDPSTREAM_H

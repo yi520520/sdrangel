@@ -1,6 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -15,6 +14,9 @@
 // You should have received a copy of the GNU General Public License             //
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
+
+#ifndef INCLUDE_SDRBASE_DSP_PHASELOCK
+#define INCLUDE_SDRBASE_DSP_PHASELOCK
 
 #include <vector>
 #include "dsp/dsptypes.h"
@@ -180,3 +182,5 @@ protected:
         samples_out[3] = m_phase; // Pilot phase
     }
 };
+
+#endif // INCLUDE_SDRBASE_DSP_PHASELOCK

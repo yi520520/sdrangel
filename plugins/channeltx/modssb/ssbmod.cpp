@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Stefan Biereigel <stefan@biereigel.de>                     //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -15,603 +18,167 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include "ssbmod.h"
-
 #include <QTime>
 #include <QDebug>
 #include <QMutexLocker>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QBuffer>
+#include <QThread>
 
 #include <stdio.h>
 #include <complex.h>
 #include <algorithm>
 
 #include "SWGChannelSettings.h"
+#include "SWGWorkspaceInfo.h"
 #include "SWGChannelReport.h"
 #include "SWGSSBModReport.h"
 
-#include "dsp/upchannelizer.h"
-#include "dsp/dspengine.h"
-#include "dsp/threadedbasebandsamplesource.h"
 #include "dsp/dspcommands.h"
+#include "dsp/cwkeyer.h"
 #include "device/deviceapi.h"
 #include "util/db.h"
+#include "maincore.h"
+
+#include "ssbmodbaseband.h"
+#include "ssbmod.h"
 
 MESSAGE_CLASS_DEFINITION(SSBMod::MsgConfigureSSBMod, Message)
-MESSAGE_CLASS_DEFINITION(SSBMod::MsgConfigureChannelizer, Message)
 MESSAGE_CLASS_DEFINITION(SSBMod::MsgConfigureFileSourceName, Message)
 MESSAGE_CLASS_DEFINITION(SSBMod::MsgConfigureFileSourceSeek, Message)
 MESSAGE_CLASS_DEFINITION(SSBMod::MsgConfigureFileSourceStreamTiming, Message)
 MESSAGE_CLASS_DEFINITION(SSBMod::MsgReportFileSourceStreamData, Message)
 MESSAGE_CLASS_DEFINITION(SSBMod::MsgReportFileSourceStreamTiming, Message)
 
-const QString SSBMod::m_channelIdURI = "sdrangel.channeltx.modssb";
-const QString SSBMod::m_channelId = "SSBMod";
-const int SSBMod::m_levelNbSamples = 480; // every 10ms
-const int SSBMod::m_ssbFftLen = 1024;
+const char* const SSBMod::m_channelIdURI = "sdrangel.channeltx.modssb";
+const char* const SSBMod::m_channelId = "SSBMod";
 
 SSBMod::SSBMod(DeviceAPI *deviceAPI) :
     ChannelAPI(m_channelIdURI, ChannelAPI::StreamSingleSource),
     m_deviceAPI(deviceAPI),
-    m_basebandSampleRate(48000),
-    m_outputSampleRate(48000),
-    m_inputFrequencyOffset(0),
-    m_SSBFilter(0),
-    m_DSBFilter(0),
-	m_SSBFilterBuffer(0),
-	m_DSBFilterBuffer(0),
-	m_SSBFilterBufferIndex(0),
-	m_DSBFilterBufferIndex(0),
-    m_sampleSink(0),
-    m_audioFifo(4800),
-    m_feedbackAudioFifo(48000),
-	m_settingsMutex(QMutex::Recursive),
-	m_fileSize(0),
-	m_recordLength(0),
-	m_sampleRate(48000),
-	m_levelCalcCount(0),
-	m_peakLevel(0.0f),
-	m_levelSum(0.0f),
-	m_agcStepLength(2400)
+    m_spectrumVis(SDR_TX_SCALEF)
 {
 	setObjectName(m_channelId);
-
-	DSPEngine::instance()->getAudioDeviceManager()->addAudioSource(&m_audioFifo, getInputMessageQueue());
-    m_audioSampleRate = DSPEngine::instance()->getAudioDeviceManager()->getInputSampleRate();
-
-    DSPEngine::instance()->getAudioDeviceManager()->addAudioSink(&m_feedbackAudioFifo, getInputMessageQueue());
-    m_feedbackAudioSampleRate = DSPEngine::instance()->getAudioDeviceManager()->getOutputSampleRate();
-    applyFeedbackAudioSampleRate(m_feedbackAudioSampleRate);
-
-    m_SSBFilter = new fftfilt(m_settings.m_lowCutoff / m_audioSampleRate, m_settings.m_bandwidth / m_audioSampleRate, m_ssbFftLen);
-    m_DSBFilter = new fftfilt((2.0f * m_settings.m_bandwidth) / m_audioSampleRate, 2 * m_ssbFftLen);
-    m_SSBFilterBuffer = new Complex[m_ssbFftLen>>1]; // filter returns data exactly half of its size
-    m_DSBFilterBuffer = new Complex[m_ssbFftLen];
-    std::fill(m_SSBFilterBuffer, m_SSBFilterBuffer+(m_ssbFftLen>>1), Complex{0,0});
-    std::fill(m_DSBFilterBuffer, m_DSBFilterBuffer+m_ssbFftLen, Complex{0,0});
-//    memset(m_SSBFilterBuffer, 0, sizeof(Complex)*(m_ssbFftLen>>1));
-//    memset(m_DSBFilterBuffer, 0, sizeof(Complex)*(m_ssbFftLen));
-
-	m_audioBuffer.resize(1<<14);
-	m_audioBufferFill = 0;
-
-	m_feedbackAudioBuffer.resize(1<<14);
-	m_feedbackAudioBufferFill = 0;
-
-    m_sum.real(0.0f);
-    m_sum.imag(0.0f);
-    m_undersampleCount = 0;
-    m_sumCount = 0;
-
-	m_magsq = 0.0;
-
-	m_toneNco.setFreq(1000.0, m_audioSampleRate);
-	m_cwKeyer.setSampleRate(48000);
-    m_cwKeyer.reset();
-
-    m_audioCompressor.initSimple(
-        m_audioSampleRate,
-        50,    // pregain (dB)
-        -30,   // threshold (dB)
-        20,    // knee (dB)
-        12,    // ratio (dB)
-        0.003, // attack (s)
-        0.25   // release (s)
-    );
-
-    applyChannelSettings(m_basebandSampleRate, m_outputSampleRate, m_inputFrequencyOffset, true);
     applySettings(m_settings, true);
 
-    m_channelizer = new UpChannelizer(this);
-    m_threadedChannelizer = new ThreadedBasebandSampleSource(m_channelizer, this);
-    m_deviceAPI->addChannelSource(m_threadedChannelizer);
+    m_deviceAPI->addChannelSource(this);
     m_deviceAPI->addChannelSourceAPI(this);
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &SSBMod::networkManagerFinished
+    );
 }
 
 SSBMod::~SSBMod()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &SSBMod::networkManagerFinished
+    );
     delete m_networkManager;
-
-    DSPEngine::instance()->getAudioDeviceManager()->removeAudioSink(&m_feedbackAudioFifo);
-    DSPEngine::instance()->getAudioDeviceManager()->removeAudioSource(&m_audioFifo);
-
     m_deviceAPI->removeChannelSourceAPI(this);
-    m_deviceAPI->removeChannelSource(m_threadedChannelizer);
-    delete m_threadedChannelizer;
-    delete m_channelizer;
+    m_deviceAPI->removeChannelSource(this);
 
-    delete m_SSBFilter;
-    delete m_DSBFilter;
-    delete[] m_SSBFilterBuffer;
-    delete[] m_DSBFilterBuffer;
+    SSBMod::stop();
 }
 
-void SSBMod::pull(Sample& sample)
+void SSBMod::setDeviceAPI(DeviceAPI *deviceAPI)
 {
-	Complex ci;
-
-	m_settingsMutex.lock();
-
-    if (m_interpolatorDistance > 1.0f) // decimate
+    if (deviceAPI != m_deviceAPI)
     {
-    	modulateSample();
-
-        while (!m_interpolator.decimate(&m_interpolatorDistanceRemain, m_modSample, &ci))
-        {
-        	modulateSample();
-        }
-    }
-    else
-    {
-        if (m_interpolator.interpolate(&m_interpolatorDistanceRemain, m_modSample, &ci))
-        {
-        	modulateSample();
-        }
-    }
-
-    m_interpolatorDistanceRemain += m_interpolatorDistance;
-
-    ci *= m_carrierNco.nextIQ(); // shift to carrier frequency
-    ci *= 0.891235351562f * SDR_TX_SCALEF; //scaling at -1 dB to account for possible filter overshoot
-
-    m_settingsMutex.unlock();
-
-    double magsq = ci.real() * ci.real() + ci.imag() * ci.imag();
-	magsq /= (SDR_TX_SCALED*SDR_TX_SCALED);
-	m_movingAverage(magsq);
-	m_magsq = m_movingAverage.asDouble();
-
-	sample.m_real = (FixReal) ci.real();
-	sample.m_imag = (FixReal) ci.imag();
-}
-
-void SSBMod::pullAudio(int nbSamples)
-{
-    unsigned int nbSamplesAudio = nbSamples * ((Real) m_audioSampleRate / (Real) m_basebandSampleRate);
-
-    if (nbSamplesAudio > m_audioBuffer.size())
-    {
-        m_audioBuffer.resize(nbSamplesAudio);
-    }
-
-    m_audioFifo.read(reinterpret_cast<quint8*>(&m_audioBuffer[0]), nbSamplesAudio);
-    m_audioBufferFill = 0;
-}
-
-void SSBMod::modulateSample()
-{
-    pullAF(m_modSample);
-
-    if (m_settings.m_feedbackAudioEnable) {
-        pushFeedback(m_modSample * m_settings.m_feedbackVolumeFactor * 16384.0f);
-    }
-
-    calculateLevel(m_modSample);
-    m_audioBufferFill++;
-}
-
-void SSBMod::pullAF(Complex& sample)
-{
-	if (m_settings.m_audioMute)
-	{
-        sample.real(0.0f);
-        sample.imag(0.0f);
-        return;
-	}
-
-    Complex ci;
-    fftfilt::cmplx *filtered;
-    int n_out = 0;
-
-    int decim = 1<<(m_settings.m_spanLog2 - 1);
-    unsigned char decim_mask = decim - 1; // counter LSB bit mask for decimation by 2^(m_scaleLog2 - 1)
-
-    switch (m_settings.m_modAFInput)
-    {
-    case SSBModSettings::SSBModInputTone:
-    	if (m_settings.m_dsb)
-    	{
-    		Real t = m_toneNco.next()/1.25;
-    		sample.real(t);
-    		sample.imag(t);
-    	}
-    	else
-    	{
-    		if (m_settings.m_usb) {
-    			sample = m_toneNco.nextIQ();
-    		} else {
-    			sample = m_toneNco.nextQI();
-    		}
-    	}
-        break;
-    case SSBModSettings::SSBModInputFile:
-    	// Monaural (mono):
-        // sox f4exb_call.wav --encoding float --endian little f4exb_call.raw
-        // ffplay -f f32le -ar 48k -ac 1 f4exb_call.raw
-    	// Binaural (stereo):
-        // sox f4exb_call.wav --encoding float --endian little f4exb_call.raw
-        // ffplay -f f32le -ar 48k -ac 2 f4exb_call.raw
-        if (m_ifstream.is_open())
-        {
-            if (m_ifstream.eof())
-            {
-            	if (m_settings.m_playLoop)
-            	{
-                    m_ifstream.clear();
-                    m_ifstream.seekg(0, std::ios::beg);
-            	}
-            }
-
-            if (m_ifstream.eof())
-            {
-                ci.real(0.0f);
-                ci.imag(0.0f);
-            }
-            else
-            {
-            	if (m_settings.m_audioBinaural)
-            	{
-            		Complex c;
-                	m_ifstream.read(reinterpret_cast<char*>(&c), sizeof(Complex));
-
-                	if (m_settings.m_audioFlipChannels)
-                	{
-                        ci.real(c.imag() * m_settings.m_volumeFactor);
-                        ci.imag(c.real() * m_settings.m_volumeFactor);
-                	}
-                	else
-                	{
-                    	ci = c * m_settings.m_volumeFactor;
-                	}
-            	}
-            	else
-            	{
-                    Real real;
-                	m_ifstream.read(reinterpret_cast<char*>(&real), sizeof(Real));
-
-                	if (m_settings.m_agc)
-                	{
-                        real = m_audioCompressor.compress(real);
-                        ci.real(real);
-                        ci.imag(0.0f);
-                        ci *= m_settings.m_volumeFactor;
-                	}
-                	else
-                	{
-                        ci.real(real * m_settings.m_volumeFactor);
-                        ci.imag(0.0f);
-                	}
-            	}
-            }
-        }
-        else
-        {
-            ci.real(0.0f);
-            ci.imag(0.0f);
-        }
-        break;
-    case SSBModSettings::SSBModInputAudio:
-        if (m_settings.m_audioBinaural)
-    	{
-        	if (m_settings.m_audioFlipChannels)
-        	{
-                ci.real((m_audioBuffer[m_audioBufferFill].r / SDR_TX_SCALEF) * m_settings.m_volumeFactor);
-                ci.imag((m_audioBuffer[m_audioBufferFill].l / SDR_TX_SCALEF) * m_settings.m_volumeFactor);
-        	}
-        	else
-        	{
-                ci.real((m_audioBuffer[m_audioBufferFill].l / SDR_TX_SCALEF) * m_settings.m_volumeFactor);
-                ci.imag((m_audioBuffer[m_audioBufferFill].r / SDR_TX_SCALEF) * m_settings.m_volumeFactor);
-        	}
-    	}
-        else
-        {
-            if (m_settings.m_agc)
-            {
-                ci.real(((m_audioBuffer[m_audioBufferFill].l + m_audioBuffer[m_audioBufferFill].r)  / 65536.0f));
-                ci.real(m_audioCompressor.compress(ci.real()));
-                ci.imag(0.0f);
-                ci *= m_settings.m_volumeFactor;
-            }
-            else
-            {
-                ci.real(((m_audioBuffer[m_audioBufferFill].l + m_audioBuffer[m_audioBufferFill].r)  / 65536.0f) * m_settings.m_volumeFactor);
-                ci.imag(0.0f);
-            }
-        }
-
-        break;
-    case SSBModSettings::SSBModInputCWTone:
-    	Real fadeFactor;
-
-        if (m_cwKeyer.getSample())
-        {
-            m_cwKeyer.getCWSmoother().getFadeSample(true, fadeFactor);
-
-        	if (m_settings.m_dsb)
-        	{
-        		Real t = m_toneNco.next() * fadeFactor;
-        		sample.real(t);
-        		sample.imag(t);
-        	}
-        	else
-        	{
-        		if (m_settings.m_usb) {
-        			sample = m_toneNco.nextIQ() * fadeFactor;
-        		} else {
-        			sample = m_toneNco.nextQI() * fadeFactor;
-        		}
-        	}
-        }
-        else
-        {
-        	if (m_cwKeyer.getCWSmoother().getFadeSample(false, fadeFactor))
-        	{
-            	if (m_settings.m_dsb)
-            	{
-            		Real t = (m_toneNco.next() * fadeFactor)/1.25;
-            		sample.real(t);
-            		sample.imag(t);
-            	}
-            	else
-            	{
-            		if (m_settings.m_usb) {
-            			sample = m_toneNco.nextIQ() * fadeFactor;
-            		} else {
-            			sample = m_toneNco.nextQI() * fadeFactor;
-            		}
-            	}
-        	}
-        	else
-        	{
-                sample.real(0.0f);
-                sample.imag(0.0f);
-                m_toneNco.setPhase(0);
-        	}
-        }
-
-        break;
-    case SSBModSettings::SSBModInputNone:
-    default:
-        sample.real(0.0f);
-        sample.imag(0.0f);
-        break;
-    }
-
-    if ((m_settings.m_modAFInput == SSBModSettings::SSBModInputFile)
-       || (m_settings.m_modAFInput == SSBModSettings::SSBModInputAudio)) // real audio
-    {
-    	if (m_settings.m_dsb)
-    	{
-    		n_out = m_DSBFilter->runDSB(ci, &filtered);
-
-    		if (n_out > 0)
-    		{
-    			memcpy((void *) m_DSBFilterBuffer, (const void *) filtered, n_out*sizeof(Complex));
-    			m_DSBFilterBufferIndex = 0;
-    		}
-
-    		sample = m_DSBFilterBuffer[m_DSBFilterBufferIndex];
-    		m_DSBFilterBufferIndex++;
-    	}
-    	else
-    	{
-    		n_out = m_SSBFilter->runSSB(ci, &filtered, m_settings.m_usb);
-
-    		if (n_out > 0)
-    		{
-    			memcpy((void *) m_SSBFilterBuffer, (const void *) filtered, n_out*sizeof(Complex));
-    			m_SSBFilterBufferIndex = 0;
-    		}
-
-    		sample = m_SSBFilterBuffer[m_SSBFilterBufferIndex];
-    		m_SSBFilterBufferIndex++;
-    	}
-
-    	if (n_out > 0)
-    	{
-            for (int i = 0; i < n_out; i++)
-            {
-                // Downsample by 2^(m_scaleLog2 - 1) for SSB band spectrum display
-                // smart decimation with bit gain using float arithmetic (23 bits significand)
-
-                m_sum += filtered[i];
-
-                if (!(m_undersampleCount++ & decim_mask))
-                {
-                    Real avgr = (m_sum.real() / decim) * 0.891235351562f * SDR_TX_SCALEF; //scaling at -1 dB to account for possible filter overshoot
-                    Real avgi = (m_sum.imag() / decim) * 0.891235351562f * SDR_TX_SCALEF;
-
-                    if (!m_settings.m_dsb & !m_settings.m_usb)
-                    { // invert spectrum for LSB
-                        m_sampleBuffer.push_back(Sample(avgi, avgr));
-                    }
-                    else
-                    {
-                        m_sampleBuffer.push_back(Sample(avgr, avgi));
-                    }
-
-                    m_sum.real(0.0);
-                    m_sum.imag(0.0);
-                }
-            }
-    	}
-    } // Real audio
-    else if ((m_settings.m_modAFInput == SSBModSettings::SSBModInputTone)
-          || (m_settings.m_modAFInput == SSBModSettings::SSBModInputCWTone)) // tone
-    {
-        m_sum += sample;
-
-        if (!(m_undersampleCount++ & decim_mask))
-        {
-            Real avgr = (m_sum.real() / decim) * 0.891235351562f * SDR_TX_SCALEF; //scaling at -1 dB to account for possible filter overshoot
-            Real avgi = (m_sum.imag() / decim) * 0.891235351562f * SDR_TX_SCALEF;
-
-            if (!m_settings.m_dsb & !m_settings.m_usb)
-            { // invert spectrum for LSB
-                m_sampleBuffer.push_back(Sample(avgi, avgr));
-            }
-            else
-            {
-                m_sampleBuffer.push_back(Sample(avgr, avgi));
-            }
-
-            m_sum.real(0.0);
-            m_sum.imag(0.0);
-        }
-
-        if (m_sumCount < (m_settings.m_dsb ? m_ssbFftLen : m_ssbFftLen>>1))
-        {
-            n_out = 0;
-            m_sumCount++;
-        }
-        else
-        {
-            n_out = m_sumCount;
-            m_sumCount = 0;
-        }
-    }
-
-    if (n_out > 0)
-    {
-        if (m_sampleSink != 0)
-        {
-            m_sampleSink->feed(m_sampleBuffer.begin(), m_sampleBuffer.end(), !m_settings.m_dsb);
-        }
-
-        m_sampleBuffer.clear();
-    }
-}
-
-void SSBMod::pushFeedback(Complex c)
-{
-    Complex ci;
-
-    if (m_feedbackInterpolatorDistance < 1.0f) // interpolate
-    {
-        while (!m_feedbackInterpolator.interpolate(&m_feedbackInterpolatorDistanceRemain, c, &ci))
-        {
-            processOneSample(ci);
-            m_feedbackInterpolatorDistanceRemain += m_feedbackInterpolatorDistance;
-        }
-    }
-    else // decimate
-    {
-        if (m_feedbackInterpolator.decimate(&m_feedbackInterpolatorDistanceRemain, c, &ci))
-        {
-            processOneSample(ci);
-            m_feedbackInterpolatorDistanceRemain += m_feedbackInterpolatorDistance;
-        }
-    }
-}
-
-void SSBMod::processOneSample(Complex& ci)
-{
-    m_feedbackAudioBuffer[m_feedbackAudioBufferFill].l = ci.real();
-    m_feedbackAudioBuffer[m_feedbackAudioBufferFill].r = ci.imag();
-    ++m_feedbackAudioBufferFill;
-
-    if (m_feedbackAudioBufferFill >= m_feedbackAudioBuffer.size())
-    {
-        uint res = m_feedbackAudioFifo.write((const quint8*)&m_feedbackAudioBuffer[0], m_feedbackAudioBufferFill);
-
-        if (res != m_feedbackAudioBufferFill)
-        {
-            qDebug("AMDemod::pushFeedback: %u/%u audio samples written m_feedbackInterpolatorDistance: %f",
-                res, m_feedbackAudioBufferFill, m_feedbackInterpolatorDistance);
-            m_feedbackAudioFifo.clear();
-        }
-
-        m_feedbackAudioBufferFill = 0;
-    }
-}
-
-void SSBMod::calculateLevel(Complex& sample)
-{
-    Real t = sample.real(); // TODO: possibly adjust depending on sample type
-
-    if (m_levelCalcCount < m_levelNbSamples)
-    {
-        m_peakLevel = std::max(std::fabs(m_peakLevel), t);
-        m_levelSum += t * t;
-        m_levelCalcCount++;
-    }
-    else
-    {
-        qreal rmsLevel = sqrt(m_levelSum / m_levelNbSamples);
-        //qDebug("NFMMod::calculateLevel: %f %f", rmsLevel, m_peakLevel);
-        emit levelChanged(rmsLevel, m_peakLevel, m_levelNbSamples);
-        m_peakLevel = 0.0f;
-        m_levelSum = 0.0f;
-        m_levelCalcCount = 0;
+        m_deviceAPI->removeChannelSourceAPI(this);
+        m_deviceAPI->removeChannelSource(this);
+        m_deviceAPI = deviceAPI;
+        m_deviceAPI->addChannelSource(this);
+        m_deviceAPI->addChannelSinkAPI(this);
     }
 }
 
 void SSBMod::start()
 {
-	qDebug() << "SSBMod::start: m_outputSampleRate: " << m_outputSampleRate
-			<< " m_inputFrequencyOffset: " << m_settings.m_inputFrequencyOffset;
+    if (m_running) {
+        return;
+    }
 
-	m_audioFifo.clear();
-	applyChannelSettings(m_basebandSampleRate, m_outputSampleRate, m_inputFrequencyOffset, true);
+	qDebug("SSBMod::start");
+    m_thread = new QThread(this);
+    m_basebandSource = new SSBModBaseband();
+    m_basebandSource->setSpectrumSink(&m_spectrumVis);
+    m_basebandSource->setInputFileStream(&m_ifstream);
+    m_basebandSource->setChannel(this);
+    m_basebandSource->reset();
+    m_basebandSource->setCWKeyer(&m_cwKeyer);
+    m_basebandSource->moveToThread(m_thread);
+
+    QObject::connect(
+        m_thread,
+        &QThread::finished,
+        m_basebandSource,
+        &QObject::deleteLater
+    );
+    QObject::connect(
+        m_thread,
+        &QThread::finished,
+        m_thread,
+        &QThread::deleteLater
+    );
+
+    m_thread->start();
+
+    SSBModBaseband::MsgConfigureSSBModBaseband *msg = SSBModBaseband::MsgConfigureSSBModBaseband::create(m_settings, true);
+    m_basebandSource->getInputMessageQueue()->push(msg);
+
+    if (m_levelMeter) {
+        connect(m_basebandSource, SIGNAL(levelChanged(qreal, qreal, int)), m_levelMeter, SLOT(levelChanged(qreal, qreal, int)));
+    }
+
+    m_running = true;
 }
 
 void SSBMod::stop()
 {
+    if (!m_running) {
+        return;
+    }
+
+    qDebug("SSBMod::stop");
+    m_running = false;
+	m_thread->exit();
+	m_thread->wait();
+}
+
+void SSBMod::pull(SampleVector::iterator& begin, unsigned int nbSamples)
+{
+    if (m_running) {
+        m_basebandSource->pull(begin, nbSamples);
+    }
+}
+
+void SSBMod::setCenterFrequency(qint64 frequency)
+{
+    SSBModSettings settings = m_settings;
+    settings.m_inputFrequencyOffset = frequency;
+    applySettings(settings, false);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureSSBMod *msgToGUI = MsgConfigureSSBMod::create(settings, false);
+        m_guiMessageQueue->push(msgToGUI);
+    }
 }
 
 bool SSBMod::handleMessage(const Message& cmd)
 {
-	if (UpChannelizer::MsgChannelizerNotification::match(cmd))
-	{
-		UpChannelizer::MsgChannelizerNotification& notif = (UpChannelizer::MsgChannelizerNotification&) cmd;
-		qDebug() << "SSBMod::handleMessage: MsgChannelizerNotification";
-
-		applyChannelSettings(notif.getBasebandSampleRate(), notif.getSampleRate(), notif.getFrequencyOffset());
-
-		return true;
-	}
-    else if (MsgConfigureChannelizer::match(cmd))
+    if (MsgConfigureSSBMod::match(cmd))
     {
-        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
-        qDebug() << "SSBMod::handleMessage: MsgConfigureChannelizer: sampleRate: " << cfg.getSampleRate()
-                << " centerFrequency: " << cfg.getCenterFrequency();
-
-        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-            cfg.getSampleRate(),
-            cfg.getCenterFrequency());
-
-        return true;
-    }
-    else if (MsgConfigureSSBMod::match(cmd))
-    {
-        MsgConfigureSSBMod& cfg = (MsgConfigureSSBMod&) cmd;
+        auto& cfg = (const MsgConfigureSSBMod&) cmd;
         qDebug() << "SSBMod::handleMessage: MsgConfigureSSBMod";
 
         applySettings(cfg.getSettings(), cfg.getForce());
@@ -620,14 +187,14 @@ bool SSBMod::handleMessage(const Message& cmd)
     }
 	else if (MsgConfigureFileSourceName::match(cmd))
     {
-        MsgConfigureFileSourceName& conf = (MsgConfigureFileSourceName&) cmd;
+        auto& conf = (const MsgConfigureFileSourceName&) cmd;
         m_fileName = conf.getFileName();
         openFileStream();
         return true;
     }
     else if (MsgConfigureFileSourceSeek::match(cmd))
     {
-        MsgConfigureFileSourceSeek& conf = (MsgConfigureFileSourceSeek&) cmd;
+        auto& conf = (const MsgConfigureFileSourceSeek&) cmd;
         int seekPercentage = conf.getPercentage();
         seekFileStream(seekPercentage);
 
@@ -635,18 +202,17 @@ bool SSBMod::handleMessage(const Message& cmd)
     }
     else if (MsgConfigureFileSourceStreamTiming::match(cmd))
     {
-    	std::size_t samplesCount;
+        std::size_t samplesCount;
 
-    	if (m_ifstream.eof()) {
-    		samplesCount = m_fileSize / sizeof(Real);
-    	} else {
-    		samplesCount = m_ifstream.tellg() / sizeof(Real);
-    	}
+        if (m_ifstream.eof()) {
+            samplesCount = m_fileSize / sizeof(Real);
+        } else {
+            samplesCount = m_ifstream.tellg() / sizeof(Real);
+        }
 
         if (getMessageQueueToGUI())
         {
-            MsgReportFileSourceStreamTiming *report;
-            report = MsgReportFileSourceStreamTiming::create(samplesCount);
+            auto *report = MsgReportFileSourceStreamTiming::create(samplesCount);
             getMessageQueueToGUI()->push(report);
         }
 
@@ -654,7 +220,7 @@ bool SSBMod::handleMessage(const Message& cmd)
     }
     else if (CWKeyer::MsgConfigureCWKeyer::match(cmd))
     {
-        const CWKeyer::MsgConfigureCWKeyer& cfg = (CWKeyer::MsgConfigureCWKeyer&) cmd;
+        auto& cfg = (const CWKeyer::MsgConfigureCWKeyer&) cmd;
 
         if (m_settings.m_useReverseAPI) {
             webapiReverseSendCWSettings(cfg.getSettings());
@@ -662,33 +228,28 @@ bool SSBMod::handleMessage(const Message& cmd)
 
         return true;
     }
-    else if (DSPConfigureAudio::match(cmd))
+    else if (DSPSignalNotification::match(cmd))
     {
-        DSPConfigureAudio& cfg = (DSPConfigureAudio&) cmd;
-        uint32_t sampleRate = cfg.getSampleRate();
-        DSPConfigureAudio::AudioType audioType = cfg.getAudioType();
-
-        qDebug() << "SSBMod::handleMessage: DSPConfigureAudio:"
-                << " sampleRate: " << sampleRate
-                << " audioType: " << audioType;
-
-        if (audioType == DSPConfigureAudio::AudioInput)
+        auto& notif = (const DSPSignalNotification&) cmd;
+        // Forward to the source
+        if (m_running)
         {
-            if (sampleRate != m_audioSampleRate) {
-                applyAudioSampleRate(sampleRate);
-            }
+            auto* rep = new DSPSignalNotification(notif); // make a copy
+            qDebug() << "SSBMod::handleMessage: DSPSignalNotification";
+            m_basebandSource->getInputMessageQueue()->push(rep);
         }
-        else if (audioType == DSPConfigureAudio::AudioOutput)
-        {
-            if (sampleRate != m_audioSampleRate) {
-                applyFeedbackAudioSampleRate(sampleRate);
-            }
+        // Forward to GUI if any
+        if (getMessageQueueToGUI()) {
+            getMessageQueueToGUI()->push(new DSPSignalNotification(notif));
         }
 
         return true;
     }
-    else if (DSPSignalNotification::match(cmd))
+    else if (MainCore::MsgChannelDemodQuery::match(cmd))
     {
+        qDebug() << "SSBMod::handleMessage: MsgChannelDemodQuery";
+        sendSampleRateToDemodAnalyzer();
+
         return true;
     }
 	else
@@ -708,7 +269,7 @@ void SSBMod::openFileStream()
     m_ifstream.seekg(0,std::ios_base::beg);
 
     m_sampleRate = 48000; // fixed rate
-    m_recordLength = m_fileSize / (sizeof(Real) * m_sampleRate);
+    m_recordLength = (quint32) (m_fileSize / (sizeof(Real) * m_sampleRate));
 
     qDebug() << "SSBMod::openFileStream: " << m_fileName.toStdString().c_str()
             << " fileSize: " << m_fileSize << "bytes"
@@ -733,109 +294,6 @@ void SSBMod::seekFileStream(int seekPercentage)
         m_ifstream.clear();
         m_ifstream.seekg(seekPoint, std::ios::beg);
     }
-}
-
-void SSBMod::applyAudioSampleRate(int sampleRate)
-{
-    qDebug("SSBMod::applyAudioSampleRate: %d", sampleRate);
-
-
-    MsgConfigureChannelizer* channelConfigMsg = MsgConfigureChannelizer::create(
-            sampleRate, m_settings.m_inputFrequencyOffset);
-    m_inputMessageQueue.push(channelConfigMsg);
-
-    m_settingsMutex.lock();
-
-    m_interpolatorDistanceRemain = 0;
-    m_interpolatorConsumed = false;
-    m_interpolatorDistance = (Real) sampleRate / (Real) m_outputSampleRate;
-    m_interpolator.create(48, sampleRate, m_settings.m_bandwidth, 3.0);
-
-    float band = m_settings.m_bandwidth;
-    float lowCutoff = m_settings.m_lowCutoff;
-    bool usb = m_settings.m_usb;
-
-    if (band < 100.0f) // at least 100 Hz
-    {
-        band = 100.0f;
-        lowCutoff = 0;
-    }
-
-    if (band - lowCutoff < 100.0f) {
-        lowCutoff = band - 100.0f;
-    }
-
-    m_SSBFilter->create_filter(lowCutoff / sampleRate, band / sampleRate);
-    m_DSBFilter->create_dsb_filter((2.0f * band) / sampleRate);
-
-    m_settings.m_bandwidth = band;
-    m_settings.m_lowCutoff = lowCutoff;
-    m_settings.m_usb = usb;
-
-    m_toneNco.setFreq(m_settings.m_toneFrequency, sampleRate);
-    m_cwKeyer.setSampleRate(sampleRate);
-
-    m_audioCompressor.m_rate = sampleRate;
-    m_audioCompressor.initState();
-
-    m_settingsMutex.unlock();
-
-    m_audioSampleRate = sampleRate;
-
-    if (getMessageQueueToGUI())
-    {
-        DSPConfigureAudio *cfg = new DSPConfigureAudio(m_audioSampleRate, DSPConfigureAudio::AudioInput);
-        getMessageQueueToGUI()->push(cfg);
-    }
-
-    applyFeedbackAudioSampleRate(m_feedbackAudioSampleRate);
-}
-
-void SSBMod::applyFeedbackAudioSampleRate(unsigned int sampleRate)
-{
-    qDebug("SSBMod::applyFeedbackAudioSampleRate: %u", sampleRate);
-
-    m_settingsMutex.lock();
-
-    m_feedbackInterpolatorDistanceRemain = 0;
-    m_feedbackInterpolatorConsumed = false;
-    m_feedbackInterpolatorDistance = (Real) sampleRate / (Real) m_audioSampleRate;
-    Real cutoff = std::min(sampleRate, m_audioSampleRate) / 2.2f;
-    m_feedbackInterpolator.create(48, sampleRate, cutoff, 3.0);
-
-    m_settingsMutex.unlock();
-
-    m_feedbackAudioSampleRate = sampleRate;
-}
-
-void SSBMod::applyChannelSettings(int basebandSampleRate, int outputSampleRate, int inputFrequencyOffset, bool force)
-{
-    qDebug() << "SSBMod::applyChannelSettings:"
-            << " basebandSampleRate: " << basebandSampleRate
-            << " outputSampleRate: " << outputSampleRate
-            << " inputFrequencyOffset: " << inputFrequencyOffset;
-
-    if ((inputFrequencyOffset != m_inputFrequencyOffset) ||
-        (outputSampleRate != m_outputSampleRate) || force)
-    {
-        m_settingsMutex.lock();
-        m_carrierNco.setFreq(inputFrequencyOffset, outputSampleRate);
-        m_settingsMutex.unlock();
-    }
-
-    if ((outputSampleRate != m_outputSampleRate) || force)
-    {
-        m_settingsMutex.lock();
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) m_audioSampleRate / (Real) outputSampleRate;
-        m_interpolator.create(48, m_audioSampleRate, m_settings.m_bandwidth, 3.0);
-        m_settingsMutex.unlock();
-    }
-
-    m_basebandSampleRate = basebandSampleRate;
-    m_outputSampleRate = outputSampleRate;
-    m_inputFrequencyOffset = inputFrequencyOffset;
 }
 
 void SSBMod::applySettings(const SSBModSettings& settings, bool force)
@@ -884,6 +342,12 @@ void SSBMod::applySettings(const SSBModSettings& settings, bool force)
     if ((settings.m_agc != m_settings.m_agc) || force) {
         reverseAPIKeys.append("agc");
     }
+    if ((settings.m_cmpPreGainDB != m_settings.m_cmpPreGainDB) || force) {
+        reverseAPIKeys.append("cmpPreGainDB");
+    }
+    if ((settings.m_cmpThresholdDB != m_settings.m_cmpThresholdDB) || force) {
+        reverseAPIKeys.append("cmpThresholdDB");
+    }
     if ((settings.m_rgbColor != m_settings.m_rgbColor) || force) {
         reverseAPIKeys.append("rgbColor");
     }
@@ -896,77 +360,42 @@ void SSBMod::applySettings(const SSBModSettings& settings, bool force)
     if ((settings.m_audioDeviceName != m_settings.m_audioDeviceName) || force) {
         reverseAPIKeys.append("audioDeviceName");
     }
-
-    if ((settings.m_bandwidth != m_settings.m_bandwidth) ||
-        (settings.m_lowCutoff != m_settings.m_lowCutoff) || force)
-    {
-        if (band < 100.0f) // at least 100 Hz
-        {
-            band = 100.0f;
-            lowCutoff = 0;
-        }
-
-        if (band - lowCutoff < 100.0f) {
-            lowCutoff = band - 100.0f;
-        }
-
-        m_settingsMutex.lock();
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) m_audioSampleRate / (Real) m_outputSampleRate;
-        m_interpolator.create(48, m_audioSampleRate, band, 3.0);
-        m_SSBFilter->create_filter(lowCutoff / m_audioSampleRate, band / m_audioSampleRate);
-        m_DSBFilter->create_dsb_filter((2.0f * band) / m_audioSampleRate);
-        m_settingsMutex.unlock();
+    if ((settings.m_audioDeviceName != m_settings.m_audioDeviceName) || force) {
+        reverseAPIKeys.append("audioDeviceName");
     }
-
-    if ((settings.m_toneFrequency != m_settings.m_toneFrequency) || force)
-    {
-        m_settingsMutex.lock();
-        m_toneNco.setFreq(settings.m_toneFrequency, m_audioSampleRate);
-        m_settingsMutex.unlock();
-    }
-
-    if ((settings.m_dsb != m_settings.m_dsb) || force)
-    {
-        if (settings.m_dsb)
-        {
-            std::fill(m_DSBFilterBuffer, m_DSBFilterBuffer+m_ssbFftLen, Complex{0,0});
-            //memset(m_DSBFilterBuffer, 0, sizeof(Complex)*(m_ssbFftLen));
-            m_DSBFilterBufferIndex = 0;
-        }
-        else
-        {
-            std::fill(m_SSBFilterBuffer, m_SSBFilterBuffer+(m_ssbFftLen>>1), Complex{0,0});
-            //memset(m_SSBFilterBuffer, 0, sizeof(Complex)*(m_ssbFftLen>>1));
-            m_SSBFilterBufferIndex = 0;
-        }
-    }
-
-    if ((settings.m_audioDeviceName != m_settings.m_audioDeviceName) || force)
-    {
-        AudioDeviceManager *audioDeviceManager = DSPEngine::instance()->getAudioDeviceManager();
-        int audioDeviceIndex = audioDeviceManager->getInputDeviceIndex(settings.m_audioDeviceName);
-        audioDeviceManager->addAudioSource(&m_audioFifo, getInputMessageQueue(), audioDeviceIndex);
-        uint32_t audioSampleRate = audioDeviceManager->getInputSampleRate(audioDeviceIndex);
-
-        if (m_audioSampleRate != audioSampleRate) {
-            applyAudioSampleRate(audioSampleRate);
-        }
-    }
-
-    if ((settings.m_feedbackAudioDeviceName != m_settings.m_feedbackAudioDeviceName) || force)
-    {
+    if ((settings.m_feedbackAudioDeviceName != m_settings.m_feedbackAudioDeviceName) || force) {
         reverseAPIKeys.append("feedbackAudioDeviceName");
-        AudioDeviceManager *audioDeviceManager = DSPEngine::instance()->getAudioDeviceManager();
-        int audioDeviceIndex = audioDeviceManager->getOutputDeviceIndex(settings.m_feedbackAudioDeviceName);
-        audioDeviceManager->addAudioSink(&m_feedbackAudioFifo, getInputMessageQueue(), audioDeviceIndex);
-        uint32_t audioSampleRate = audioDeviceManager->getOutputSampleRate(audioDeviceIndex);
+    }
 
-        if (m_feedbackAudioSampleRate != audioSampleRate) {
-            reverseAPIKeys.append("feedbackAudioSampleRate");
-            applyFeedbackAudioSampleRate(audioSampleRate);
+    if (m_settings.m_streamIndex != settings.m_streamIndex)
+    {
+        if (m_deviceAPI->getSampleMIMO()) // change of stream is possible for MIMO devices only
+        {
+            m_deviceAPI->removeChannelSourceAPI(this);
+            m_deviceAPI->removeChannelSource(this, m_settings.m_streamIndex);
+            m_deviceAPI->addChannelSource(this, settings.m_streamIndex);
+            m_deviceAPI->addChannelSourceAPI(this);
+            m_settings.m_streamIndex = settings.m_streamIndex; // make sure ChannelAPI::getStreamIndex() is consistent
+            emit streamIndexChanged(settings.m_streamIndex);
         }
+
+        reverseAPIKeys.append("streamIndex");
+    }
+
+    if ((settings.m_dsb != m_settings.m_dsb)
+     || (settings.m_usb != m_settings.m_usb) || force)
+    {
+        SpectrumSettings spectrumSettings = m_spectrumVis.getSettings();
+        spectrumSettings.m_ssb = !settings.m_dsb;
+        spectrumSettings.m_usb = settings.m_usb;
+        SpectrumVis::MsgConfigureSpectrumVis *msg = SpectrumVis::MsgConfigureSpectrumVis::create(spectrumSettings, false);
+        m_spectrumVis.getInputMessageQueue()->push(msg);
+    }
+
+    if (m_running)
+    {
+        SSBModBaseband::MsgConfigureSSBModBaseband *msg = SSBModBaseband::MsgConfigureSSBModBaseband::create(settings, force);
+        m_basebandSource->getInputMessageQueue()->push(msg);
     }
 
     if (settings.m_useReverseAPI)
@@ -977,6 +406,13 @@ void SSBMod::applySettings(const SSBModSettings& settings, bool force)
                 (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex) ||
                 (m_settings.m_reverseAPIChannelIndex != settings.m_reverseAPIChannelIndex);
         webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+    }
+
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "settings", pipes);
+
+    if (!pipes.empty()) {
+        sendChannelSettings(pipes, reverseAPIKeys, settings, force);
     }
 
     m_settings = settings;
@@ -1007,6 +443,25 @@ bool SSBMod::deserialize(const QByteArray& data)
     }
 }
 
+void SSBMod::sendSampleRateToDemodAnalyzer() const
+{
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "reportdemod", pipes);
+
+    if (!pipes.empty())
+    {
+        for (const auto& pipe : pipes)
+        {
+            MessageQueue* messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+            MainCore::MsgChannelDemodReport *msg = MainCore::MsgChannelDemodReport::create(
+                this,
+                getAudioSampleRate()
+            );
+            messageQueue->push(msg);
+        }
+    }
+}
+
 int SSBMod::webapiSettingsGet(
         SWGSDRangel::SWGChannelSettings& response,
         QString& errorMessage)
@@ -1015,6 +470,20 @@ int SSBMod::webapiSettingsGet(
     response.setSsbModSettings(new SWGSDRangel::SWGSSBModSettings());
     response.getSsbModSettings()->init();
     webapiFormatChannelSettings(response, m_settings);
+
+    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getSsbModSettings()->getCwKeyer();
+    const CWKeyerSettings& cwKeyerSettings = m_cwKeyer.getSettings();
+    CWKeyer::webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
+
+    return 200;
+}
+
+int SSBMod::webapiWorkspaceGet(
+        SWGSDRangel::SWGWorkspaceInfo& response,
+        QString& errorMessage)
+{
+    (void) errorMessage;
+    response.setIndex(m_settings.m_workspaceIndex);
     return 200;
 }
 
@@ -1026,12 +495,45 @@ int SSBMod::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     SSBModSettings settings = m_settings;
-    bool frequencyOffsetChanged = false;
+    webapiUpdateChannelSettings(settings, channelSettingsKeys, response);
 
-    if (channelSettingsKeys.contains("inputFrequencyOffset"))
+    if (channelSettingsKeys.contains("cwKeyer"))
     {
+        SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getSsbModSettings()->getCwKeyer();
+        CWKeyerSettings cwKeyerSettings = m_cwKeyer.getSettings();
+        CWKeyer::webapiSettingsPutPatch(channelSettingsKeys, cwKeyerSettings, apiCwKeyerSettings);
+
+        CWKeyer::MsgConfigureCWKeyer *msgCwKeyer = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
+        m_cwKeyer.getInputMessageQueue()->push(msgCwKeyer);
+
+        if (m_guiMessageQueue) // forward to GUI if any
+        {
+            CWKeyer::MsgConfigureCWKeyer *msgCwKeyerToGUI = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
+            m_guiMessageQueue->push(msgCwKeyerToGUI);
+        }
+    }
+
+    MsgConfigureSSBMod *msg = MsgConfigureSSBMod::create(settings, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureSSBMod *msgToGUI = MsgConfigureSSBMod::create(settings, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatChannelSettings(response, settings);
+
+    return 200;
+}
+
+void SSBMod::webapiUpdateChannelSettings(
+        SSBModSettings& settings,
+        const QStringList& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings& response)
+{
+    if (channelSettingsKeys.contains("inputFrequencyOffset")) {
         settings.m_inputFrequencyOffset = response.getSsbModSettings()->getInputFrequencyOffset();
-        frequencyOffsetChanged = true;
     }
     if (channelSettingsKeys.contains("bandwidth")) {
         settings.m_bandwidth = response.getSsbModSettings()->getBandwidth();
@@ -1069,6 +571,12 @@ int SSBMod::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("agc")) {
         settings.m_agc = response.getSsbModSettings()->getAgc() != 0;
     }
+    if (channelSettingsKeys.contains("cmpPreGainDB")) {
+        settings.m_cmpPreGainDB = response.getSsbModSettings()->getCmpPreGainDb();
+    }
+    if (channelSettingsKeys.contains("cmpThresholdDB")) {
+        settings.m_cmpThresholdDB = response.getSsbModSettings()->getCmpThresholdDb();
+    }
     if (channelSettingsKeys.contains("rgbColor")) {
         settings.m_rgbColor = response.getSsbModSettings()->getRgbColor();
     }
@@ -1081,6 +589,9 @@ int SSBMod::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("audioDeviceName")) {
         settings.m_audioDeviceName = *response.getSsbModSettings()->getAudioDeviceName();
     }
+    if (channelSettingsKeys.contains("streamIndex")) {
+        settings.m_streamIndex = response.getSsbModSettings()->getStreamIndex();
+    }
     if (channelSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getSsbModSettings()->getUseReverseApi() != 0;
     }
@@ -1088,50 +599,23 @@ int SSBMod::webapiSettingsPutPatch(
         settings.m_reverseAPIAddress = *response.getSsbModSettings()->getReverseApiAddress();
     }
     if (channelSettingsKeys.contains("reverseAPIPort")) {
-        settings.m_reverseAPIPort = response.getSsbModSettings()->getReverseApiPort();
+        settings.m_reverseAPIPort = (uint16_t) response.getSsbModSettings()->getReverseApiPort();
     }
     if (channelSettingsKeys.contains("reverseAPIDeviceIndex")) {
-        settings.m_reverseAPIDeviceIndex = response.getSsbModSettings()->getReverseApiDeviceIndex();
+        settings.m_reverseAPIDeviceIndex = (uint16_t) response.getSsbModSettings()->getReverseApiDeviceIndex();
     }
     if (channelSettingsKeys.contains("reverseAPIChannelIndex")) {
-        settings.m_reverseAPIChannelIndex = response.getSsbModSettings()->getReverseApiChannelIndex();
+        settings.m_reverseAPIChannelIndex = (uint16_t) response.getSsbModSettings()->getReverseApiChannelIndex();
     }
-
-    if (channelSettingsKeys.contains("cwKeyer"))
-    {
-        SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getSsbModSettings()->getCwKeyer();
-        CWKeyerSettings cwKeyerSettings = m_cwKeyer.getSettings();
-        m_cwKeyer.webapiSettingsPutPatch(channelSettingsKeys, cwKeyerSettings, apiCwKeyerSettings);
-
-        CWKeyer::MsgConfigureCWKeyer *msgCwKeyer = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
-        m_cwKeyer.getInputMessageQueue()->push(msgCwKeyer);
-
-        if (m_guiMessageQueue) // forward to GUI if any
-        {
-            CWKeyer::MsgConfigureCWKeyer *msgCwKeyerToGUI = CWKeyer::MsgConfigureCWKeyer::create(cwKeyerSettings, force);
-            m_guiMessageQueue->push(msgCwKeyerToGUI);
-        }
+    if (settings.m_spectrumGUI && channelSettingsKeys.contains("spectrumConfig")) {
+        settings.m_spectrumGUI->updateFrom(channelSettingsKeys, response.getSsbModSettings()->getSpectrumConfig());
     }
-
-    if (frequencyOffsetChanged)
-    {
-        SSBMod::MsgConfigureChannelizer *msgChan = SSBMod::MsgConfigureChannelizer::create(
-                m_audioSampleRate, settings.m_inputFrequencyOffset);
-        m_inputMessageQueue.push(msgChan);
+    if (settings.m_channelMarker && channelSettingsKeys.contains("channelMarker")) {
+        settings.m_channelMarker->updateFrom(channelSettingsKeys, response.getSsbModSettings()->getChannelMarker());
     }
-
-    MsgConfigureSSBMod *msg = MsgConfigureSSBMod::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureSSBMod *msgToGUI = MsgConfigureSSBMod::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
+    if (settings.m_rollupState && channelSettingsKeys.contains("rollupState")) {
+        settings.m_rollupState->updateFrom(channelSettingsKeys, response.getSsbModSettings()->getRollupState());
     }
-
-    webapiFormatChannelSettings(response, settings);
-
-    return 200;
 }
 
 int SSBMod::webapiReportGet(
@@ -1160,6 +644,8 @@ void SSBMod::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& respon
     response.getSsbModSettings()->setAudioMute(settings.m_audioMute ? 1 : 0);
     response.getSsbModSettings()->setPlayLoop(settings.m_playLoop ? 1 : 0);
     response.getSsbModSettings()->setAgc(settings.m_agc ? 1 : 0);
+    response.getSsbModSettings()->setCmpPreGainDb(settings.m_cmpPreGainDB);
+    response.getSsbModSettings()->setCmpThresholdDb(settings.m_cmpThresholdDB);
     response.getSsbModSettings()->setRgbColor(settings.m_rgbColor);
 
     if (response.getSsbModSettings()->getTitle()) {
@@ -1180,10 +666,6 @@ void SSBMod::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& respon
         response.getSsbModSettings()->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings);
     }
 
-    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = response.getSsbModSettings()->getCwKeyer();
-    const CWKeyerSettings& cwKeyerSettings = m_cwKeyer.getSettings();
-    m_cwKeyer.webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
-
     response.getSsbModSettings()->setUseReverseApi(settings.m_useReverseAPI ? 1 : 0);
 
     if (response.getSsbModSettings()->getReverseApiAddress()) {
@@ -1195,22 +677,154 @@ void SSBMod::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& respon
     response.getSsbModSettings()->setReverseApiPort(settings.m_reverseAPIPort);
     response.getSsbModSettings()->setReverseApiDeviceIndex(settings.m_reverseAPIDeviceIndex);
     response.getSsbModSettings()->setReverseApiChannelIndex(settings.m_reverseAPIChannelIndex);
+
+    if (settings.m_spectrumGUI)
+    {
+        if (response.getSsbModSettings()->getSpectrumConfig())
+        {
+            settings.m_spectrumGUI->formatTo(response.getSsbModSettings()->getSpectrumConfig());
+        }
+        else
+        {
+            auto *swgGLSpectrum = new SWGSDRangel::SWGGLSpectrum();
+            settings.m_spectrumGUI->formatTo(swgGLSpectrum);
+            response.getSsbModSettings()->setSpectrumConfig(swgGLSpectrum);
+        }
+    }
+
+    if (settings.m_channelMarker)
+    {
+        if (response.getSsbModSettings()->getChannelMarker())
+        {
+            settings.m_channelMarker->formatTo(response.getSsbModSettings()->getChannelMarker());
+        }
+        else
+        {
+            auto *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+            settings.m_channelMarker->formatTo(swgChannelMarker);
+            response.getSsbModSettings()->setChannelMarker(swgChannelMarker);
+        }
+    }
+
+    if (settings.m_rollupState)
+    {
+        if (response.getSsbModSettings()->getRollupState())
+        {
+            settings.m_rollupState->formatTo(response.getSsbModSettings()->getRollupState());
+        }
+        else
+        {
+            auto *swgRollupState = new SWGSDRangel::SWGRollupState();
+            settings.m_rollupState->formatTo(swgRollupState);
+            response.getSsbModSettings()->setRollupState(swgRollupState);
+        }
+    }
 }
 
-void SSBMod::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response)
+void SSBMod::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response) const
 {
-    response.getSsbModReport()->setChannelPowerDb(CalcDb::dbPower(getMagSq()));
-    response.getSsbModReport()->setAudioSampleRate(m_audioSampleRate);
-    response.getSsbModReport()->setChannelSampleRate(m_outputSampleRate);
+    response.getSsbModReport()->setChannelPowerDb((float) CalcDb::dbPower(getMagSq()));
+
+    if (m_running)
+    {
+        response.getSsbModReport()->setAudioSampleRate(m_basebandSource->getAudioSampleRate());
+        response.getSsbModReport()->setChannelSampleRate(m_basebandSource->getChannelSampleRate());
+    }
 }
 
-void SSBMod::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const SSBModSettings& settings, bool force)
+void SSBMod::webapiReverseSendSettings(const QList<QString>& channelSettingsKeys, const SSBModSettings& settings, bool force)
 {
-    SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+    auto *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+    webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+
+    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
+            .arg(settings.m_reverseAPIAddress)
+            .arg(settings.m_reverseAPIPort)
+            .arg(settings.m_reverseAPIDeviceIndex)
+            .arg(settings.m_reverseAPIChannelIndex);
+    m_networkRequest.setUrl(QUrl(channelSettingsURL));
+    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    auto *buffer = new QBuffer();
+    buffer->open(QBuffer::ReadWrite);
+    buffer->write(swgChannelSettings->asJson().toUtf8());
+    buffer->seek(0);
+
+    // Always use PATCH to avoid passing reverse API settings
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
+
+    delete swgChannelSettings;
+}
+
+void SSBMod::webapiReverseSendCWSettings(const CWKeyerSettings& cwKeyerSettings)
+{
+    auto *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+    swgChannelSettings->setDirection(1); // single source (Tx)
+    swgChannelSettings->setChannelType(new QString("SSBMod"));
+    swgChannelSettings->setSsbModSettings(new SWGSDRangel::SWGSSBModSettings());
+    SWGSDRangel::SWGSSBModSettings *swgSSBModSettings = swgChannelSettings->getSsbModSettings();
+
+    swgSSBModSettings->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings());
+    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = swgSSBModSettings->getCwKeyer();
+    CWKeyer::webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
+
+    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
+            .arg(m_settings.m_reverseAPIAddress)
+            .arg(m_settings.m_reverseAPIPort)
+            .arg(m_settings.m_reverseAPIDeviceIndex)
+            .arg(m_settings.m_reverseAPIChannelIndex);
+    m_networkRequest.setUrl(QUrl(channelSettingsURL));
+    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    auto *buffer = new QBuffer();
+    buffer->open(QBuffer::ReadWrite);
+    buffer->write(swgChannelSettings->asJson().toUtf8());
+    buffer->seek(0);
+
+    // Always use PATCH to avoid passing reverse API settings
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
+
+    delete swgChannelSettings;
+}
+
+void SSBMod::sendChannelSettings(
+    const QList<ObjectPipe*>& pipes,
+    const QList<QString>& channelSettingsKeys,
+    const SSBModSettings& settings,
+    bool force) const
+{
+    for (const auto& pipe : pipes)
+    {
+        MessageQueue *messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+
+        if (messageQueue)
+        {
+            auto *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+            webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+            MainCore::MsgChannelSettings *msg = MainCore::MsgChannelSettings::create(
+                this,
+                channelSettingsKeys,
+                swgChannelSettings,
+                force
+            );
+            messageQueue->push(msg);
+        }
+    }
+}
+
+void SSBMod::webapiFormatChannelSettings(
+        const QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const SSBModSettings& settings,
+        bool force
+) const
+{
     swgChannelSettings->setDirection(1); // single source (Tx)
     swgChannelSettings->setOriginatorChannelIndex(getIndexInDeviceSet());
     swgChannelSettings->setOriginatorDeviceSetIndex(getDeviceSetIndex());
-    swgChannelSettings->setChannelType(new QString("SSBMod"));
+    swgChannelSettings->setChannelType(new QString(m_channelId));
     swgChannelSettings->setSsbModSettings(new SWGSDRangel::SWGSSBModSettings());
     SWGSDRangel::SWGSSBModSettings *swgSSBModSettings = swgChannelSettings->getSsbModSettings();
 
@@ -1255,6 +869,12 @@ void SSBMod::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, cons
     if (channelSettingsKeys.contains("agc") || force) {
         swgSSBModSettings->setAgc(settings.m_agc ? 1 : 0);
     }
+    if (channelSettingsKeys.contains("cmpPreGainDB") || force) {
+        swgSSBModSettings->setCmpPreGainDb(settings.m_cmpPreGainDB);
+    }
+    if (channelSettingsKeys.contains("cmpThresholdDB") || force) {
+        swgSSBModSettings->setCmpThresholdDb(settings.m_cmpThresholdDB);
+    }
     if (channelSettingsKeys.contains("rgbColor") || force) {
         swgSSBModSettings->setRgbColor(settings.m_rgbColor);
     }
@@ -1267,66 +887,41 @@ void SSBMod::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, cons
     if (channelSettingsKeys.contains("audioDeviceName") || force) {
         swgSSBModSettings->setAudioDeviceName(new QString(settings.m_audioDeviceName));
     }
+    if (channelSettingsKeys.contains("streamIndex") || force) {
+        swgSSBModSettings->setStreamIndex(settings.m_streamIndex);
+    }
+
+    if (settings.m_spectrumGUI && (channelSettingsKeys.contains("spectrunConfig") || force))
+    {
+        auto *swgGLSpectrum = new SWGSDRangel::SWGGLSpectrum();
+        settings.m_spectrumGUI->formatTo(swgGLSpectrum);
+        swgSSBModSettings->setSpectrumConfig(swgGLSpectrum);
+    }
+
+    if (settings.m_channelMarker && (channelSettingsKeys.contains("channelMarker") || force))
+    {
+        auto *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+        settings.m_channelMarker->formatTo(swgChannelMarker);
+        swgSSBModSettings->setChannelMarker(swgChannelMarker);
+    }
+
+    if (settings.m_rollupState && (channelSettingsKeys.contains("rollupState") || force))
+    {
+        auto *swgRollupState = new SWGSDRangel::SWGRollupState();
+        settings.m_rollupState->formatTo(swgRollupState);
+        swgSSBModSettings->setRollupState(swgRollupState);
+    }
 
     if (force)
     {
         const CWKeyerSettings& cwKeyerSettings = m_cwKeyer.getSettings();
         swgSSBModSettings->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings());
         SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = swgSSBModSettings->getCwKeyer();
-        m_cwKeyer.webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
+        CWKeyer::webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
     }
-
-    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
-            .arg(settings.m_reverseAPIAddress)
-            .arg(settings.m_reverseAPIPort)
-            .arg(settings.m_reverseAPIDeviceIndex)
-            .arg(settings.m_reverseAPIChannelIndex);
-    m_networkRequest.setUrl(QUrl(channelSettingsURL));
-    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-    QBuffer *buffer=new QBuffer();
-    buffer->open((QBuffer::ReadWrite));
-    buffer->write(swgChannelSettings->asJson().toUtf8());
-    buffer->seek(0);
-
-    // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
-
-    delete swgChannelSettings;
 }
 
-void SSBMod::webapiReverseSendCWSettings(const CWKeyerSettings& cwKeyerSettings)
-{
-    SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
-    swgChannelSettings->setDirection(1); // single source (Tx)
-    swgChannelSettings->setChannelType(new QString("SSBMod"));
-    swgChannelSettings->setSsbModSettings(new SWGSDRangel::SWGSSBModSettings());
-    SWGSDRangel::SWGSSBModSettings *swgSSBModSettings = swgChannelSettings->getSsbModSettings();
-
-    swgSSBModSettings->setCwKeyer(new SWGSDRangel::SWGCWKeyerSettings());
-    SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings = swgSSBModSettings->getCwKeyer();
-    m_cwKeyer.webapiFormatChannelSettings(apiCwKeyerSettings, cwKeyerSettings);
-
-    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
-            .arg(m_settings.m_reverseAPIAddress)
-            .arg(m_settings.m_reverseAPIPort)
-            .arg(m_settings.m_reverseAPIDeviceIndex)
-            .arg(m_settings.m_reverseAPIChannelIndex);
-    m_networkRequest.setUrl(QUrl(channelSettingsURL));
-    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-
-    QBuffer *buffer=new QBuffer();
-    buffer->open((QBuffer::ReadWrite));
-    buffer->write(swgChannelSettings->asJson().toUtf8());
-    buffer->seek(0);
-
-    // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
-
-    delete swgChannelSettings;
-}
-
-void SSBMod::networkManagerFinished(QNetworkReply *reply)
+void SSBMod::networkManagerFinished(QNetworkReply *reply) const
 {
     QNetworkReply::NetworkError replyError = reply->error();
 
@@ -1336,10 +931,50 @@ void SSBMod::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("SSBMod::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("SSBMod::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
+}
+
+double SSBMod::getMagSq() const
+{
+    if (m_running) {
+        return m_basebandSource->getMagSq();
+    }
+
+    return 0;
+}
+
+CWKeyer *SSBMod::getCWKeyer()
+{
+    return &m_cwKeyer;
+}
+
+int SSBMod::getAudioSampleRate() const
+{
+    if (m_running) {
+        return m_basebandSource->getAudioSampleRate();
+    }
+
+    return 0;
+}
+
+int SSBMod::getFeedbackAudioSampleRate() const
+{
+    if (m_running) {
+        return m_basebandSource->getFeedbackAudioSampleRate();
+    }
+
+    return 0;
+}
+
+uint32_t SSBMod::getNumberOfDeviceStreams() const
+{
+    return m_deviceAPI->getNbSinkStreams();
 }

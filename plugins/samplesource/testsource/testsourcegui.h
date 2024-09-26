@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef _TESTSOURCE_TESTSOURCEGUI_H_
 #define _TESTSOURCE_TESTSOURCEGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -33,7 +34,7 @@ namespace Ui {
 	class TestSourceGui;
 }
 
-class TestSourceGui : public QWidget, public PluginInstanceGUI {
+class TestSourceGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -41,22 +42,16 @@ public:
 	virtual ~TestSourceGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::TestSourceGui* ui;
 
-	DeviceUISet* m_deviceUISet;
 	TestSourceSettings m_settings;
+    QList<QString> m_settingsKeys;
     QTimer m_updateTimer;
     QTimer m_statusTimer;
 	bool m_doApplySettings;
@@ -76,6 +71,8 @@ private:
     void updateAmpCoarseLimit();
     void updateAmpFineLimit();
     void updateFrequencyShiftLimit();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
@@ -97,7 +94,6 @@ private slots:
     void on_iBias_valueChanged(int value);
     void on_qBias_valueChanged(int value);
     void on_phaseImbalance_valueChanged(int value);
-    void on_record_toggled(bool checked);
     void openDeviceSettingsDialog(const QPoint& p);
     void updateStatus();
     void updateHardware();

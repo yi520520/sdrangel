@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,7 +22,7 @@
 #include <QTimer>
 #include <QWidget>
 
-#include "plugin/plugininstancegui.h"
+#include "device/devicegui.h"
 #include "util/messagequeue.h"
 
 #include "bladerf2output.h"
@@ -33,7 +34,7 @@ namespace Ui {
     class BladeRF2OutputGui;
 }
 
-class BladeRF2OutputGui : public QWidget, public PluginInstanceGUI {
+class BladeRF2OutputGui : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -41,12 +42,7 @@ public:
     virtual ~BladeRF2OutputGui();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
@@ -55,10 +51,10 @@ public:
 private:
     Ui::BladeRF2OutputGui* ui;
 
-    DeviceUISet* m_deviceUISet;
     bool m_doApplySettings;
     bool m_forceSettings;
     BladeRF2OutputSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
     QTimer m_updateTimer;
     QTimer m_statusTimer;
@@ -67,6 +63,10 @@ private:
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
     int m_lastEngineState;
     MessageQueue m_inputMessageQueue;
+    int m_gainMin;
+    int m_gainMax;
+    int m_gainStep;
+    float m_gainScale;
 
     void blockApplySettings(bool block) { m_doApplySettings = !block; }
     void displaySettings();
@@ -75,6 +75,9 @@ private:
     void updateSampleRateAndFrequency();
     void updateFrequencyLimits();
     void setCenterFrequencySetting(uint64_t kHzValue);
+    float getGainDB(int gainValue);
+    int getGainValue(float gainDB);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();

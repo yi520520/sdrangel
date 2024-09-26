@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,9 +25,8 @@
 #include "ui_bladerf2outputgui.h"
 #include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
@@ -33,9 +34,8 @@
 #include "bladerf2outputgui.h"
 
 BladeRF2OutputGui::BladeRF2OutputGui(DeviceUISet *deviceUISet, QWidget* parent) :
-    QWidget(parent),
+    DeviceGUI(parent),
     ui(new Ui::BladeRF2OutputGui),
-    m_deviceUISet(deviceUISet),
     m_doApplySettings(true),
     m_forceSettings(true),
     m_settings(),
@@ -43,31 +43,37 @@ BladeRF2OutputGui::BladeRF2OutputGui(DeviceUISet *deviceUISet, QWidget* parent) 
     m_sampleRate(0),
     m_lastEngineState(DeviceAPI::StNotStarted)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_sampleSink = (BladeRF2Output*) m_deviceUISet->m_deviceAPI->getSampleSink();
     int max, min, step;
+    float scale;
     uint64_t f_min, f_max;
 
-    ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#BladeRF2OutputGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesink/bladerf2output/readme.md";	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
 
-    m_sampleSink->getFrequencyRange(f_min, f_max, step);
+    m_sampleSink->getFrequencyRange(f_min, f_max, step, scale);
     qDebug("BladeRF2OutputGui::BladeRF2OutputGui: getFrequencyRange: [%lu,%lu] step: %d", f_min, f_max, step);
     ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
     ui->centerFrequency->setValueRange(7, f_min/1000, f_max/1000);
 
-    m_sampleSink->getSampleRateRange(min, max, step);
+    m_sampleSink->getSampleRateRange(min, max, step, scale);
     qDebug("BladeRF2OutputGui::BladeRF2OutputGui: getSampleRateRange: [%d,%d] step: %d", min, max, step);
     ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
     ui->sampleRate->setValueRange(8, min, max);
 
-    m_sampleSink->getBandwidthRange(min, max, step);
+    m_sampleSink->getBandwidthRange(min, max, step, scale);
     qDebug("BladeRF2OutputGui::BladeRF2OutputGui: getBandwidthRange: [%d,%d] step: %d", min, max, step);
     ui->bandwidth->setColorMapper(ColorMapper(ColorMapper::GrayYellow));
     ui->bandwidth->setValueRange(5, min/1000, max/1000);
 
-    m_sampleSink->getGlobalGainRange(min, max, step);
-    qDebug("BladeRF2OutputGui::BladeRF2OutputGui: getGlobalGainRange: [%d,%d] step: %d", min, max, step);
-    ui->gain->setMinimum((min-max)/1000);
-    ui->gain->setMaximum(0);
+    m_sampleSink->getGlobalGainRange(m_gainMin, m_gainMax, m_gainStep, m_gainScale);
+    qDebug("BladeRF2OutputGui::BladeRF2OutputGui: getGlobalGainRange: [%d,%d] step: %d scale: %f", m_gainMin, m_gainMax, m_gainStep, m_gainScale);
+    ui->gain->setMinimum(m_gainMin/m_gainStep);
+    ui->gain->setMaximum(m_gainMax/m_gainStep);
     ui->gain->setPageStep(1);
     ui->gain->setSingleStep(1);
 
@@ -75,10 +81,11 @@ BladeRF2OutputGui::BladeRF2OutputGui(DeviceUISet *deviceUISet, QWidget* parent) 
     connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
     m_statusTimer.start(500);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
     displaySettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 
     connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
     m_sampleSink->setMessageQueueToGUI(&m_inputMessageQueue);
@@ -86,6 +93,8 @@ BladeRF2OutputGui::BladeRF2OutputGui(DeviceUISet *deviceUISet, QWidget* parent) 
 
 BladeRF2OutputGui::~BladeRF2OutputGui()
 {
+    m_statusTimer.stop();
+    m_updateTimer.stop();
     delete ui;
 }
 
@@ -94,32 +103,11 @@ void BladeRF2OutputGui::destroy()
     delete this;
 }
 
-void BladeRF2OutputGui::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString BladeRF2OutputGui::getName() const
-{
-    return objectName();
-}
-
 void BladeRF2OutputGui::resetToDefaults()
 {
     m_settings.resetToDefaults();
     displaySettings();
-    sendSettings();
-}
-
-qint64 BladeRF2OutputGui::getCenterFrequency() const
-{
-    return m_settings.m_centerFrequency;
-}
-
-void BladeRF2OutputGui::setCenterFrequency(qint64 centerFrequency)
-{
-    m_settings.m_centerFrequency = centerFrequency;
-    displaySettings();
+    m_forceSettings = true;
     sendSettings();
 }
 
@@ -146,17 +134,25 @@ void BladeRF2OutputGui::updateFrequencyLimits()
     // values in kHz
     uint64_t f_min, f_max;
     int step;
+    float scale;
     qint64 deltaFrequency = m_settings.m_transverterMode ? m_settings.m_transverterDeltaFrequency/1000 : 0;
-    m_sampleSink->getFrequencyRange(f_min, f_max, step);
+    m_sampleSink->getFrequencyRange(f_min, f_max, step, scale);
     qint64 minLimit = f_min/1000 + deltaFrequency;
     qint64 maxLimit = f_max/1000 + deltaFrequency;
 
-    minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
-    maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
-
+    if (m_settings.m_transverterMode)
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 999999999 ? 999999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 999999999 ? 999999999 : maxLimit;
+        ui->centerFrequency->setValueRange(9, minLimit, maxLimit);
+    }
+    else
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
+        ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
+    }
     qDebug("BladeRF2OutputGui::updateFrequencyLimits: delta: %lld min: %lld max: %lld", deltaFrequency, minLimit, maxLimit);
-
-    ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
 }
 
 void BladeRF2OutputGui::setCenterFrequencySetting(uint64_t kHzValue)
@@ -172,12 +168,17 @@ bool BladeRF2OutputGui::handleMessage(const Message& message)
     if (BladeRF2Output::MsgConfigureBladeRF2::match(message))
     {
         const BladeRF2Output::MsgConfigureBladeRF2& cfg = (BladeRF2Output::MsgConfigureBladeRF2&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         blockApplySettings(true);
-        int min, max, step;
-        m_sampleSink->getGlobalGainRange(min, max, step);
-        ui->gain->setMinimum((min-max)/1000);
-        ui->gain->setMaximum(0);
+        m_sampleSink->getGlobalGainRange(m_gainMin, m_gainMax, m_gainStep, m_gainScale);
+        ui->gain->setMinimum(m_gainMin/m_gainStep);
+        ui->gain->setMaximum(m_gainMax/m_gainStep);
         ui->gain->setPageStep(1);
         ui->gain->setSingleStep(1);
         displaySettings();
@@ -188,8 +189,12 @@ bool BladeRF2OutputGui::handleMessage(const Message& message)
     else if (BladeRF2Output::MsgReportGainRange::match(message))
     {
         const BladeRF2Output::MsgReportGainRange& cfg = (BladeRF2Output::MsgReportGainRange&) message;
-        ui->gain->setMinimum((cfg.getMin()-cfg.getMax())/1000);
-        ui->gain->setMaximum(0);
+        m_gainMin = cfg.getMin();
+        m_gainMax = cfg.getMax();
+        m_gainStep = cfg.getStep();
+        m_gainScale = cfg.getScale();
+        ui->gain->setMinimum(m_gainMin/m_gainStep);
+        ui->gain->setMaximum(m_gainMax/m_gainStep);
         ui->gain->setSingleStep(1);
         ui->gain->setPageStep(1);
 
@@ -248,7 +253,8 @@ void BladeRF2OutputGui::updateSampleRateAndFrequency()
 void BladeRF2OutputGui::displaySampleRate()
 {
     int max, min, step;
-    m_sampleSink->getSampleRateRange(min, max, step);
+    float scale;
+    m_sampleSink->getSampleRateRange(min, max, step, scale);
 
     ui->sampleRate->blockSignals(true);
 
@@ -284,16 +290,18 @@ void BladeRF2OutputGui::displaySettings()
     ui->transverter->setDeltaFrequency(m_settings.m_transverterDeltaFrequency);
     ui->transverter->setDeltaFrequencyActive(m_settings.m_transverterMode);
 
+    updateFrequencyLimits();
+
     ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
     ui->LOppm->setValue(m_settings.m_LOppmTenths);
     ui->LOppmText->setText(QString("%1").arg(QString::number(m_settings.m_LOppmTenths/10.0, 'f', 1)));
+
     displaySampleRate();
+
     ui->bandwidth->setValue(m_settings.m_bandwidth / 1000);
-
     ui->interp->setCurrentIndex(m_settings.m_log2Interp);
-
-    ui->gainText->setText(tr("%1 dB").arg(m_settings.m_globalGain));
-    ui->gain->setValue(m_settings.m_globalGain);
+    ui->gainText->setText(tr("%1 dB").arg(QString::number(m_settings.m_globalGain, 'f', 2)));
+    ui->gain->setValue(getGainValue(m_settings.m_globalGain));
     ui->biasTee->setChecked(m_settings.m_biasTee);
 
     blockApplySettings(false);
@@ -301,13 +309,15 @@ void BladeRF2OutputGui::displaySettings()
 
 void BladeRF2OutputGui::sendSettings()
 {
-    if(!m_updateTimer.isActive())
+    if (!m_updateTimer.isActive()) {
         m_updateTimer.start(100);
+    }
 }
 
 void BladeRF2OutputGui::on_centerFrequency_changed(quint64 value)
 {
     m_settings.m_centerFrequency = value * 1000;
+    m_settingsKeys.append("centerFrequency");
     sendSettings();
 }
 
@@ -315,6 +325,7 @@ void BladeRF2OutputGui::on_LOppm_valueChanged(int value)
 {
     ui->LOppmText->setText(QString("%1").arg(QString::number(value/10.0, 'f', 1)));
     m_settings.m_LOppmTenths = value;
+    m_settingsKeys.append("LOppmTenths");
     sendSettings();
 }
 
@@ -326,18 +337,21 @@ void BladeRF2OutputGui::on_sampleRate_changed(quint64 value)
         m_settings.m_devSampleRate = value * (1 << m_settings.m_log2Interp);
     }
 
+    m_settingsKeys.append("devSampleRate");
     sendSettings();
 }
 
 void BladeRF2OutputGui::on_biasTee_toggled(bool checked)
 {
     m_settings.m_biasTee = checked;
+    m_settingsKeys.append("biasTee");
     sendSettings();
 }
 
 void BladeRF2OutputGui::on_bandwidth_changed(quint64 value)
 {
     m_settings.m_bandwidth = value * 1000;
+    m_settingsKeys.append("bandwidth");
     sendSettings();
 }
 
@@ -348,6 +362,7 @@ void BladeRF2OutputGui::on_interp_currentIndexChanged(int index)
     }
 
     m_settings.m_log2Interp = index;
+    m_settingsKeys.append("log2Interp");
     displaySampleRate();
 
     if (m_sampleRateMode) {
@@ -356,13 +371,16 @@ void BladeRF2OutputGui::on_interp_currentIndexChanged(int index)
         m_settings.m_devSampleRate = ui->sampleRate->getValueNew() * (1 << m_settings.m_log2Interp);
     }
 
+    m_settingsKeys.append("devSampleRate");
     sendSettings();
 }
 
 void BladeRF2OutputGui::on_gain_valueChanged(int value)
 {
-    ui->gainText->setText(tr("%1 dB").arg(value));
-    m_settings.m_globalGain = value;
+    float displayableGain = getGainDB(value);
+    ui->gainText->setText(tr("%1 dB").arg(QString::number(displayableGain, 'f', 2)));
+    m_settings.m_globalGain = (int) displayableGain;
+    m_settingsKeys.append("globalGain");
     sendSettings();
 }
 
@@ -373,6 +391,9 @@ void BladeRF2OutputGui::on_transverter_clicked()
     qDebug("LimeSDRInputGUI::on_transverter_clicked: %lld Hz %s", m_settings.m_transverterDeltaFrequency, m_settings.m_transverterMode ? "on" : "off");
     updateFrequencyLimits();
     setCenterFrequencySetting(ui->centerFrequency->getValueNew());
+    m_settingsKeys.append("transverterMode");
+    m_settingsKeys.append("transverterDeltaFrequency");
+    m_settingsKeys.append("centerFrequency");
     sendSettings();
 }
 
@@ -396,9 +417,10 @@ void BladeRF2OutputGui::updateHardware()
     if (m_doApplySettings)
     {
         qDebug() << "BladeRF2OutputGui::updateHardware";
-        BladeRF2Output::MsgConfigureBladeRF2* message = BladeRF2Output::MsgConfigureBladeRF2::create(m_settings, m_forceSettings);
+        BladeRF2Output::MsgConfigureBladeRF2* message = BladeRF2Output::MsgConfigureBladeRF2::create(m_settings, m_settingsKeys, m_forceSettings);
         m_sampleSink->getInputMessageQueue()->push(message);
         m_forceSettings = false;
+        m_settingsKeys.clear();
         m_updateTimer.stop();
     }
 }
@@ -434,19 +456,59 @@ void BladeRF2OutputGui::updateStatus()
 
 void BladeRF2OutputGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settingsKeys.append("useReverseAPI");
+        m_settingsKeys.append("reverseAPIAddress");
+        m_settingsKeys.append("reverseAPIPort");
+        m_settingsKeys.append("reverseAPIDeviceIndex");
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+float BladeRF2OutputGui::getGainDB(int gainValue)
+{
+    float gain = gainValue*m_gainStep*m_gainScale;
+    // qDebug("BladeRF2OutputGui::getGainDB: gainValue: %d m_gainMin: %d m_gainMax: %d m_gainStep: %d gain: %f",
+    //     gainValue, m_gainMin, m_gainMax, m_gainStep, gain);
+    return gain;
+}
+
+int BladeRF2OutputGui::getGainValue(float gainDB)
+{
+    int gain = (gainDB/m_gainScale) / m_gainStep;
+    // qDebug("BladeRF2OutputGui::getGainValue: gainDB: %f m_gainMin: %d m_gainMax: %d m_gainStep: %d gain: %d",
+    //     gainDB, m_gainMin, m_gainMax, m_gainStep, gain);
+    return gain;
+}
+
+void BladeRF2OutputGui::makeUIConnections()
+{
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &BladeRF2OutputGui::on_centerFrequency_changed);
+    QObject::connect(ui->LOppm, &QSlider::valueChanged, this, &BladeRF2OutputGui::on_LOppm_valueChanged);
+    QObject::connect(ui->biasTee, &ButtonSwitch::toggled, this, &BladeRF2OutputGui::on_biasTee_toggled);
+    QObject::connect(ui->sampleRate, &ValueDial::changed, this, &BladeRF2OutputGui::on_sampleRate_changed);
+    QObject::connect(ui->bandwidth, &ValueDial::changed, this, &BladeRF2OutputGui::on_bandwidth_changed);
+    QObject::connect(ui->interp, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &BladeRF2OutputGui::on_interp_currentIndexChanged);
+    QObject::connect(ui->gain, &QSlider::valueChanged, this, &BladeRF2OutputGui::on_gain_valueChanged);
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &BladeRF2OutputGui::on_startStop_toggled);
+    QObject::connect(ui->transverter, &TransverterButton::clicked, this, &BladeRF2OutputGui::on_transverter_clicked);
+    QObject::connect(ui->sampleRateMode, &QToolButton::toggled, this, &BladeRF2OutputGui::on_sampleRateMode_toggled);
 }

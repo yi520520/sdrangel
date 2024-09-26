@@ -2,7 +2,9 @@
 
 <h2>Introduction</h2>
 
-This plugin reads a file of I/Q samples that have been previously saved with the file record button of other sampling source devices. The file starts with a 32 byte header of all unsigned integer of various sizes containing meta data:
+This plugin reads a file of I/Q samples that have been previously saved with the file record button of other sampling source devices. The plugin supports SDRangel's own .sdriq file format as well as signed 16-bit PCM, 2 channel .wav files (including support for optional auxi headers, containing centre frequency).
+
+An .sdriq file starts with a 32 byte header of all unsigned integer of various sizes containing meta data:
 
 <table>
   <tr>
@@ -23,7 +25,7 @@ This plugin reads a file of I/Q samples that have been previously saved with the
   <tr>
     <td>12</td>
     <td>8</td>
-    <td>Unix epoch (timestamp) of start</td>
+    <td>Unix epoch (timestamp) of start (in ms)</td>
   </tr>
   <tr>
     <td>20</td>
@@ -46,6 +48,8 @@ The header takes an integer number of 16 (4 bytes) or 24 (8 bytes) bits samples.
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![File input plugin GUI](../../../doc/img/FileInput_plugin.png)
 
 <h3>1: Start/Stop</h3>
@@ -66,7 +70,7 @@ This is the center frequency of reception in kHz when the record was taken and w
 
 <h3>4: Open file</h3>
 
-Opens a file dialog to select the input file. It expects a default extension of `.sdriq`. This button is disabled when the stream is running. You need to pause (button 11) to make it active and thus be able to select another file.
+Opens a file dialog to select the input file. It expects an extension of `.sdriq` or `.wav`. This button is disabled when the stream is running. You need to pause (button 11) to make it active and thus be able to select another file.
 
 <h3>5: File path</h3>
 

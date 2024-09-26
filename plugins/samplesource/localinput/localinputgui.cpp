@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2019-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,10 +19,10 @@
 #include <stdint.h>
 #include <sstream>
 #include <iostream>
-#include <cassert>
 
 #include <QDebug>
 #include <QMessageBox>
+#include <QFileDialog>
 #include <QTime>
 #include <QDateTime>
 #include <QString>
@@ -31,23 +32,18 @@
 #include <QJsonObject>
 
 #include "ui_localinputgui.h"
-#include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
-#include "mainwindow.h"
-#include "util/simpleserializer.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 #include "localinputgui.h"
 
 
 LocalInputGui::LocalInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
-	QWidget(parent),
+	DeviceGUI(parent),
 	ui(new Ui::LocalInputGui),
-	m_deviceUISet(deviceUISet),
 	m_settings(),
 	m_sampleSource(0),
 	m_acquisition(false),
@@ -68,25 +64,24 @@ LocalInputGui::LocalInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	m_countUnrecoverable(0),
 	m_countRecovered(0),
     m_doApplySettings(true),
-    m_forceSettings(true),
-    m_txDelay(0.0)
+    m_forceSettings(true)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_paletteGreenText.setColor(QPalette::WindowText, Qt::green);
     m_paletteWhiteText.setColor(QPalette::WindowText, Qt::white);
 
 	m_startingTimeStampms = 0;
-	ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#LocalInputGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesource/localinput/readme.md";
 
-	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequency->setValueRange(7, 0, 9999999U);
-
-	ui->centerFrequencyHz->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequencyHz->setValueRange(3, 0, 999U);
-
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
 	displaySettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
@@ -97,19 +92,14 @@ LocalInputGui::LocalInputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 	m_sampleSource->setMessageQueueToGUI(&m_inputMessageQueue);
 
-    m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
-
-    m_eventsTime.start();
-
     m_forceSettings = true;
     sendSettings();
 }
 
 LocalInputGui::~LocalInputGui()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
-    delete m_networkManager;
+    m_statusTimer.stop();
+    m_updateTimer.stop();
 	delete ui;
 }
 
@@ -121,16 +111,6 @@ void LocalInputGui::blockApplySettings(bool block)
 void LocalInputGui::destroy()
 {
 	delete this;
-}
-
-void LocalInputGui::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString LocalInputGui::getName() const
-{
-	return objectName();
 }
 
 void LocalInputGui::resetToDefaults()
@@ -164,22 +144,18 @@ bool LocalInputGui::deserialize(const QByteArray& data)
     }
 }
 
-qint64 LocalInputGui::getCenterFrequency() const
-{
-    return m_streamCenterFrequency;
-}
-
-void LocalInputGui::setCenterFrequency(qint64 centerFrequency)
-{
-    (void) centerFrequency;
-}
-
 bool LocalInputGui::handleMessage(const Message& message)
 {
     if (LocalInput::MsgConfigureLocalInput::match(message))
     {
         const LocalInput::MsgConfigureLocalInput& cfg = (LocalInput::MsgConfigureLocalInput&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         blockApplySettings(true);
         displaySettings();
         blockApplySettings(false);
@@ -251,8 +227,7 @@ void LocalInputGui::updateSampleRateAndFrequency()
     m_deviceUISet->getSpectrum()->setCenterFrequency(m_streamCenterFrequency);
     ui->deviceRateText->setText(tr("%1k").arg((float)m_streamSampleRate / 1000));
     blockApplySettings(true);
-    ui->centerFrequency->setValue(m_streamCenterFrequency / 1000);
-    ui->centerFrequencyHz->setValue(m_streamCenterFrequency % 1000);
+    ui->centerFrequency->setText(tr("%L1").arg(m_streamCenterFrequency));
     blockApplySettings(false);
 }
 
@@ -260,8 +235,7 @@ void LocalInputGui::displaySettings()
 {
     blockApplySettings(true);
 
-    ui->centerFrequency->setValue(m_streamCenterFrequency / 1000);
-    ui->centerFrequencyHz->setValue(m_streamCenterFrequency % 1000);
+    ui->centerFrequency->setText(tr("%L1").arg(m_streamCenterFrequency));
     ui->deviceRateText->setText(tr("%1k").arg(m_streamSampleRate / 1000.0));
 
 	ui->dcOffset->setChecked(m_settings.m_dcBlock);
@@ -279,12 +253,14 @@ void LocalInputGui::sendSettings()
 void LocalInputGui::on_dcOffset_toggled(bool checked)
 {
     m_settings.m_dcBlock = checked;
+     m_settingsKeys.append("dcBlock");
     sendSettings();
 }
 
 void LocalInputGui::on_iqImbalance_toggled(bool checked)
 {
     m_settings.m_iqCorrection = checked;
+     m_settingsKeys.append("iqCorrection");
     sendSettings();
 }
 
@@ -297,27 +273,16 @@ void LocalInputGui::on_startStop_toggled(bool checked)
     }
 }
 
-void LocalInputGui::on_record_toggled(bool checked)
-{
-    if (checked) {
-        ui->record->setStyleSheet("QToolButton { background-color : red; }");
-    } else {
-        ui->record->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
-    }
-
-    LocalInput::MsgFileRecord* message = LocalInput::MsgFileRecord::create(checked);
-    m_sampleSource->getInputMessageQueue()->push(message);
-}
-
 void LocalInputGui::updateHardware()
 {
     if (m_doApplySettings)
     {
         qDebug() << "LocalInputGui::updateHardware";
         LocalInput::MsgConfigureLocalInput* message =
-                LocalInput::MsgConfigureLocalInput::create(m_settings, m_forceSettings);
+                LocalInput::MsgConfigureLocalInput::create(m_settings, m_settingsKeys, m_forceSettings);
         m_sampleSource->getInputMessageQueue()->push(message);
         m_forceSettings = false;
+        m_settingsKeys.clear();
         m_updateTimer.stop();
     }
 }
@@ -353,19 +318,36 @@ void LocalInputGui::updateStatus()
 
 void LocalInputGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settingsKeys.append("useReverseAPI");
+        m_settingsKeys.append("reverseAPIAddress");
+        m_settingsKeys.append("reverseAPIPort");
+        m_settingsKeys.append("reverseAPIDeviceIndex");
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void LocalInputGui::makeUIConnections()
+{
+    QObject::connect(ui->dcOffset, &ButtonSwitch::toggled, this, &LocalInputGui::on_dcOffset_toggled);
+    QObject::connect(ui->iqImbalance, &ButtonSwitch::toggled, this, &LocalInputGui::on_iqImbalance_toggled);
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &LocalInputGui::on_startStop_toggled);
 }

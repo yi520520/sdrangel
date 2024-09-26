@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -25,10 +27,8 @@ RemoteOutputSettings::RemoteOutputSettings()
 
 void RemoteOutputSettings::resetToDefaults()
 {
-    m_centerFrequency = 435000*1000;
-    m_sampleRate = 48000;
-    m_txDelay = 0.35;
     m_nbFECBlocks = 0;
+    m_nbTxBytes = 2;
     m_apiAddress = "127.0.0.1";
     m_apiPort = 9091;
     m_dataAddress = "127.0.0.1";
@@ -45,9 +45,7 @@ QByteArray RemoteOutputSettings::serialize() const
 {
     SimpleSerializer s(1);
 
-    s.writeU64(1, m_centerFrequency);
-    s.writeU32(2, m_sampleRate);
-    s.writeFloat(3, m_txDelay);
+    s.writeU32(3, m_nbTxBytes);
     s.writeU32(4, m_nbFECBlocks);
     s.writeString(5, m_apiAddress);
     s.writeU32(6, m_apiPort);
@@ -77,9 +75,7 @@ bool RemoteOutputSettings::deserialize(const QByteArray& data)
     {
         quint32 uintval;
 
-        d.readU64(1, &m_centerFrequency, 435000*1000);
-        d.readU32(2, &m_sampleRate, 48000);
-        d.readFloat(3, &m_txDelay, 0.5);
+        d.readU32(4, &m_nbTxBytes, 2);
         d.readU32(4, &m_nbFECBlocks, 0);
         d.readString(5, &m_apiAddress, "127.0.0.1");
         d.readU32(6, &uintval, 9090);
@@ -110,3 +106,88 @@ bool RemoteOutputSettings::deserialize(const QByteArray& data)
         return false;
     }
 }
+
+void RemoteOutputSettings::applySettings(const QStringList& settingsKeys, const RemoteOutputSettings& settings)
+{
+    if (settingsKeys.contains("nbFECBlocks")) {
+        m_nbFECBlocks = settings.m_nbFECBlocks;
+    }
+    if (settingsKeys.contains("nbTxBytes")) {
+        m_nbTxBytes = settings.m_nbTxBytes;
+    }
+    if (settingsKeys.contains("apiAddress")) {
+        m_apiAddress = settings.m_apiAddress;
+    }
+    if (settingsKeys.contains("apiPort")) {
+        m_apiPort = settings.m_apiPort;
+    }
+    if (settingsKeys.contains("dataAddress")) {
+        m_dataAddress = settings.m_dataAddress;
+    }
+    if (settingsKeys.contains("dataPort")) {
+        m_dataPort = settings.m_dataPort;
+    }
+    if (settingsKeys.contains("deviceIndex")) {
+        m_deviceIndex = settings.m_deviceIndex;
+    }
+    if (settingsKeys.contains("channelIndex")) {
+        m_channelIndex = settings.m_channelIndex;
+    }
+    if (settingsKeys.contains("useReverseAPI")) {
+        m_useReverseAPI = settings.m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress")) {
+        m_reverseAPIAddress = settings.m_reverseAPIAddress;
+    }
+    if (settingsKeys.contains("reverseAPIPort")) {
+        m_reverseAPIPort = settings.m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex")) {
+        m_reverseAPIDeviceIndex = settings.m_reverseAPIDeviceIndex;
+    }
+}
+
+QString RemoteOutputSettings::getDebugString(const QStringList& settingsKeys, bool force) const
+{
+    std::ostringstream ostr;
+
+    if (settingsKeys.contains("nbFECBlocks") || force) {
+        ostr << " m_nbFECBlocks: " << m_nbFECBlocks;
+    }
+    if (settingsKeys.contains("nbTxBytes") || force) {
+        ostr << " m_nbTxBytes: " << m_nbTxBytes;
+    }
+    if (settingsKeys.contains("apiAddress") || force) {
+        ostr << " m_apiAddress: " << m_apiAddress.toStdString();
+    }
+    if (settingsKeys.contains("apiPort") || force) {
+        ostr << " m_apiPort: " << m_apiPort;
+    }
+    if (settingsKeys.contains("dataAddress") || force) {
+        ostr << " m_dataAddress: " << m_dataAddress.toStdString();
+    }
+    if (settingsKeys.contains("dataPort") || force) {
+        ostr << " m_dataPort: " << m_dataPort;
+    }
+    if (settingsKeys.contains("deviceIndex") || force) {
+        ostr << " m_deviceIndex: " << m_deviceIndex;
+    }
+    if (settingsKeys.contains("channelIndex") || force) {
+        ostr << " m_channelIndex: " << m_channelIndex;
+    }
+    if (settingsKeys.contains("useReverseAPI") || force) {
+        ostr << " m_useReverseAPI: " << m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress") || force) {
+        ostr << " m_reverseAPIAddress: " << m_reverseAPIAddress.toStdString();
+    }
+    if (settingsKeys.contains("reverseAPIPort") || force) {
+        ostr << " m_reverseAPIPort: " << m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex") || force) {
+        ostr << " m_reverseAPIDeviceIndex: " << m_reverseAPIDeviceIndex;
+    }
+
+    return QString(ostr.str().c_str());
+}
+

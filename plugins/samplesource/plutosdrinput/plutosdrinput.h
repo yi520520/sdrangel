@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2019 Robin Getz <robin.getz@analog.com>                         //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -32,7 +36,6 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 class DeviceAPI;
-class FileRecord;
 class PlutoSDRInputThread;
 
 class PlutoSDRInput : public DeviceSampleSource {
@@ -43,40 +46,23 @@ public:
 
     public:
         const PlutoSDRInputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigurePlutoSDR* create(const PlutoSDRInputSettings& settings, bool force)
-        {
-            return new MsgConfigurePlutoSDR(settings, force);
+        static MsgConfigurePlutoSDR* create(const PlutoSDRInputSettings& settings, const QList<QString>& settingsKeys, bool force) {
+            return new MsgConfigurePlutoSDR(settings, settingsKeys, force);
         }
 
     private:
         PlutoSDRInputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigurePlutoSDR(const PlutoSDRInputSettings& settings, bool force) :
+        MsgConfigurePlutoSDR(const PlutoSDRInputSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
-        { }
-    };
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
         { }
     };
 
@@ -142,6 +128,15 @@ public:
             SWGSDRangel::SWGDeviceReport& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const PlutoSDRInputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            PlutoSDRInputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     uint32_t getADCSampleRate() const { return m_deviceSampleRates.m_addaConnvRate; }
     uint32_t getFIRSampleRate() const { return m_deviceSampleRates.m_hb1Rate; }
     void getRSSI(std::string& rssiStr);
@@ -153,7 +148,7 @@ public:
 
  private:
     DeviceAPI *m_deviceAPI;
-    FileRecord *m_fileSink;
+    bool m_open;
     QString m_deviceDescription;
     PlutoSDRInputSettings m_settings;
     bool m_running;
@@ -169,10 +164,9 @@ public:
     void closeDevice();
     void suspendBuddies();
     void resumeBuddies();
-    bool applySettings(const PlutoSDRInputSettings& settings, bool force = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const PlutoSDRInputSettings& settings);
+    bool applySettings(const PlutoSDRInputSettings& settings, const QList<QString>& settingsKeys, bool force = false);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const PlutoSDRInputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const PlutoSDRInputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

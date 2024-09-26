@@ -1,6 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
 // written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,32 +25,24 @@
 
 #include <vector>
 
-#include <QMutex>
+#include <QRecursiveMutex>
 #include <QNetworkRequest>
 
 #include "dsp/basebandsamplesink.h"
+#include "dsp/spectrumvis.h"
 #include "channel/channelapi.h"
-#include "dsp/ncof.h"
-#include "dsp/interpolator.h"
-#include "dsp/fftfilt.h"
-#include "dsp/agc.h"
-#include "audio/audiofifo.h"
 #include "util/message.h"
-#include "util/doublebufferfifo.h"
 
 #include "ssbdemodsettings.h"
-
-#define ssbFftLen 1024
-#define agcTarget 3276.8 // -10 dB amplitude => -20 dB power: center of normal signal
+#include "ssbdemodbaseband.h"
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 class DeviceAPI;
-class ThreadedBasebandSampleSink;
-class DownChannelizer;
+class ObjectPipe;
 
 class SSBDemod : public BasebandSampleSink, public ChannelAPI {
-	Q_OBJECT
 public:
     class MsgConfigureSSBDemod : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -71,63 +67,32 @@ public:
         { }
     };
 
-    class MsgConfigureChannelizer : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        int getSampleRate() const { return m_sampleRate; }
-        int getCenterFrequency() const { return m_centerFrequency; }
-
-        static MsgConfigureChannelizer* create(int sampleRate, int centerFrequency)
-        {
-            return new MsgConfigureChannelizer(sampleRate, centerFrequency);
-        }
-
-    private:
-        int m_sampleRate;
-        int  m_centerFrequency;
-
-        MsgConfigureChannelizer(int sampleRate, int centerFrequency) :
-            Message(),
-            m_sampleRate(sampleRate),
-            m_centerFrequency(centerFrequency)
-        { }
-    };
-
 	SSBDemod(DeviceAPI *deviceAPI);
 	virtual ~SSBDemod();
 	virtual void destroy() { delete this; }
-	void setSampleSink(BasebandSampleSink* sampleSink) { m_sampleSink = sampleSink; }
+    virtual void setDeviceAPI(DeviceAPI *deviceAPI);
+    virtual DeviceAPI *getDeviceAPI() { return m_deviceAPI; }
+    SpectrumVis *getSpectrumVis() { return &m_spectrumVis; }
 
-	void configure(MessageQueue* messageQueue,
-			Real Bandwidth,
-			Real LowCutoff,
-			Real volume,
-			int spanLog2,
-			bool audioBinaural,
-			bool audioFlipChannels,
-			bool dsb,
-			bool audioMute,
-			bool agc,
-			bool agcClamping,
-			int agcTimeLog2,
-			int agcPowerThreshold,
-			int agcThresholdGate);
-
-	virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool positiveOnly);
+    using BasebandSampleSink::feed;
+    virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool po);
 	virtual void start();
 	virtual void stop();
-	virtual bool handleMessage(const Message& cmd);
+    virtual void pushMessage(Message *msg) { m_inputMessageQueue.push(msg); }
+    virtual QString getSinkName() { return objectName(); }
 
     virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual QString getIdentifier() const { return objectName(); }
     virtual void getTitle(QString& title) { title = m_settings.m_title; }
     virtual qint64 getCenterFrequency() const { return m_settings.m_inputFrequencyOffset; }
+    virtual void setCenterFrequency(qint64 frequency);
 
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
 
     virtual int getNbSinkStreams() const { return 1; }
     virtual int getNbSourceStreams() const { return 0; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
 
     virtual qint64 getStreamCenterFrequency(int streamIndex, bool sinkElseSource) const
     {
@@ -136,31 +101,27 @@ public:
         return m_settings.m_inputFrequencyOffset;
     }
 
-    uint32_t getAudioSampleRate() const { return m_audioSampleRate; }
-    uint32_t getInputSampleRate() const { return m_inputSampleRate; }
-    double getMagSq() const { return m_magsq; }
-	bool getAudioActive() const { return m_audioActive; }
+    void setMessageQueueToGUI(MessageQueue* queue) final;
+    uint32_t getAudioSampleRate() const { return m_running ? m_basebandSink->getAudioSampleRate() : 0; }
+    uint32_t getChannelSampleRate() const { return m_running ? m_basebandSink->getChannelSampleRate() : 0; }
+    double getMagSq() const { return m_running ? m_basebandSink->getMagSq() : 0.0; }
+	bool getAudioActive() const { return m_running && m_basebandSink->getAudioActive(); }
 
     void getMagSqLevels(double& avg, double& peak, int& nbSamples)
     {
-        if (m_magsqCount > 0)
-        {
-            m_magsq = m_magsqSum / m_magsqCount;
-            m_magSqLevelStore.m_magsq = m_magsq;
-            m_magSqLevelStore.m_magsqPeak = m_magsqPeak;
+        if (m_running) {
+            m_basebandSink->getMagSqLevels(avg, peak, nbSamples);
+        } else {
+            avg = 0.0; peak = 0.0; nbSamples = 1;
         }
-
-        avg = m_magSqLevelStore.m_magsq;
-        peak = m_magSqLevelStore.m_magsqPeak;
-        nbSamples = m_magsqCount == 0 ? 1 : m_magsqCount;
-
-        m_magsqSum = 0.0f;
-        m_magsqPeak = 0.0f;
-        m_magsqCount = 0;
     }
 
     virtual int webapiSettingsGet(
             SWGSDRangel::SWGChannelSettings& response,
+            QString& errorMessage);
+
+    virtual int webapiWorkspaceGet(
+            SWGSDRangel::SWGWorkspaceInfo& response,
             QString& errorMessage);
 
     virtual int webapiSettingsPutPatch(
@@ -173,176 +134,54 @@ public:
             SWGSDRangel::SWGChannelReport& response,
             QString& errorMessage);
 
-    static const QString m_channelIdURI;
-    static const QString m_channelId;
+    static void webapiFormatChannelSettings(
+        SWGSDRangel::SWGChannelSettings& response,
+        const SSBDemodSettings& settings);
+
+    static void webapiUpdateChannelSettings(
+            SSBDemodSettings& settings,
+            const QStringList& channelSettingsKeys,
+            SWGSDRangel::SWGChannelSettings& response);
+
+    uint32_t getNumberOfDeviceStreams() const;
+
+    static const char* const m_channelIdURI;
+    static const char* const m_channelId;
 
 private:
-    struct MagSqLevelsStore
-    {
-        MagSqLevelsStore() :
-            m_magsq(1e-12),
-            m_magsqPeak(1e-12)
-        {}
-        double m_magsq;
-        double m_magsqPeak;
-    };
-
-	class MsgConfigureSSBDemodPrivate : public Message {
-		MESSAGE_CLASS_DECLARATION
-
-	public:
-		Real getBandwidth() const { return m_Bandwidth; }
-		Real getLoCutoff() const { return m_LowCutoff; }
-		Real getVolume() const { return m_volume; }
-		int  getSpanLog2() const { return m_spanLog2; }
-		bool getAudioBinaural() const { return m_audioBinaural; }
-		bool getAudioFlipChannels() const { return m_audioFlipChannels; }
-		bool getDSB() const { return m_dsb; }
-		bool getAudioMute() const { return m_audioMute; }
-		bool getAGC() const { return m_agc; }
-		bool getAGCClamping() const { return m_agcClamping; }
-		int  getAGCTimeLog2() const { return m_agcTimeLog2; }
-		int  getAGCPowerThershold() const { return m_agcPowerThreshold; }
-        int  getAGCThersholdGate() const { return m_agcThresholdGate; }
-
-		static MsgConfigureSSBDemodPrivate* create(Real Bandwidth,
-				Real LowCutoff,
-				Real volume,
-				int spanLog2,
-				bool audioBinaural,
-				bool audioFlipChannels,
-				bool dsb,
-				bool audioMute,
-                bool agc,
-                bool agcClamping,
-                int  agcTimeLog2,
-                int  agcPowerThreshold,
-                int  agcThresholdGate)
-		{
-			return new MsgConfigureSSBDemodPrivate(
-			        Bandwidth,
-			        LowCutoff,
-			        volume,
-			        spanLog2,
-			        audioBinaural,
-			        audioFlipChannels,
-			        dsb,
-			        audioMute,
-			        agc,
-			        agcClamping,
-			        agcTimeLog2,
-			        agcPowerThreshold,
-			        agcThresholdGate);
-		}
-
-	private:
-		Real m_Bandwidth;
-		Real m_LowCutoff;
-		Real m_volume;
-		int  m_spanLog2;
-		bool m_audioBinaural;
-		bool m_audioFlipChannels;
-		bool m_dsb;
-		bool m_audioMute;
-		bool m_agc;
-		bool m_agcClamping;
-		int  m_agcTimeLog2;
-		int  m_agcPowerThreshold;
-		int  m_agcThresholdGate;
-
-		MsgConfigureSSBDemodPrivate(Real Bandwidth,
-				Real LowCutoff,
-				Real volume,
-				int spanLog2,
-				bool audioBinaural,
-				bool audioFlipChannels,
-				bool dsb,
-				bool audioMute,
-				bool agc,
-				bool agcClamping,
-				int  agcTimeLog2,
-				int  agcPowerThreshold,
-				int  agcThresholdGate) :
-			Message(),
-			m_Bandwidth(Bandwidth),
-			m_LowCutoff(LowCutoff),
-			m_volume(volume),
-			m_spanLog2(spanLog2),
-			m_audioBinaural(audioBinaural),
-			m_audioFlipChannels(audioFlipChannels),
-			m_dsb(dsb),
-			m_audioMute(audioMute),
-			m_agc(agc),
-			m_agcClamping(agcClamping),
-			m_agcTimeLog2(agcTimeLog2),
-			m_agcPowerThreshold(agcPowerThreshold),
-			m_agcThresholdGate(agcThresholdGate)
-		{ }
-	};
-
 	DeviceAPI *m_deviceAPI;
-    ThreadedBasebandSampleSink* m_threadedChannelizer;
-    DownChannelizer* m_channelizer;
+    QThread *m_thread;
+    SSBDemodBaseband* m_basebandSink;
+    QRecursiveMutex m_mutex;
+    bool m_running;
     SSBDemodSettings m_settings;
-
-	Real m_Bandwidth;
-	Real m_LowCutoff;
-	Real m_volume;
-	int m_spanLog2;
-	fftfilt::cmplx m_sum;
-	int m_undersampleCount;
-	int m_inputSampleRate;
-	int m_inputFrequencyOffset;
-	bool m_audioBinaual;
-	bool m_audioFlipChannels;
-	bool m_usb;
-	bool m_dsb;
-	bool m_audioMute;
-	double m_magsq;
-	double m_magsqSum;
-	double m_magsqPeak;
-    int  m_magsqCount;
-    MagSqLevelsStore m_magSqLevelStore;
-    MagAGC m_agc;
-    bool m_agcActive;
-    bool m_agcClamping;
-    int m_agcNbSamples;         //!< number of audio (48 kHz) samples for AGC averaging
-    double m_agcPowerThreshold; //!< AGC power threshold (linear)
-    int m_agcThresholdGate;     //!< Gate length in number of samples befor threshold triggers
-    DoubleBufferFIFO<fftfilt::cmplx> m_squelchDelayLine;
-    bool m_audioActive;         //!< True if an audio signal is produced (no AGC or AGC and above threshold)
-
-	NCOF m_nco;
-    Interpolator m_interpolator;
-    Real m_interpolatorDistance;
-    Real m_interpolatorDistanceRemain;
-	fftfilt* SSBFilter;
-	fftfilt* DSBFilter;
-
-	BasebandSampleSink* m_sampleSink;
-	SampleVector m_sampleBuffer;
-
-	AudioVector m_audioBuffer;
-	uint m_audioBufferFill;
-	AudioFifo m_audioFifo;
-	quint32 m_audioSampleRate;
+    SpectrumVis m_spectrumVis;
+    int m_basebandSampleRate; //!< stored from device message used when starting baseband sink
 
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-	QMutex m_settingsMutex;
-
-	void applyChannelSettings(int inputSampleRate, int inputFrequencyOffset, bool force = false);
+	virtual bool handleMessage(const Message& cmd);
 	void applySettings(const SSBDemodSettings& settings, bool force = false);
-    void applyAudioSampleRate(int sampleRate);
-    void webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& response, const SSBDemodSettings& settings);
+    void sendSampleRateToDemodAnalyzer();
     void webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response);
     void webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const SSBDemodSettings& settings, bool force);
-
-    void processOneSample(Complex &ci);
+    void sendChannelSettings(
+        const QList<ObjectPipe*>& pipes,
+        QList<QString>& channelSettingsKeys,
+        const SSBDemodSettings& settings,
+        bool force
+    );
+    void webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const SSBDemodSettings& settings,
+        bool force
+    );
 
 private slots:
     void networkManagerFinished(QNetworkReply *reply);
+    void handleIndexInDeviceSetChanged(int index);
 };
 
 #endif // INCLUDE_SSBDEMOD_H

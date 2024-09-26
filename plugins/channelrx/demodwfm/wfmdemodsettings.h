@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,6 +23,8 @@
 
 #include "dsp/dsptypes.h"
 
+#include "dsp/dsptypes.h"
+
 class Serializable;
 
 struct WFMDemodSettings
@@ -34,13 +38,18 @@ struct WFMDemodSettings
     quint32 m_rgbColor;
     QString m_title;
     QString m_audioDeviceName;
+    int m_streamIndex; //!< MIMO channel. Not relevant when connected to SI (single Rx).
     bool m_useReverseAPI;
     QString m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
     uint16_t m_reverseAPIDeviceIndex;
     uint16_t m_reverseAPIChannelIndex;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
 
     Serializable *m_channelMarker;
+    Serializable *m_rollupState;
 
     static const int m_rfBWMin;
     static const int m_rfBWMax;
@@ -49,8 +58,18 @@ struct WFMDemodSettings
     WFMDemodSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+
+    static int requiredBW(int rfBW)
+    {
+        if (rfBW <= 48000) {
+            return 48000;
+        } else {
+            return (3*rfBW)/2;
+        }
+    }
 };
 
 #endif /* PLUGINS_CHANNELRX_DEMODWFM_WFMDEMODSETTINGS_H_ */

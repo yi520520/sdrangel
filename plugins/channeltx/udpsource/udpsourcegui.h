@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,13 +19,13 @@
 #ifndef PLUGINS_CHANNELTX_UDPSINK_UDPSOURCEGUI_H_
 #define PLUGINS_CHANNELTX_UDPSINK_UDPSOURCEGUI_H_
 
-#include <plugin/plugininstancegui.h>
 #include <QObject>
 
-#include "gui/rollupwidget.h"
+#include "channel/channelgui.h"
 #include "dsp/channelmarker.h"
 #include "util/messagequeue.h"
 #include "util/movingaverage.h"
+#include "settings/rollupstate.h"
 
 #include "udpsource.h"
 #include "udpsourcesettings.h"
@@ -38,22 +39,28 @@ namespace Ui {
     class UDPSourceGUI;
 }
 
-class UDPSourceGUI : public RollupWidget, public PluginInstanceGUI {
+class UDPSourceGUI : public ChannelGUI {
     Q_OBJECT
 
 public:
     static UDPSourceGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx);
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     virtual void resetToDefaults();
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
+    virtual void setWorkspaceIndex(int index) { m_settings.m_workspaceIndex = index; };
+    virtual int getWorkspaceIndex() const { return m_settings.m_workspaceIndex; };
+    virtual void setGeometryBytes(const QByteArray& blob) { m_settings.m_geometryBytes = blob; };
+    virtual QByteArray getGeometryBytes() const { return m_settings.m_geometryBytes; };
+    virtual QString getTitle() const { return m_settings.m_title; };
+    virtual QColor getTitleColor() const  { return m_settings.m_rgbColor; };
+    virtual void zetHidden(bool hidden) { m_settings.m_hidden = hidden; }
+    virtual bool getHidden() const { return m_settings.m_hidden; }
+    virtual ChannelMarker& getChannelMarker() { return m_channelMarker; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
+    virtual void setStreamIndex(int streamIndex) { m_settings.m_streamIndex = streamIndex; }
 
 public slots:
     void channelMarkerChangedByCursor();
@@ -68,9 +75,12 @@ private:
     MovingAverageUtil<double, double, 4> m_inPowerAvg;
     uint32_t m_tickCount;
     ChannelMarker m_channelMarker;
+    RollupState m_rollupState;
 
     // settings
     UDPSourceSettings m_settings;
+    qint64 m_deviceCenterFrequency;
+    int m_basebandSampleRate;
     bool m_rfBandwidthChanged;
     bool m_doApplySettings;
     MessageQueue m_inputMessageQueue;
@@ -83,9 +93,12 @@ private:
     void displaySettings();
     void setSampleFormat(int index);
     void setSampleFormatIndex(const UDPSourceSettings::SampleFormat& sampleFormat);
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
+    void updateAbsoluteCenterFrequency();
 
     void leaveEvent(QEvent*);
-    void enterEvent(QEvent*);
+    void enterEvent(EnterEventType*);
 
 private slots:
     void handleSourceMessages();
@@ -93,6 +106,8 @@ private slots:
     void on_sampleFormat_currentIndexChanged(int index);
     void on_localUDPAddress_editingFinished();
     void on_localUDPPort_editingFinished();
+    void on_multicastAddress_editingFinished();
+    void on_multicastJoin_toggled(bool checked);
     void on_sampleRate_textEdited(const QString& arg1);
     void on_rfBandwidth_textEdited(const QString& arg1);
     void on_fmDeviation_textEdited(const QString& arg1);

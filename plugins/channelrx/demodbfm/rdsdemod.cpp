@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2018 Jason Gerecke <killertofu@gmail.com>                       //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,14 +22,9 @@
 #include "../../channelrx/demodbfm/rdsdemod.h"
 
 #include <QDebug>
-#include <math.h>
+#include <cmath>
 #include <stdio.h>
 #include <stdlib.h>
-
-#undef M_PI
-#define M_PI 3.14159265358979323846
-#undef M_PI_2
-#define M_PI_2 1.57079632679489661923
 
 const Real RDSDemod::m_pllBeta = 50;
 const Real RDSDemod::m_fsc = 1187.5;

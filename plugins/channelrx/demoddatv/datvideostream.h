@@ -1,4 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2018-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 // Copyright (C) 2018 F4HKW                                                      //
 // for F4EXB / SDRAngel                                                          //
 //                                                                               //
@@ -26,54 +27,51 @@
 #include <QMutex>
 #include <QThread>
 
-#define MinStackSize    4
-#define DefaultMemoryLimit  2048000
-
 class DATVideostream : public QIODevice
 {
     Q_OBJECT
 
 public:
     DATVideostream();
-    ~DATVideostream();
-
-    bool MultiThreaded;
-    int ThreadTimeOut;
+    virtual ~DATVideostream();
 
     int pushData(const char * chrData, int intSize);
-    bool setMemoryLimit(int intMemoryLimit);
+    void resetTotalReceived();
+    void cleanUp();
+    void setMultiThreaded(bool multiThreaded);
+    void setThreadTimeout(int timeOut) { m_threadTimeout = timeOut; }
 
     virtual bool isSequential() const;
     virtual qint64 bytesAvailable() const;
     virtual void close();
     virtual bool open(OpenMode mode);
 
-    QQueue<QByteArray> m_objFIFO;
+    static const int m_defaultMemoryLimit = 2820000;
+    static const int m_minStackSize = 4;
 
 signals:
-
-    void onDataAvailable();
-    void onDataPackets(int *intDataPackets, int *intDataBytes, int *intPercentBuffer,qint64 *intTotalReceived);
+    void dataAvailable();
+    void fifoData(int intDataBytes, int intPercentBuffer, qint64 intTotalReceived);
 
 protected:
-
     virtual qint64 readData(char *data, qint64 len);
     virtual qint64 writeData(const char *data, qint64 len);
     virtual qint64 readLineData(char *data, qint64 maxSize);
 
 private:
+    QQueue<QByteArray> m_fifo;
+    bool m_multiThreaded;
+    int m_threadTimeout;
 
-    QEventLoop m_objeventLoop;
-    QMutex m_objMutex;
-    int m_intMemoryLimit;
-    int m_intBytesAvailable;
-    int m_intBytesWaiting;
-    int m_intQueueWaiting;
-    int m_intPercentBuffer;
-    qint64 m_intTotalReceived;
-    qint64 m_intPacketReceived;
+    QEventLoop m_eventLoop;
+    QMutex m_mutex;
+    int m_memoryLimit;
+    int m_bytesAvailable;
+    int m_bytesWaiting;
+    int m_percentBuffer;
+    qint64 m_totalReceived;
+    qint64 m_packetReceived;
 
-    void cleanUp();
 };
 
 #endif // DATVIDEOSTREAM_H

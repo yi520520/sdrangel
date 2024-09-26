@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,10 +24,8 @@
 #include <QString>
 
 struct RemoteOutputSettings {
-    quint64 m_centerFrequency;
-    quint32 m_sampleRate;
-    float   m_txDelay;
     quint32 m_nbFECBlocks;
+    quint32 m_nbTxBytes;
     QString m_apiAddress;
     quint16 m_apiPort;
     QString m_dataAddress;
@@ -41,6 +41,8 @@ struct RemoteOutputSettings {
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    void applySettings(const QStringList& settingsKeys, const RemoteOutputSettings& settings);
+    QString getDebugString(const QStringList& settingsKeys, bool force=false) const;
 };
 
 #endif /* PLUGINS_REMOTEOUTPUT_REMOTEOUTPUTSETTINGS_H_ */

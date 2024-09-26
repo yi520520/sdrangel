@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>RemoteSinkGUI</class>
- <widget class="RollupWidget" name="RemoteSinkGUI">
+ <widget class="RollupContents" name="RemoteSinkGUI">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+   <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
@@ -24,7 +24,7 @@
   </property>
   <property name="maximumSize">
    <size>
-    <width>320</width>
+    <width>360</width>
     <height>16777215</height>
    </size>
   </property>
@@ -40,8 +40,8 @@
   <widget class="QWidget" name="settingsContainer" native="true">
    <property name="geometry">
     <rect>
-     <x>10</x>
-     <y>10</y>
+     <x>0</x>
+     <y>0</y>
      <width>301</width>
      <height>141</height>
     </rect>
@@ -271,7 +271,7 @@
          </size>
         </property>
         <property name="toolTip">
-         <string>Local data listener address</string>
+         <string>Remote data listener address</string>
         </property>
         <property name="inputMask">
          <string>000.000.000.000</string>
@@ -297,7 +297,7 @@
          </size>
         </property>
         <property name="toolTip">
-         <string>Local data listener port</string>
+         <string>Remote data listener port</string>
         </property>
         <property name="inputMask">
          <string>00000</string>
@@ -329,7 +329,7 @@
          </size>
         </property>
         <property name="toolTip">
-         <string>Set local data listener address and port</string>
+         <string>Set remote data listener address and port</string>
         </property>
         <property name="text">
          <string>Set</string>
@@ -396,67 +396,38 @@
        </widget>
       </item>
       <item>
-       <widget class="QLabel" name="txDelayLabel">
+       <widget class="QLabel" name="nbTxBytesLabel">
         <property name="text">
-         <string>Udly</string>
+         <string>Tx bytes</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QDial" name="txDelay">
+       <widget class="QComboBox" name="nbTxBytes">
         <property name="maximumSize">
          <size>
-          <width>24</width>
-          <height>24</height>
+          <width>50</width>
+          <height>16777215</height>
          </size>
         </property>
         <property name="toolTip">
-         <string>Delay between consecutive UDP packets in percentage of nominal UDP packet process time</string>
+         <string>Number of transmitted bytes per I or Q sample</string>
         </property>
-        <property name="minimum">
-         <number>0</number>
-        </property>
-        <property name="maximum">
-         <number>70</number>
-        </property>
-        <property name="pageStep">
-         <number>1</number>
-        </property>
-        <property name="value">
-         <number>35</number>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="txDelayText">
-        <property name="minimumSize">
-         <size>
-          <width>30</width>
-          <height>0</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>50%</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QLabel" name="txDelayTime">
-        <property name="minimumSize">
-         <size>
-          <width>55</width>
-          <height>0</height>
-         </size>
-        </property>
-        <property name="text">
-         <string>10000us</string>
-        </property>
-        <property name="alignment">
-         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-        </property>
+        <item>
+         <property name="text">
+          <string>1</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>2</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>4</string>
+         </property>
+        </item>
        </widget>
       </item>
       <item>
@@ -479,9 +450,9 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>RollupWidget</class>
+   <class>RollupContents</class>
    <extends>QWidget</extends>
-   <header>gui/rollupwidget.h</header>
+   <header>gui/rollupcontents.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

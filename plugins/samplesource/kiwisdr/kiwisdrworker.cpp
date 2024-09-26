@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Vort                                                       //
+// Copyright (C) 2019-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Vort <vvort@yandex.ru>                                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -16,14 +17,20 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <boost/endian/conversion.hpp>
+#include "util/messagequeue.h"
 #include "kiwisdrworker.h"
 
-KiwiSDRWorker::KiwiSDRWorker(SampleSinkFifo* sampleFifo)
-	: QObject(),
+MESSAGE_CLASS_DEFINITION(KiwiSDRWorker::MsgReportSampleRate, Message)
+MESSAGE_CLASS_DEFINITION(KiwiSDRWorker::MsgReportPosition, Message)
+
+KiwiSDRWorker::KiwiSDRWorker(SampleSinkFifo* sampleFifo) :
+	QObject(),
 	m_timer(this),
-	m_sampleFifo(sampleFifo),
 	m_samplesBuf(),
+	m_sampleFifo(sampleFifo),
 	m_centerFrequency(1450000),
+    m_sampleRate(12000),
+    m_inputMessageQueue(nullptr),
 	m_gain(20),
 	m_useAGC(true),
     m_status(0)
@@ -55,6 +62,7 @@ void KiwiSDRWorker::onDisconnected()
 
 void KiwiSDRWorker::onSocketError(QAbstractSocket::SocketError error)
 {
+	(void) error;
     m_status = 3;
 	emit updateStatus(3);
 }
@@ -65,7 +73,8 @@ void KiwiSDRWorker::sendCenterFrequency()
 		return;
 
 	QString freq = QString::number(m_centerFrequency / 1000.0, 'f', 3);
-	QString msg = "SET mod=iq low_cut=-5980 high_cut=5980 freq=" + freq;
+    int bw = (m_sampleRate/2) - 20;
+	QString msg = QString("SET mod=iq low_cut=-%1 high_cut=%2 freq=%3").arg(bw).arg(bw).arg(freq);
 	m_webSocket.sendTextMessage(msg);
 }
 
@@ -86,16 +95,70 @@ void KiwiSDRWorker::onBinaryMessageReceived(const QByteArray &message)
 	if (message[0] == 'M' && message[1] == 'S' && message[2] == 'G')
 	{
 		QStringList al = QString::fromUtf8(message).split(' ');
-		if (al[1] == "audio_init=0" &&
-			al[2] == "audio_rate=12000")
+
+        if ((al.size() > 2) && al[2].startsWith("audio_rate="))
+        {
+            QStringList rateKeyVal = al[2].split('=');
+
+            if (rateKeyVal.size() > 1)
+            {
+                bool ok;
+                int sampleRate = rateKeyVal[1].toInt(&ok);
+
+                if (ok) {
+                    m_sampleRate = sampleRate;
+                }
+
+                qDebug("KiwiSDRWorker::onBinaryMessageReceived: sample rate: %d", m_sampleRate);
+
+                if (m_inputMessageQueue) {
+                    m_inputMessageQueue->push(MsgReportSampleRate::create(m_sampleRate));
+                }
+
+                QString msg = QString("SET AR OK in=%1 out=48000").arg(m_sampleRate);
+                m_webSocket.sendTextMessage(msg);
+                m_webSocket.sendTextMessage("SERVER DE CLIENT KiwiAngel SND");
+                sendGain();
+                sendCenterFrequency();
+                m_timer.start(5000);
+                m_status = 2;
+                emit updateStatus(2);
+            }
+        }
+		else if ((al.size() >= 2) && al[1].startsWith("load_cfg="))
 		{
-			m_webSocket.sendTextMessage("SET AR OK in=12000 out=48000");
-			m_webSocket.sendTextMessage("SERVER DE CLIENT KiwiAngel SND");
-			sendGain();
-			sendCenterFrequency();
-			m_timer.start(5000);
-            m_status = 2;
-			emit updateStatus(2);
+			QByteArray urlEncoded = al[1].mid(9).toLatin1();
+			QString json =  QUrl::fromPercentEncoding(urlEncoded);
+			QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+
+			if (doc.isObject())
+			{
+				QJsonObject obj = doc.object();
+
+				if (obj.contains("rx_gps"))
+				{
+					QString gps = obj.value("rx_gps").toString();
+					QRegularExpression re("\\((-?[0-9]+(\\.[0-9]+)?), *(-?[0-9]+(\\.[0-9]+)?)\\)");
+					QRegularExpressionMatch match = re.match(gps);
+
+					if (match.hasMatch())
+					{
+						float latitude = match.captured(1).toFloat();
+						float longitude = match.captured(3).toFloat();
+						float altitude = 0.0f;
+						if (obj.contains("rx_asl")) {
+							altitude = (float) obj.value("rx_asl").toInt();
+						}
+						if (m_inputMessageQueue) {
+							m_inputMessageQueue->push(MsgReportPosition::create(latitude, longitude, altitude));
+						}
+					}
+				}
+			}
+			else
+			{
+				qDebug() << "KiwiSDRWorker::onBinaryMessageReceived - Document is not an object";
+			}
 		}
 	}
 	else if (message[0] == 'S' && message[1] == 'N' && message[2] == 'D')
@@ -139,8 +202,10 @@ void KiwiSDRWorker::onGainChanged(quint32 gain, bool useAGC)
 
 void KiwiSDRWorker::onServerAddressChanged(QString serverAddress)
 {
-	if (m_serverAddress == serverAddress)
+	if (m_serverAddress == serverAddress) {
 		return;
+    }
+
 	m_serverAddress = serverAddress;
 
     m_status = 1;

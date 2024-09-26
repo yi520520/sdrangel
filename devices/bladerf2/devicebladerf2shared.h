@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,8 +23,6 @@
 #include "util/message.h"
 #include "devicebladerf2.h"
 
-class SampleSinkFifo;
-class SampleSourceFifo;
 class BladeRF2Input;
 class BladeRF2Output;
 
@@ -87,9 +87,7 @@ public:
     BladeRF2Input *m_source;
     BladeRF2Output *m_sink;
 
-    static const float m_sampleFifoLengthInSeconds;
-    static const int   m_sampleFifoMinSize;
-    static const int   m_sampleFifoMinSize32;
+    static const unsigned int m_sampleFifoMinRate;
 };
 
 

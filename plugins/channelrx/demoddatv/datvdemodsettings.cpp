@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
+// Copyright (C) 2019-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021-2022 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,14 +19,24 @@
 #include <QColor>
 #include <QDebug>
 
-#include "dsp/dspengine.h"
+#include "leansdr/dvb.h"
+#include "leansdr/sdr.h"
+
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 
 #include "datvdemodsettings.h"
 
+#ifdef _MSC_VER
+#define DEFAULT_LDPCTOOLPATH "C:/Program Files/SDRangel/ldpctool.exe"
+#else
+#define DEFAULT_LDPCTOOLPATH "/opt/install/sdrangel/bin/ldpctool"
+#endif
+
 DATVDemodSettings::DATVDemodSettings() :
-    m_channelMarker(0)
+    m_channelMarker(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -39,6 +50,10 @@ void DATVDemodSettings::resetToDefaults()
     m_standard = DVB_S;
     m_modulation = BPSK;
     m_fec = FEC12;
+    m_softLDPC = false;
+    m_softLDPCToolPath = DEFAULT_LDPCTOOLPATH;
+    m_softLDPCMaxTrials = 8;
+    m_maxBitflips = 0;
     m_symbolRate = 250000;
     m_notchFilters = 0;
     m_allowDrift = false;
@@ -55,6 +70,15 @@ void DATVDemodSettings::resetToDefaults()
     m_udpTSAddress = "127.0.0.1";
     m_udpTSPort = 8882;
     m_udpTS = false;
+    m_playerEnable = true;
+    m_streamIndex = 0;
+    m_useReverseAPI = false;
+    m_reverseAPIAddress = "127.0.0.1";
+    m_reverseAPIPort = 8888;
+    m_reverseAPIDeviceIndex = 0;
+    m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray DATVDemodSettings::serialize() const
@@ -88,6 +112,25 @@ QByteArray DATVDemodSettings::serialize() const
     s.writeString(23, m_udpTSAddress);
     s.writeU32(24, m_udpTSPort);
     s.writeBool(25, m_udpTS);
+    s.writeS32(26, m_streamIndex);
+    s.writeBool(27, m_useReverseAPI);
+    s.writeString(28, m_reverseAPIAddress);
+    s.writeU32(29, m_reverseAPIPort);
+    s.writeU32(30, m_reverseAPIDeviceIndex);
+    s.writeU32(31, m_reverseAPIChannelIndex);
+    s.writeBool(32, m_softLDPC);
+    s.writeS32(33, m_maxBitflips);
+    s.writeString(34, m_softLDPCToolPath);
+    s.writeS32(35, m_softLDPCMaxTrials);
+    s.writeBool(36, m_playerEnable);
+
+    if (m_rollupState) {
+        s.writeBlob(37, m_rollupState->serialize());
+    }
+
+    s.writeS32(38, m_workspaceIndex);
+    s.writeBlob(39, m_geometryBytes);
+    s.writeBool(40, m_hidden);
 
     return s.final();
 }
@@ -120,9 +163,9 @@ bool DATVDemodSettings::deserialize(const QByteArray& data)
         tmp = tmp < 0 ? 0 : tmp >= (int) MOD_UNSET ? (int) MOD_UNSET - 1 : tmp;
         m_modulation = (DATVModulation) tmp;
 
-        d.readBlob(6, &bytetmp);
-
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
+            d.readBlob(6, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
 
@@ -154,6 +197,38 @@ bool DATVDemodSettings::deserialize(const QByteArray& data)
         d.readU32(24, &utmp, 8882);
         m_udpTSPort = utmp < 1024 ? 1024 : utmp > 65536 ? 65535 : utmp;
         d.readBool(25, &m_udpTS, false);
+        d.readS32(26, &m_streamIndex, 0);
+        d.readBool(27, &m_useReverseAPI, false);
+        d.readString(28, &m_reverseAPIAddress, "127.0.0.1");
+        d.readU32(29, &utmp, 0);
+
+        if ((utmp > 1023) && (utmp < 65535)) {
+            m_reverseAPIPort = utmp;
+        } else {
+            m_reverseAPIPort = 8888;
+        }
+
+        d.readU32(30, &utmp, 0);
+        m_reverseAPIDeviceIndex = utmp > 99 ? 99 : utmp;
+        d.readU32(31, &utmp, 0);
+        m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
+
+        d.readBool(32, &m_softLDPC, false);
+        d.readS32(33, &m_maxBitflips, 0);
+        d.readString(34, &m_softLDPCToolPath, DEFAULT_LDPCTOOLPATH);
+        d.readS32(35, &tmp, 8);
+        m_softLDPCMaxTrials = tmp < 1 ? 1 : tmp > m_softLDPCMaxMaxTrials ? m_softLDPCMaxMaxTrials : tmp;
+        d.readBool(36, &m_playerEnable, true);
+
+        if (m_rollupState)
+        {
+            d.readBlob(37, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(38, &m_workspaceIndex, 0);
+        d.readBlob(39, &m_geometryBytes);
+        d.readBool(40, &m_hidden, false);
 
         validateSystemConfiguration();
 
@@ -179,6 +254,10 @@ void DATVDemodSettings::debug(const QString& msg) const
         << " m_rollOff: " << m_rollOff
         << " m_viterbi: " << m_viterbi
         << " m_fec: " << m_fec
+        << " m_softLDPC: " << m_softLDPC
+        << " m_softLDPCMaxTrials: " << m_softLDPCMaxTrials
+        << " m_softLDPCToolPath: " << m_softLDPCToolPath
+        << " m_maxBitflips: " << m_maxBitflips
         << " m_modulation: " << m_modulation
         << " m_standard: " << m_standard
         << " m_notchFilters: " << m_notchFilters
@@ -187,7 +266,11 @@ void DATVDemodSettings::debug(const QString& msg) const
         << " m_audioMute: " << m_audioMute
         << " m_audioDeviceName: " << m_audioDeviceName
         << " m_audioVolume: " << m_audioVolume
-        << " m_videoMute: " << m_videoMute;
+        << " m_videoMute: " << m_videoMute
+        << " m_udpTS: " << m_udpTS
+        << " m_udpTSAddress: " << m_udpTSAddress
+        << " m_udpTSPort: " << m_udpTSPort
+        << " m_playerEnable: " << m_playerEnable;
 }
 
 bool DATVDemodSettings::isDifferent(const DATVDemodSettings& other)
@@ -199,12 +282,16 @@ bool DATVDemodSettings::isDifferent(const DATVDemodSettings& other)
         || (m_rollOff != other.m_rollOff)
         || (m_viterbi != other.m_viterbi)
         || (m_fec != other.m_fec)
+        || (m_softLDPC != other.m_softLDPC)
+        || (m_softLDPCMaxTrials != other.m_softLDPCMaxTrials)
+        || (m_softLDPCToolPath != other.m_softLDPCToolPath)
+        || (m_maxBitflips != other.m_maxBitflips)
         || (m_modulation != other.m_modulation)
-        || (m_standard != other.m_standard)
         || (m_notchFilters != other.m_notchFilters)
         || (m_symbolRate != other.m_symbolRate)
         || (m_excursion != other.m_excursion)
-        || (m_standard != other.m_standard));
+        || (m_standard != other.m_standard)
+        || (m_playerEnable != other.m_playerEnable));
 }
 
 void DATVDemodSettings::validateSystemConfiguration()
@@ -457,3 +544,62 @@ void DATVDemodSettings::getAvailableCodeRates(dvb_version dvbStandard, DATVModul
         }
     }
 }
+
+DATVDemodSettings::DATVCodeRate DATVDemodSettings::getCodeRateFromLeanDVBCode(int leanDVBCodeRate)
+{
+    if (leanDVBCodeRate == leansdr::code_rate::FEC12) {
+        return DATVDemodSettings::DATVCodeRate::FEC12;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC13) {
+        return DATVDemodSettings::DATVCodeRate::FEC13;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC14) {
+        return DATVDemodSettings::DATVCodeRate::FEC14;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC23) {
+        return DATVDemodSettings::DATVCodeRate::FEC23;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC25) {
+        return DATVDemodSettings::DATVCodeRate::FEC25;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC34) {
+        return DATVDemodSettings::DATVCodeRate::FEC34;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC35) {
+        return DATVDemodSettings::DATVCodeRate::FEC35;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC45) {
+        return DATVDemodSettings::DATVCodeRate::FEC45;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC46) {
+        return DATVDemodSettings::DATVCodeRate::FEC46;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC56) {
+        return DATVDemodSettings::DATVCodeRate::FEC56;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC78) {
+        return DATVDemodSettings::DATVCodeRate::FEC78;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC89) {
+        return DATVDemodSettings::DATVCodeRate::FEC89;
+    } else if (leanDVBCodeRate == leansdr::code_rate::FEC910) {
+        return DATVDemodSettings::DATVCodeRate::FEC910;
+    } else {
+        return DATVDemodSettings::DATVCodeRate::RATE_UNSET;
+    }
+}
+
+DATVDemodSettings::DATVModulation DATVDemodSettings::getModulationFromLeanDVBCode(int leanDVBModulation)
+{
+    if (leanDVBModulation == leansdr::cstln_base::predef::APSK16) {
+        return DATVDemodSettings::DATVModulation::APSK16;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::APSK32) {
+        return DATVDemodSettings::DATVModulation::APSK32;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::APSK64E) {
+        return DATVDemodSettings::DATVModulation::APSK64E;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::BPSK) {
+        return DATVDemodSettings::DATVModulation::BPSK;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::PSK8) {
+        return DATVDemodSettings::DATVModulation::PSK8;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::QAM16) {
+        return DATVDemodSettings::DATVModulation::QAM16;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::QAM64) {
+        return DATVDemodSettings::DATVModulation::QAM64;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::QAM256) {
+        return DATVDemodSettings::DATVModulation::QAM256;
+    } else if (leanDVBModulation == leansdr::cstln_base::predef::QPSK) {
+        return DATVDemodSettings::DATVModulation::QPSK;
+    } else {
+        return DATVDemodSettings::DATVModulation::MOD_UNSET;
+    }
+}
+

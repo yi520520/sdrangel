@@ -1,6 +1,29 @@
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2017-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>        //
+// Copyright (C) 2023 Jon Beniston, M7RCE <jon@beniston.com>                         //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 #include <QColorDialog>
+#include <QDebug>
 
 #include "dsp/channelmarker.h"
+#include "gui/pluginpresetsdialog.h"
+#include "gui/dialogpositioner.h"
+#include "channel/channelapi.h"
+#include "channel/channelgui.h"
+#include "maincore.h"
 
 #include "basicchannelsettingsdialog.h"
 #include "ui_basicchannelsettingsdialog.h"
@@ -61,6 +84,18 @@ void BasicChannelSettingsDialog::setReverseAPIChannelIndex(uint16_t channelIndex
 {
     m_reverseAPIChannelIndex = channelIndex > 99 ? 99 : channelIndex;
     ui->reverseAPIChannelIndex->setText(tr("%1").arg(m_reverseAPIChannelIndex));
+}
+
+void BasicChannelSettingsDialog::setNumberOfStreams(int numberOfStreams)
+{
+    ui->streamIndex->setMaximum(numberOfStreams - 1);
+    ui->streamIndex->setEnabled(true);
+}
+
+void BasicChannelSettingsDialog::setStreamIndex(int index)
+{
+    m_streamIndex = index;
+    ui->streamIndex->setValue(index);
 }
 
 void BasicChannelSettingsDialog::paintColor()
@@ -129,6 +164,38 @@ void BasicChannelSettingsDialog::on_reverseAPIChannelIndex_editingFinished()
         return;
     } else {
         m_reverseAPIChannelIndex = reverseAPIChannelIndex;
+    }
+}
+
+void BasicChannelSettingsDialog::on_streamIndex_valueChanged(int value)
+{
+    m_streamIndex = value;
+}
+
+void BasicChannelSettingsDialog::on_titleReset_clicked()
+{
+    ui->title->setText(m_defaultTitle);
+}
+
+void BasicChannelSettingsDialog::on_presets_clicked()
+{
+    ChannelGUI *channelGUI = qobject_cast<ChannelGUI *>(parent());
+    if (!channelGUI)
+    {
+        qDebug() << "BasicChannelSettingsDialog::on_presets_clicked: parent not a ChannelGUI";
+        return;
+    }
+    ChannelAPI *channel = MainCore::instance()->getChannel(channelGUI->getDeviceSetIndex(), channelGUI->getIndex());
+    const QString& id = channel->getURI();
+
+    PluginPresetsDialog dialog(id);
+    dialog.setPresets(MainCore::instance()->getMutableSettings().getPluginPresets());
+    dialog.setSerializableInterface(channelGUI);
+    dialog.populateTree();
+    new DialogPositioner(&dialog, true);
+    dialog.exec();
+    if (dialog.wasPresetLoaded()) {
+        QDialog::reject(); // Settings may have changed, so GUI will be inconsistent. Just close it
     }
 }
 

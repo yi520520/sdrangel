@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -28,6 +32,7 @@
 #include <QNetworkRequest>
 
 #include "dsp/devicesamplesource.h"
+#include "channel/remotedatablock.h"
 
 #include "remoteinputsettings.h"
 
@@ -35,30 +40,47 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class DeviceAPI;
 class RemoteInputUDPHandler;
-class FileRecord;
 
 class RemoteInput : public DeviceSampleSource {
     Q_OBJECT
 public:
+    struct RemoteChannelSettings
+    {
+        uint64_t m_deviceCenterFrequency;
+        uint32_t m_deviceSampleRate;
+        uint32_t m_log2Decim;
+        uint32_t m_filterChainHash;
+
+        RemoteChannelSettings() :
+            m_deviceCenterFrequency(0),
+            m_deviceSampleRate(1),
+            m_log2Decim(0),
+            m_filterChainHash(0)
+        {}
+    };
+
     class MsgConfigureRemoteInput : public Message {
         MESSAGE_CLASS_DECLARATION
 
     public:
         const RemoteInputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureRemoteInput* create(const RemoteInputSettings& settings, bool force = false)
+        static MsgConfigureRemoteInput* create(const RemoteInputSettings& settings, const QList<QString>& settingsKeys, bool force = false)
         {
-            return new MsgConfigureRemoteInput(settings, force);
+            return new MsgConfigureRemoteInput(settings, settingsKeys, force);
         }
 
     private:
         RemoteInputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureRemoteInput(const RemoteInputSettings& settings, bool force) :
+        MsgConfigureRemoteInput(const RemoteInputSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
@@ -123,6 +145,26 @@ public:
 			m_sampleRate(sampleRate),
 			m_centerFrequency(centerFrequency),
 			m_tv_msec(tv_msec)
+		{ }
+	};
+
+	class MsgConfigureRemoteChannel : public Message {
+		MESSAGE_CLASS_DECLARATION
+
+	public:
+		const RemoteChannelSettings& getSettings() const { return m_settings; }
+
+		static MsgConfigureRemoteChannel* create(const RemoteChannelSettings& settings)
+		{
+			return new MsgConfigureRemoteChannel(settings);
+		}
+
+	protected:
+		RemoteChannelSettings m_settings;
+
+		MsgConfigureRemoteChannel(const RemoteChannelSettings& settings) :
+			Message(),
+			m_settings(settings)
 		{ }
 	};
 
@@ -230,25 +272,6 @@ public:
 		{ }
 	};
 
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
-        { }
-    };
-
     class MsgStartStop : public Message {
         MESSAGE_CLASS_DECLARATION
 
@@ -266,6 +289,68 @@ public:
             Message(),
             m_startStop(startStop)
         { }
+    };
+
+    class MsgReportRemoteFixedData : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        struct RemoteData
+        {
+            QString m_version;      //!< Remote SDRangel version
+            QString m_qtVersion;    //!< Remote Qt version used to build SDRangel
+            QString m_architecture; //!< Remote CPU architecture
+            QString m_os;           //!< Remote O/S
+            int     m_rxBits;       //!< Number of bits used for I or Q sample on Rx side
+            int     m_txBits;       //!< Number of bits used for I or Q sample on Tx side
+        };
+
+        const RemoteData& getData() const { return m_remoteData; }
+
+        static MsgReportRemoteFixedData* create(const RemoteData& remoteData) {
+            return new MsgReportRemoteFixedData(remoteData);
+        }
+
+    private:
+        RemoteData m_remoteData;
+
+        MsgReportRemoteFixedData(const RemoteData& remoteData) :
+            Message(),
+            m_remoteData(remoteData)
+        {}
+    };
+
+    class MsgReportRemoteAPIError : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        const QString& getMessage() const { return m_message; }
+
+        static MsgReportRemoteAPIError* create(const QString& message) {
+            return new MsgReportRemoteAPIError(message);
+        }
+
+    private:
+        QString m_message;
+
+        MsgReportRemoteAPIError(const QString& message) :
+            Message(),
+            m_message(message)
+        {}
+    };
+
+    class MsgRequestFixedData : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        static MsgRequestFixedData* create() {
+            return new MsgRequestFixedData();
+        }
+
+    private:
+        MsgRequestFixedData() :
+            Message()
+        {}
     };
 
 	RemoteInput(DeviceAPI *deviceAPI);
@@ -313,23 +398,36 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const RemoteInputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            RemoteInputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 private:
 	DeviceAPI *m_deviceAPI;
-	QMutex m_mutex;
+    int m_sampleRate;
+	QRecursiveMutex m_mutex;
 	RemoteInputSettings m_settings;
+    RemoteChannelSettings m_remoteChannelSettings;
 	RemoteInputUDPHandler* m_remoteInputUDPHandler;
+    RemoteMetaDataFEC m_currentMeta;
     QString m_remoteAddress;
 	QString m_deviceDescription;
 	std::time_t m_startingTimeStamp;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-    void applySettings(const RemoteInputSettings& settings, bool force = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const RemoteInputSettings& settings);
+    void applySettings(const RemoteInputSettings& settings, const QList<QString>& settingsKeys, bool force = false);
+    void applyRemoteChannelSettings(const RemoteChannelSettings& settings);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const RemoteInputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const RemoteInputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
+    void analyzeRemoteChannelSettingsReply(const QJsonObject& jsonObject);
+    void analyzeInstanceSummaryReply(const QJsonObject& jsonObject);
 
 private slots:
     void networkManagerFinished(QNetworkReply *reply);

@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,12 +22,13 @@
 #ifndef INCLUDE_RTLSDRGUI_H
 #define INCLUDE_RTLSDRGUI_H
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
 #include "util/messagequeue.h"
 
+#include "rtlsdrsettings.h"
 #include "rtlsdrinput.h"
 
 class DeviceUISet;
@@ -33,50 +38,47 @@ namespace Ui {
 	class RTLSDRSampleRates;
 }
 
-class RTLSDRGui : public QWidget, public PluginInstanceGUI {
+class RTLSDRGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
-	explicit RTLSDRGui(DeviceUISet *deviceUISet, QWidget* parent = 0);
-	virtual ~RTLSDRGui();
-	virtual void destroy();
+	explicit RTLSDRGui(DeviceUISet *deviceUISet, QWidget* parent = nullptr);
+	~RTLSDRGui() final;
 
-	void setName(const QString& name);
-	QString getName() const;
-
-	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
-	QByteArray serialize() const;
-	bool deserialize(const QByteArray& data);
-	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
+	void resetToDefaults() final;
+	QByteArray serialize() const final;
+	bool deserialize(const QByteArray& data) final;
+	MessageQueue *getInputMessageQueue() final { return &m_inputMessageQueue; }
+    void setReplayTime(float time) override;
 
 private:
 	Ui::RTLSDRGui* ui;
 
-	DeviceUISet* m_deviceUISet;
     bool m_doApplySettings;
 	bool m_forceSettings;
 	RTLSDRSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
 	QTimer m_updateTimer;
-	QTimer m_statusTimer;
 	std::vector<int> m_gains;
 	RTLSDRInput* m_sampleSource;
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
-	int m_lastEngineState;
 	MessageQueue m_inputMessageQueue;
 
 	void displayGains();
     void displaySampleRate();
     void displayFcTooltip();
 	void displaySettings();
+	void displayReplayLength();
+	void displayReplayOffset();
+	void displayReplayStep();
 	void sendSettings();
 	void updateSampleRateAndFrequency();
 	void updateFrequencyLimits();
     void blockApplySettings(bool block);
+	bool handleMessage(const Message& message);
+    void makeUIConnections() const;
 
 private slots:
     void handleInputMessages();
@@ -94,9 +96,15 @@ private slots:
 	void on_checkBox_stateChanged(int state);
     void on_agc_stateChanged(int state);
 	void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void on_transverter_clicked();
     void on_sampleRateMode_toggled(bool checked);
+    void on_biasT_stateChanged(int state);
+	void on_replayOffset_valueChanged(int value);
+	void on_replayNow_clicked();
+	void on_replayPlus_clicked();
+	void on_replayMinus_clicked();
+	void on_replaySave_clicked();
+	void on_replayLoop_toggled(bool checked);
     void openDeviceSettingsDialog(const QPoint& p);
 	void updateHardware();
 	void updateStatus();

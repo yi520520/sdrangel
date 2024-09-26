@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -34,7 +37,6 @@
 class QNetworkAccessManager;
 class QNetworkReply;
 class DeviceAPI;
-class FileRecord;
 
 class LocalOutput : public DeviceSampleSink {
     Q_OBJECT
@@ -44,20 +46,22 @@ public:
 
     public:
         const LocalOutputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureLocalOutput* create(const LocalOutputSettings& settings, bool force = false)
-        {
-            return new MsgConfigureLocalOutput(settings, force);
+        static MsgConfigureLocalOutput* create(const LocalOutputSettings& settings, const QList<QString>& settingsKeys, bool force = false) {
+            return new MsgConfigureLocalOutput(settings, settingsKeys, force);
         }
 
     private:
         LocalOutputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureLocalOutput(const LocalOutputSettings& settings, bool force) :
+        MsgConfigureLocalOutput(const LocalOutputSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
@@ -147,6 +151,15 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const LocalOutputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            LocalOutputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 private:
 	DeviceAPI *m_deviceAPI;
 	QMutex m_mutex;
@@ -155,14 +168,12 @@ private:
     int m_sampleRate;
     QString m_remoteAddress;
 	QString m_deviceDescription;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-    void applySettings(const LocalOutputSettings& settings, bool force = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const LocalOutputSettings& settings);
+    void applySettings(const LocalOutputSettings& settings, const QList<QString>& settingsKeys, bool force = false);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const LocalOutputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const LocalOutputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4HKW                                                      //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 // for F4EXB / SDRAngel                                                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -19,11 +20,13 @@
 #ifndef INCLUDE_ATVDEMODGUI_H
 #define INCLUDE_ATVDEMODGUI_H
 
-#include <plugin/plugininstancegui.h>
-#include "gui/rollupwidget.h"
+#include "channel/channelgui.h"
 #include "dsp/channelmarker.h"
 #include "util/movingaverage.h"
 #include "util/messagequeue.h"
+#include "settings/rollupstate.h"
+
+#include "atvdemodsettings.h"
 
 class PluginAPI;
 class DeviceUISet;
@@ -36,7 +39,7 @@ namespace Ui
 	class ATVDemodGUI;
 }
 
-class ATVDemodGUI : public RollupWidget, public PluginInstanceGUI
+class ATVDemodGUI : public ChannelGUI
 {
 	Q_OBJECT
 
@@ -44,16 +47,21 @@ public:
     static ATVDemodGUI* create(PluginAPI* objPluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel);
 	virtual void destroy();
 
-    void setName(const QString& strName);
-	QString getName() const;
-	virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 intCenterFrequency);
-
 	void resetToDefaults();
 	QByteArray serialize() const;
     bool deserialize(const QByteArray& arrData);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& objMessage);
+    virtual void setWorkspaceIndex(int index) { m_settings.m_workspaceIndex = index; };
+    virtual int getWorkspaceIndex() const { return m_settings.m_workspaceIndex; };
+    virtual void setGeometryBytes(const QByteArray& blob) { m_settings.m_geometryBytes = blob; };
+    virtual QByteArray getGeometryBytes() const { return m_settings.m_geometryBytes; };
+    virtual QString getTitle() const { return m_settings.m_title; };
+    virtual QColor getTitleColor() const  { return m_settings.m_rgbColor; };
+    virtual void zetHidden(bool hidden) { m_settings.m_hidden = hidden; }
+    virtual bool getHidden() const { return m_settings.m_hidden; }
+    virtual ChannelMarker& getChannelMarker() { return m_channelMarker; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
+    virtual void setStreamIndex(int streamIndex) { m_settings.m_streamIndex = streamIndex; }
 
 public slots:
 	void channelMarkerChangedByCursor();
@@ -64,46 +72,47 @@ private:
     PluginAPI* m_pluginAPI;
     DeviceUISet* m_deviceUISet;
     ChannelMarker m_channelMarker;
+    RollupState m_rollupState;
     ATVDemod* m_atvDemod;
+    ATVDemodSettings m_settings;
+    qint64 m_deviceCenterFrequency;
 
-    bool m_blnDoApplySettings;
+    bool m_doApplySettings;
 
     MovingAverageUtil<double, double, 4> m_objMagSqAverage;
     int m_intTickCount;
 
     ScopeVis* m_scopeVis;
 
-    float m_fltLineTimeMultiplier;
-    float m_fltTopTimeMultiplier;
     int m_rfSliderDivisor;
-    int m_inputSampleRate;
+    int m_basebandSampleRate;
     MessageQueue m_inputMessageQueue;
 
     explicit ATVDemodGUI(PluginAPI* objPluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* objParent = 0);
 	virtual ~ATVDemodGUI();
 
-    void blockApplySettings(bool blnBlock);
-	void applySettings();
-    void applyRFSettings();
+	void applySettings(bool force = false);
+    void displaySettings();
+    void displayRFBandwidths();
+    void applySampleRate();
     void setChannelMarkerBandwidth();
     void setRFFiltersSlidersRange(int sampleRate);
     void lineTimeUpdate();
     void topTimeUpdate();
-    static float getFps(int fpsIndex);
-    static float getNominalLineTime(int nbLinesIndex, int fpsIndex);
-    static int getNumberOfLines(int nbLinesIndex);
+    bool handleMessage(const Message& objMessage);
+    void makeUIConnections();
+    void updateAbsoluteCenterFrequency();
 
 	void leaveEvent(QEvent*);
-	void enterEvent(QEvent*);
+	void enterEvent(EnterEventType*);
 
 private slots:
     void handleSourceMessages();
     void onWidgetRolled(QWidget* widget, bool rollDown);
+    void onMenuDialogCalled(const QPoint& p);
     void tick();
     void on_synchLevel_valueChanged(int value);
     void on_blackLevel_valueChanged(int value);
-    void on_lineTime_valueChanged(int value);
-    void on_topTime_valueChanged(int value);
     void on_hSync_clicked();
     void on_vSync_clicked();
     void on_invertVideo_clicked();
@@ -116,10 +125,11 @@ private slots:
     void on_rfBW_valueChanged(int value);
     void on_rfOppBW_valueChanged(int value);
     void on_rfFiltering_toggled(bool checked);
-    void on_decimatorEnable_toggled(bool checked);
     void on_deltaFrequency_changed(qint64 value);
     void on_bfo_valueChanged(int value);
     void on_fmDeviation_valueChanged(int value);
+    void on_amScaleFactor_valueChanged(int value);
+    void on_amScaleOffset_valueChanged(int value);
     void on_screenTabWidget_currentChanged(int index);
 };
 

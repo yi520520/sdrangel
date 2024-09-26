@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2017, 2019-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,18 +19,16 @@
 
 #include "util/db.h"
 #include <cmath>
-#include <cassert>
 
 double CalcDb::dbPower(double magsq, double floor)
 {
-    assert(floor > 0.0);
-
-	if (magsq > floor)
-	{
-	    return 10.0 * log10(magsq);
+    if (floor <= 0.0) {
+		return -100.0;
 	}
-	else
-	{
+
+	if (magsq > floor) {
+	    return 10.0 * log10(magsq);
+	} else {
 		return 10.0 * log10(floor);
 	}
 }
@@ -36,4 +36,10 @@ double CalcDb::dbPower(double magsq, double floor)
 double CalcDb::powerFromdB(double powerdB)
 {
     return pow(10.0, powerdB / 10.0);
+}
+
+double CalcDb::frexp10(double arg, int *exp)
+{
+   *exp = (arg == 0) ? 0 : 1 + (int)std::floor(std::log10(std::fabs(arg) ) );
+   return arg * std::pow(10 , -(*exp));
 }

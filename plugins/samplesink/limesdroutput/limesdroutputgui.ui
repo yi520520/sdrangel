@@ -7,11 +7,11 @@
     <x>0</x>
     <y>0</y>
     <width>360</width>
-    <height>290</height>
+    <height>230</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
@@ -19,7 +19,13 @@
   <property name="minimumSize">
    <size>
     <width>360</width>
-    <height>290</height>
+    <height>230</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>380</width>
+    <height>264</height>
    </size>
   </property>
   <property name="font">
@@ -128,7 +134,7 @@
        <property name="font">
         <font>
          <family>Liberation Mono</family>
-         <pointsize>20</pointsize>
+         <pointsize>16</pointsize>
         </font>
        </property>
        <property name="cursor">
@@ -309,6 +315,79 @@
       <number>2</number>
      </property>
      <item>
+      <widget class="QToolButton" name="sampleRateMode">
+       <property name="minimumSize">
+        <size>
+         <width>24</width>
+         <height>0</height>
+        </size>
+       </property>
+       <property name="maximumSize">
+        <size>
+         <width>24</width>
+         <height>16777215</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>SR</string>
+       </property>
+       <property name="checkable">
+        <bool>true</bool>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="ValueDial" name="sampleRate" native="true">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>32</width>
+         <height>16</height>
+        </size>
+       </property>
+       <property name="font">
+        <font>
+         <family>Liberation Mono</family>
+         <pointsize>12</pointsize>
+        </font>
+       </property>
+       <property name="cursor">
+        <cursorShape>PointingHandCursor</cursorShape>
+       </property>
+       <property name="toolTip">
+        <string>Device to host sample rate</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="samplerateUnit">
+       <property name="text">
+        <string>S/s</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="horizontalSpacer_4">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
       <widget class="QLabel" name="hwInterpLabel">
        <property name="text">
         <string>Hw</string>
@@ -425,79 +504,6 @@
        </item>
       </widget>
      </item>
-     <item>
-      <spacer name="horizontalSpacer_4">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>40</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
-      <widget class="QToolButton" name="sampleRateMode">
-       <property name="minimumSize">
-        <size>
-         <width>24</width>
-         <height>0</height>
-        </size>
-       </property>
-       <property name="maximumSize">
-        <size>
-         <width>24</width>
-         <height>16777215</height>
-        </size>
-       </property>
-       <property name="text">
-        <string>SR</string>
-       </property>
-       <property name="checkable">
-        <bool>true</bool>
-       </property>
-       <property name="checked">
-        <bool>true</bool>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="ValueDial" name="sampleRate" native="true">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="minimumSize">
-        <size>
-         <width>32</width>
-         <height>16</height>
-        </size>
-       </property>
-       <property name="font">
-        <font>
-         <family>Liberation Mono</family>
-         <pointsize>12</pointsize>
-        </font>
-       </property>
-       <property name="cursor">
-        <cursorShape>PointingHandCursor</cursorShape>
-       </property>
-       <property name="toolTip">
-        <string>Device to host sample rate</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLabel" name="samplerateUnit">
-       <property name="text">
-        <string>S/s</string>
-       </property>
-      </widget>
-     </item>
     </layout>
    </item>
    <item>
@@ -546,7 +552,7 @@
         <cursorShape>PointingHandCursor</cursorShape>
        </property>
        <property name="toolTip">
-        <string>Analog lowpass filer bandwidth (kHz)</string>
+        <string>Analog lowpass filter bandwidth (kHz)</string>
        </property>
       </widget>
      </item>
@@ -604,7 +610,7 @@
         <cursorShape>PointingHandCursor</cursorShape>
        </property>
        <property name="toolTip">
-        <string>Digital FIR lowpass filers bandwidth (kHz)</string>
+        <string>Digital FIR lowpass filters bandwidth (kHz)</string>
        </property>
       </widget>
      </item>
@@ -826,6 +832,19 @@
       </widget>
      </item>
      <item>
+      <widget class="QLabel" name="calibrationLabel">
+       <property name="toolTip">
+        <string>Red if calibration failed (check log for error)</string>
+       </property>
+       <property name="styleSheet">
+        <string notr="true">background:rgb(79,79,79);</string>
+       </property>
+       <property name="text">
+        <string>C</string>
+       </property>
+      </widget>
+     </item>
+     <item>
       <widget class="QLabel" name="streamLinkRateText">
        <property name="minimumSize">
         <size>
@@ -854,6 +873,7 @@
        </property>
        <property name="font">
         <font>
+         <family>Ubuntu</family>
          <pointsize>8</pointsize>
         </font>
        </property>
@@ -924,48 +944,13 @@ QToolTip{background-color: white; color: black;}</string>
      </item>
     </layout>
    </item>
-   <item>
-    <widget class="Line" name="line_vga2">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="padLayout">
-     <item>
-      <spacer name="verticalPadSpacer">
-       <property name="orientation">
-        <enum>Qt::Vertical</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>20</width>
-         <height>40</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
   </layout>
  </widget>
  <customwidgets>
   <customwidget>
-   <class>ValueDial</class>
-   <extends>QWidget</extends>
-   <header>gui/valuedial.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
    <class>ButtonSwitch</class>
    <extends>QToolButton</extends>
    <header>gui/buttonswitch.h</header>
-  </customwidget>
-  <customwidget>
-   <class>ExternalClockButton</class>
-   <extends>QToolButton</extends>
-   <header>gui/externalclockbutton.h</header>
   </customwidget>
   <customwidget>
    <class>ValueDialZ</class>
@@ -974,45 +959,23 @@ QToolTip{background-color: white; color: black;}</string>
    <container>1</container>
   </customwidget>
   <customwidget>
+   <class>ValueDial</class>
+   <extends>QWidget</extends>
+   <header>gui/valuedial.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
    <class>TransverterButton</class>
    <extends>QPushButton</extends>
    <header>gui/transverterbutton.h</header>
   </customwidget>
+  <customwidget>
+   <class>ExternalClockButton</class>
+   <extends>QToolButton</extends>
+   <header>gui/externalclockbutton.h</header>
+  </customwidget>
  </customwidgets>
  <resources>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
-  <include location="../../../sdrgui/resources/res.qrc"/>
   <include location="../../../sdrgui/resources/res.qrc"/>
  </resources>
  <connections/>

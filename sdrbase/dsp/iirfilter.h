@@ -1,6 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2017, 2019-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -26,7 +25,6 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <assert.h>
 
 template <typename Type, uint32_t Order> class IIRFilter
 {
@@ -61,8 +59,6 @@ private:
 template <typename Type, uint32_t Order>
 IIRFilter<Type, Order>::IIRFilter(const Type *a, const Type *b)
 {
-    assert(Order > 1);
-
     m_a = new Type[Order+1];
     m_b = new Type[Order+1];
     m_x = new Type[Order];

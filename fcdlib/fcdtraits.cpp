@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015-2018 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2015-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,8 +20,13 @@
 const char *fcd_traits<Pro>::alsaDeviceName = "hw:CARD=V10";
 const char *fcd_traits<ProPlus>::alsaDeviceName = "hw:CARD=V20";
 
+#if defined(__linux__)
 const char *fcd_traits<Pro>::qtDeviceName = "FUNcube_Dongle_V1.0";
 const char *fcd_traits<ProPlus>::qtDeviceName = "FUNcube_Dongle_V2.0";
+#else
+const char *fcd_traits<Pro>::qtDeviceName = "FUNcube Dongle V1.0";
+const char *fcd_traits<ProPlus>::qtDeviceName = "FUNcube Dongle V2.0";
+#endif
 
 const char *fcd_traits<Pro>::hardwareID = "FCDPro";
 const char *fcd_traits<ProPlus>::hardwareID = "FCDPro+";
@@ -35,8 +40,8 @@ const char *fcd_traits<ProPlus>::displayedName = "FunCube Dongle Pro+";
 const char *fcd_traits<Pro>::pluginDisplayedName = "FunCube Pro Input";
 const char *fcd_traits<ProPlus>::pluginDisplayedName = "FunCube Pro+ Input";
 
-const char *fcd_traits<Pro>::pluginVersion = "4.5.2";
-const char *fcd_traits<ProPlus>::pluginVersion = "4.5.2";
+const char *fcd_traits<Pro>::pluginVersion = "7.17.1";
+const char *fcd_traits<ProPlus>::pluginVersion = "7.17.1";
 
 const int64_t fcd_traits<Pro>::loLowLimitFreq = 64000000L;
 const int64_t fcd_traits<ProPlus>::loLowLimitFreq = 150000L;

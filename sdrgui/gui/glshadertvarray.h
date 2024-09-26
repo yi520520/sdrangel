@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4HKW                                                      //
-// for F4EXB / SDRAngel                                                          //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2020 Vort <vvort@yandex.ru>                                     //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,12 +24,17 @@
 
 #include <QString>
 #include <QOpenGLFunctions>
+#if defined(ANDROID)
+#include <QOpenGLFunctions_ES2>
+#else
 #include <QOpenGLFunctions_2_0>
 #include <QOpenGLFunctions_2_1>
 #include <QOpenGLFunctions_3_0>
+#endif
 #include <QOpenGLTexture>
 #include <QOpenGLShaderProgram>
-#include <QOpenGLContext>
+#include <QOpenGLVertexArrayObject>
+#include <QOpenGLBuffer>
 #include <QMatrix4x4>
 #include <QVector4D>
 #include <QDebug>
@@ -46,8 +54,8 @@ public:
     void setColor(bool blnColor) { m_blnColor = blnColor; }
     void setAlphaBlend(bool blnAlphaBlend) { m_blnAlphaBlend = blnAlphaBlend; }
     void setAlphaReset() { m_blnAlphaReset = true; }
-    void InitializeGL(int intCols, int intRows);
-    void Cleanup();
+    void initializeGL(int majorVersion, int minorVersion, int intCols, int intRows);
+    void cleanup();
     QRgb *GetRowBuffer(int intRow);
     void RenderPixels(unsigned char *chrData);
     void ResetPixels();
@@ -56,23 +64,26 @@ public:
     bool SelectRow(int intLine);
     bool SetDataColor(int intCol,QRgb objColor);
 
-
 protected:
-
     QOpenGLShaderProgram *m_objProgram;
-    int m_objMatrixLoc;
-    int m_objTextureLoc;
+    QOpenGLVertexArrayObject *m_vao;
+    QOpenGLBuffer *m_verticesBuf;
+    QOpenGLBuffer *m_textureCoordsBuf;
+    int m_matrixLoc;
+    int m_textureLoc;
     //int m_objColorLoc;
+    static const QString m_strVertexShaderSourceArray2;
     static const QString m_strVertexShaderSourceArray;
+    static const QString m_strFragmentShaderSourceColored2;
     static const QString m_strFragmentShaderSourceColored;
 
-    QImage *m_objImage=NULL;
-    QOpenGLTexture *m_objTexture=NULL;
+    QImage *m_objImage;
+    QOpenGLTexture *m_objTexture;
 
     int m_intCols;
     int m_intRows;
 
-    QRgb * m_objCurrentRow;
+    QRgb *m_objCurrentRow;
 
     bool m_blnInitialized;
     bool m_blnColor;

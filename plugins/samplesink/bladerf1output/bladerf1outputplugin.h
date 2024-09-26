@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,7 +27,7 @@
 
 class PluginAPI;
 
-#define BLADERF1OUTPUT_DEVICE_TYPE_ID "sdrangel.samplesource.bladerf1output"
+#define BLADERF1OUTPUT_DEVICE_TYPE_ID "sdrangel.samplesink.bladerf1output"
 
 class Bladerf1OutputPlugin : public QObject, public PluginInterface {
 	Q_OBJECT
@@ -36,17 +40,16 @@ public:
 	const PluginDescriptor& getPluginDescriptor() const;
 	void initPlugin(PluginAPI* pluginAPI);
 
-	virtual SamplingDevices enumSampleSinks();
+	virtual void enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices);
+	virtual SamplingDevices enumSampleSinks(const OriginDevices& originDevices);
 
-	virtual PluginInstanceGUI* createSampleSinkPluginInstanceGUI(
+	virtual DeviceGUI* createSampleSinkPluginInstanceGUI(
 	        const QString& sinkId,
 	        QWidget **widget,
 	        DeviceUISet *deviceUISet);
 
 	virtual DeviceSampleSink* createSampleSinkPluginInstance(const QString& sinkId, DeviceAPI *deviceAPI);
-
-	static const QString m_hardwareID;
-    static const QString m_deviceTypeID;
+    virtual DeviceWebAPIAdapter* createDeviceWebAPIAdapter() const;
 
 private:
 	static const PluginDescriptor m_pluginDescriptor;

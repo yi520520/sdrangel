@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,6 @@
 #include <QtPlugin>
 
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 
 #ifdef SERVER_MODE
 #include "localoutput.h"
@@ -26,18 +27,20 @@
 #include "localoutputgui.h"
 #endif
 #include "localoutputplugin.h"
+#include "localoutputwebapiadapter.h"
 
 const PluginDescriptor LocalOutputPlugin::m_pluginDescriptor = {
-	QString("Local device output"),
-	QString("4.8.0"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("LocalOutput"),
+	QStringLiteral("Local device output"),
+    QStringLiteral("7.20.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString LocalOutputPlugin::m_hardwareID = "LocalOutput";
-const QString LocalOutputPlugin::m_deviceTypeID = LOCALOUTPUT_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "LocalOutput";
+static constexpr const char* const m_deviceTypeID = LOCALOUTPUT_DEVICE_TYPE_ID;
 
 LocalOutputPlugin::LocalOutputPlugin(QObject* parent) :
 	QObject(parent)
@@ -54,26 +57,51 @@ void LocalOutputPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleSink(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices LocalOutputPlugin::enumSampleSinks()
+void LocalOutputPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
+{
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+    originDevices.append(OriginDevice(
+        "LocalOutput",
+        m_hardwareID,
+        QString(),
+        0, // Sequence
+        0, // nb Rx
+        1  // nb Tx
+    ));
+
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices LocalOutputPlugin::enumSampleSinks(const OriginDevices& originDevices)
 {
 	SamplingDevices result;
 
-    result.append(SamplingDevice(
-            "LocalOutput",
-            m_hardwareID,
-            m_deviceTypeID,
-            QString::null,
-            0,
-            PluginInterface::SamplingDevice::BuiltInDevice,
-            PluginInterface::SamplingDevice::StreamSingleTx,
-            1,
-            0));
+    for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == m_hardwareID)
+        {
+            result.append(SamplingDevice(
+                it->displayableName,
+                it->hardwareId,
+                m_deviceTypeID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::BuiltInDevice,
+                PluginInterface::SamplingDevice::StreamSingleTx,
+                1,
+                0
+            ));
+        }
+    }
 
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* LocalOutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* LocalOutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -84,7 +112,7 @@ PluginInstanceGUI* LocalOutputPlugin::createSampleSinkPluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* LocalOutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* LocalOutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -113,4 +141,9 @@ DeviceSampleSink *LocalOutputPlugin::createSampleSinkPluginInstance(const QStrin
     {
         return 0;
     }
+}
+
+DeviceWebAPIAdapter *LocalOutputPlugin::createDeviceWebAPIAdapter() const
+{
+    return new LocalOutputWebAPIAdapter();
 }

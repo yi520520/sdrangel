@@ -3,7 +3,7 @@ TestSourceSettings:
   properties:
     centerFrequency:
       type: integer
-      format: uint64
+      format: int64
     frequencyShift:
       type: integer
     sampleRate:
@@ -28,7 +28,7 @@ TestSourceSettings:
       type: integer
     dcFactor:
       type: number
-      format: float  
+      format: float
     iFactor:
       type: number
       format: float
@@ -38,8 +38,6 @@ TestSourceSettings:
     phaseImbalance:
       type: number
       format: float
-    fileRecordName:
-      type: string
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -48,5 +46,4 @@ TestSourceSettings:
     reverseAPIPort:
       type: integer
     reverseAPIDeviceIndex:
-      type: integer      
-              
+      type: integer

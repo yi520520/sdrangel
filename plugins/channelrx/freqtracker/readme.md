@@ -8,6 +8,8 @@ This plugin can be used to track the center frequency of a carrier. It will try 
 
 <h2>Interface</h2>
 
+The top and bottom bars of the channel window are described [here](../../../sdrgui/channel/readme.md)
+
 ![Frequency Tracker plugin GUI](../../../doc/img/FreqTracker_plugin.png)
 
 <h3>1: Frequency shift from center frequency of reception</h3>
@@ -18,7 +20,7 @@ Both manual and automatic controls are active at the same time and the user can 
 
 To change the frequency manually use the wheels to adjust the frequency shift in Hz from the center frequency of reception. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
 
-<h3>2: Instantateous tracker error</h2>
+<h3>2: Instantaneous tracker error</h3>
 
 This is the instantaneous frequency error in Hz. It is activated as soon as the FLL or PLL tracker is selected (7.3) regardless of the tracking activation (7.1)
 
@@ -54,7 +56,7 @@ It is also used to signal PLL lock with a green background. Note that the lock s
 
 <h4>7.2 Alpha factor of frequency error EMA</h4>
 
-The frequency error is passed throug an Exponential Moving Average (EMA) stage to smooth it out. This is the decrease factor or alpha in the formula:
+The frequency error is passed through an Exponential Moving Average (EMA) stage to smooth it out. This is the decrease factor or alpha in the formula:
 
 S<sub>i</sub> = &alpha; x<sub>i</sub> + S<sub>i-1</sub>
 
@@ -83,7 +85,7 @@ This is the order of m-ary PSK modulation for the PLL. It can be selected in pow
 
 <h3>7.5 Toggle root raised cosine filter</h3>
 
-Use this toggle button to activate or de-activate the root raised cosine (RRC) filter. When active the bnadpass boxcar filter is replaced by a RRC filter. This takes effect only in normal (DSB) mode (see control 14).
+Use this toggle button to activate or de-activate the root raised cosine (RRC) filter. When active the bandpass boxcar filter is replaced by a RRC filter. This takes effect only in normal (DSB) mode (see control 14).
 
 <h3>7.6 Tune RRC filter rolloff factor</h3>
 
@@ -96,6 +98,14 @@ This indicator lights in green when the squelch is open. When the squelch is clo
 
 This is the squelch threshold in dB. The average total power received in the signal bandwidth before demodulation is compared to this value and the squelch input is open above this value. It can be varied continuously in 0.1 dB steps from 0.0 to -100.0 dB using the dial button.
 
-<h4>10: Squelch time gate</h4>
+<h3>10: Squelch time gate</h3>
 
 Number of milliseconds following squelch gate opening after which the signal is declared open. 0 means squelch is declared open with no delay and is suitable for burst signals. The value can be varied in steps of 10 ms from 0 to 990 ms.
+
+<h3>11: Spectrum display frequency span</h3>
+
+The channel signal is decimated by a power of two before being applied to the channel spectrum display. It is a kind of zoom on the center of the spectrum.
+
+<h3>12: Channel spectrum</h3>
+
+This is the spectrum display of the tracker channel. When the tracker is locked to the signal the center of the channel should fall almost in the middle of the signal spectrum (ideally in the middle when the tracker error is zero). Thus the locking can be followed dynamically and it can be more reliable than the lock indicator. A channel marker shows the tracker offset from the channel center frequency (tracker error). Its width is the tracker error tolerance and is &plusmn;1/1000th of the channel width.  Details on the spectrum view and controls can be found [here](../../../sdrgui/gui/spectrum.md)

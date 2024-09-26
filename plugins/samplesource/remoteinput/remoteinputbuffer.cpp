@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -16,7 +16,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <QDebug>
-#include <cassert>
 #include <cstring>
 #include <cmath>
 #include <algorithm>
@@ -27,8 +26,8 @@
 
 
 RemoteInputBuffer::RemoteInputBuffer() :
-        m_decoderIndexHead(nbDecoderSlots/2),
-        m_frameHead(0),
+        m_decoderSlots(nullptr),
+        m_frames(nullptr),
         m_curNbBlocks(0),
         m_minNbBlocks(256),
         m_curOriginalBlocks(0),
@@ -46,8 +45,8 @@ RemoteInputBuffer::RemoteInputBuffer() :
 	    m_balCorrLimit(0)
 {
 	m_currentMeta.init();
-	m_framesNbBytes = nbDecoderSlots * sizeof(BufferFrame);
-	m_wrDeltaEstimate = m_framesNbBytes / 2;
+    setNbDecoderSlots(16);
+    m_decoderIndexHead = m_nbDecoderSlots/2;
 	m_tvOut_sec = 0;
 	m_tvOut_usec = 0;
 	m_readNbBytes = 1;
@@ -61,8 +60,8 @@ RemoteInputBuffer::RemoteInputBuffer() :
         m_cm256_OK = true;
     }
 
-    std::fill(m_decoderSlots, m_decoderSlots + nbDecoderSlots, DecoderSlot());
-    std::fill(m_frames, m_frames + nbDecoderSlots, BufferFrame());
+    std::fill(m_decoderSlots, m_decoderSlots + m_nbDecoderSlots, DecoderSlot());
+    std::fill(m_frames, m_frames + m_nbDecoderSlots, BufferFrame());
 }
 
 RemoteInputBuffer::~RemoteInputBuffer()
@@ -70,11 +69,42 @@ RemoteInputBuffer::~RemoteInputBuffer()
 	if (m_readBuffer) {
 		delete[] m_readBuffer;
 	}
+    if (m_decoderSlots) {
+        delete[] m_decoderSlots;
+    }
+    if (m_frames) {
+        delete[] m_frames;
+    }
+}
+
+void RemoteInputBuffer::setNbDecoderSlots(int nbDecoderSlots)
+{
+    m_nbDecoderSlots = nbDecoderSlots;
+    m_framesSize = m_nbDecoderSlots * (RemoteNbOrginalBlocks - 1) * RemoteNbBytesPerBlock;
+  	m_framesNbBytes = m_nbDecoderSlots * sizeof(BufferFrame);
+    m_wrDeltaEstimate = m_framesNbBytes / 2;
+
+    if (m_decoderSlots) {
+        delete[] m_decoderSlots;
+    }
+    if (m_frames) {
+        delete[] m_frames;
+    }
+
+    m_decoderSlots = new DecoderSlot[m_nbDecoderSlots];
+    m_frames = new BufferFrame[m_nbDecoderSlots];
+    m_frameHead = -1;
+    initReadIndex();
+}
+
+void RemoteInputBuffer::setBufferLenSec(const RemoteMetaDataFEC& metaData)
+{
+    m_bufferLenSec = (float) m_framesNbBytes / (float) (metaData.m_sampleRate * metaData.m_sampleBytes * 2);
 }
 
 void RemoteInputBuffer::initDecodeAllSlots()
 {
-    for (int i = 0; i < nbDecoderSlots; i++)
+    for (int i = 0; i < m_nbDecoderSlots; i++)
     {
         m_decoderSlots[i].m_blockCount = 0;
         m_decoderSlots[i].m_originalCount = 0;
@@ -124,7 +154,7 @@ void RemoteInputBuffer::initDecodeSlot(int slotIndex)
 
 void RemoteInputBuffer::initReadIndex()
 {
-    m_readIndex = ((m_decoderIndexHead + (nbDecoderSlots/2)) % nbDecoderSlots) * sizeof(BufferFrame);
+    m_readIndex = ((m_decoderIndexHead + (m_nbDecoderSlots/2)) % m_nbDecoderSlots) * sizeof(BufferFrame);
     m_wrDeltaEstimate = m_framesNbBytes / 2;
     m_nbReads = 0;
     m_nbWrites = 0;
@@ -134,20 +164,20 @@ void RemoteInputBuffer::rwCorrectionEstimate(int slotIndex)
 {
 	if (m_nbReads >= 40) // check every ~1s as tick is ~50ms
 	{
-		int targetPivotSlot = (slotIndex + (nbDecoderSlots/2))  % nbDecoderSlots; // slot at half buffer opposite of current write slot
+		int targetPivotSlot = (slotIndex + (m_nbDecoderSlots/2))  % m_nbDecoderSlots; // slot at half buffer opposite of current write slot
 		int targetPivotIndex = targetPivotSlot * sizeof(BufferFrame);             // buffer index corresponding to start of above slot
-		int normalizedReadIndex = (m_readIndex < targetPivotIndex ? m_readIndex + nbDecoderSlots * sizeof(BufferFrame) :  m_readIndex)
+		int normalizedReadIndex = (m_readIndex < targetPivotIndex ? m_readIndex + m_nbDecoderSlots * sizeof(BufferFrame) :  m_readIndex)
 				- (targetPivotSlot * sizeof(BufferFrame)); // normalize read index so it is positive and zero at start of pivot slot
 		int dBytes;
         int rwDelta = (m_nbReads * m_readNbBytes) - (m_nbWrites * sizeof(BufferFrame));
 
-		if (normalizedReadIndex < (nbDecoderSlots/ 2) * (int) sizeof(BufferFrame)) // read leads
+		if (normalizedReadIndex < (m_nbDecoderSlots/ 2) * (int) sizeof(BufferFrame)) // read leads
 		{
 			dBytes = - normalizedReadIndex - rwDelta;
 		}
 		else // read lags
 		{
-            int bufSize = (nbDecoderSlots * sizeof(BufferFrame));
+            int bufSize = (m_nbDecoderSlots * sizeof(BufferFrame));
 			dBytes = bufSize - normalizedReadIndex - rwDelta;
 		}
 
@@ -171,7 +201,7 @@ void RemoteInputBuffer::checkSlotData(int slotIndex)
 {
     int pseudoWriteIndex = slotIndex * sizeof(BufferFrame);
     m_wrDeltaEstimate = pseudoWriteIndex - m_readIndex;
-    int rwDelayBytes = (m_wrDeltaEstimate > 0 ? m_wrDeltaEstimate : sizeof(BufferFrame) * nbDecoderSlots + m_wrDeltaEstimate);
+    int rwDelayBytes = (m_wrDeltaEstimate > 0 ? m_wrDeltaEstimate : sizeof(BufferFrame) * m_nbDecoderSlots + m_wrDeltaEstimate);
     int sampleRate = m_currentMeta.m_sampleRate;
 
     if (sampleRate > 0)
@@ -195,7 +225,7 @@ void RemoteInputBuffer::writeData(char *array)
 {
     RemoteSuperBlock *superBlock = (RemoteSuperBlock *) array;
     int frameIndex = superBlock->m_header.m_frameIndex;
-    int decoderIndex = frameIndex % nbDecoderSlots;
+    int decoderIndex = frameIndex % m_nbDecoderSlots;
 
     // frame break
 
@@ -317,7 +347,7 @@ void RemoteInputBuffer::writeData(char *array)
 
                 if (sampleRate != 0)
                 {
-                    m_bufferLenSec = (float) m_framesNbBytes / (float) (sampleRate * metaData->m_sampleBytes * 2);
+                    setBufferLenSec(*metaData);
                     m_balCorrLimit = sampleRate / 400; // +/- 5% correction max per read
                     m_readNbBytes = (sampleRate * metaData->m_sampleBytes * 2) / 20;
                 }
@@ -337,9 +367,9 @@ uint8_t *RemoteInputBuffer::readData(int32_t length)
 
     m_nbReads++;
 
-    // SEGFAULT FIX: arbitratily truncate so that it does not exceed buffer length
-    if (length > framesSize) {
-        length = framesSize;
+    // SEGFAULT FIX: arbitrarily truncate so that it does not exceed buffer length
+    if (length > m_framesSize) {
+        length = m_framesSize;
     }
 
     if (m_readIndex + length < m_framesNbBytes) // ends before buffer bound
@@ -364,10 +394,14 @@ uint8_t *RemoteInputBuffer::readData(int32_t length)
             m_readSize = length;
         }
 
-        std::memcpy((void *) m_readBuffer, (const void *) &buffer[m_readIndex], m_framesNbBytes - m_readIndex); // copy end of buffer
-        length -= m_framesNbBytes - m_readIndex;
-        std::memcpy((void *) &m_readBuffer[m_framesNbBytes - m_readIndex], (const void *) buffer, length); // copy start of buffer
-        m_readIndex = length;
+        if (m_readBuffer)
+        {
+            std::memcpy((void *) m_readBuffer, (const void *) &buffer[m_readIndex], m_framesNbBytes - m_readIndex); // copy end of buffer
+            length -= m_framesNbBytes - m_readIndex;
+            std::memcpy((void *) &m_readBuffer[m_framesNbBytes - m_readIndex], (const void *) buffer, length); // copy start of buffer
+            m_readIndex = length;
+        }
+
         return m_readBuffer;
     }
 }
@@ -381,6 +415,8 @@ void RemoteInputBuffer::printMeta(const QString& header, RemoteMetaDataFEC *meta
             << ":" << (int) metaData->m_sampleBits
             << ":" << (int) metaData->m_nbOriginalBlocks
             << ":" << (int) metaData->m_nbFECBlocks
+            << "|" << metaData->m_deviceIndex
+            << ":" << metaData->m_channelIndex
             << "|" << metaData->m_tv_sec
             << ":" << metaData->m_tv_usec
             << "|";

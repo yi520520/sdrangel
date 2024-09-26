@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 //                                                                               //
 // OpenGL interface modernization.                                               //
 // See: http://doc.qt.io/qt-5/qopenglshaderprogram.html                          //
@@ -33,6 +35,7 @@ public:
     TransverterButton(QWidget* parent = 0);
     qint64 getDeltaFrequency() const { return m_deltaFrequency; }
     bool getDeltaFrequencyAcive() const { return m_deltaFrequencyActive; }
+    bool getIQOrder() const { return m_iqOrder; }
 
     void setDeltaFrequency(qint64 deltaFrequency)
     {
@@ -46,12 +49,19 @@ public:
         updateState();
     }
 
+    void setIQOrder(bool iqOrder)
+    {
+        m_iqOrder = iqOrder;
+        updateState();
+    }
+
 private slots:
     void onClicked();
 
 private:
     qint64 m_deltaFrequency;
     bool m_deltaFrequencyActive;
+    bool m_iqOrder;
 
     void updateState();
 };

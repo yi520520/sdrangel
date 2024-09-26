@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2018-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,7 +20,7 @@
 #define SDRBASE_UTIL_RTPSINK_H_
 
 #include <QString>
-#include <QMutex>
+#include <QRecursiveMutex>
 #include <QDebug>
 #include <QHostAddress>
 #include <stdint.h>
@@ -28,11 +28,8 @@
 // qrtplib includes
 #include "rtpsession.h"
 #include "rtpudptransmitter.h"
-#include "rtpaddress.h"
 #include "rtpsessionparams.h"
 #include "rtperrors.h"
-
-#include "export.h"
 
 class QUdpSocket;
 
@@ -65,7 +62,7 @@ public:
     void write(const uint8_t *sampleByte, int nbSamples);
 
 protected:
-    /** Reverse endianess in destination buffer */
+    /** Reverse endianness in destination buffer */
     static void writeNetBuf(uint8_t *dest, const uint8_t *src, unsigned int elemLen, unsigned int bytesLen, bool endianReverse);
     static unsigned int elemLength(PayloadType payloadType);
 
@@ -84,7 +81,7 @@ protected:
     qrtplib::RTPUDPTransmissionParams m_rtpTransmissionParams;
     qrtplib::RTPUDPTransmitter m_rtpTransmitter;
     bool m_endianReverse;
-    QMutex m_mutex;
+    QRecursiveMutex m_mutex;
 };
 
 

@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -42,20 +46,22 @@ public:
 
     public:
         const LimeSDROutputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureLimeSDR* create(const LimeSDROutputSettings& settings, bool force)
-        {
-            return new MsgConfigureLimeSDR(settings, force);
+        static MsgConfigureLimeSDR* create(const LimeSDROutputSettings& settings, const QList<QString>& settingsKeys, bool force) {
+            return new MsgConfigureLimeSDR(settings, settingsKeys, force);
         }
 
     private:
         LimeSDROutputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureLimeSDR(const LimeSDROutputSettings& settings, bool force) :
+        MsgConfigureLimeSDR(const LimeSDROutputSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
@@ -76,6 +82,25 @@ public:
         MsgStartStop(bool startStop) :
             Message(),
             m_startStop(startStop)
+        { }
+    };
+
+    class MsgCalibrationResult : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+        bool getSuccess() const { return m_success; }
+
+        static MsgCalibrationResult* create(bool success) {
+            return new MsgCalibrationResult(success);
+        }
+
+    protected:
+        bool m_success;
+
+        MsgCalibrationResult(bool success) :
+            Message(),
+            m_success(success)
         { }
     };
 
@@ -227,6 +252,15 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const LimeSDROutputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            LimeSDROutputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     std::size_t getChannelIndex();
     void getLORange(float& minF, float& maxF) const;
     void getSRRange(float& minF, float& maxF) const;
@@ -255,10 +289,9 @@ private:
     void resumeRxBuddies();
     void suspendTxBuddies();
     void resumeTxBuddies();
-    bool applySettings(const LimeSDROutputSettings& settings, bool force = false, bool forceNCOFrequency = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const LimeSDROutputSettings& settings);
+    bool applySettings(const LimeSDROutputSettings& settings, const QList<QString>& settingsKeys, bool force = false, bool forceNCOFrequency = false);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const LimeSDROutputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const LimeSDROutputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,6 @@
 #include <QtPlugin>
 
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 
 #ifdef SERVER_MODE
 #include "remoteoutput.h"
@@ -26,18 +27,20 @@
 #include "remoteoutputgui.h"
 #endif
 #include "remoteoutputplugin.h"
+#include "remoteoutputwebapiadapter.h"
 
 const PluginDescriptor RemoteOutputPlugin::m_pluginDescriptor = {
-	QString("Remote device output"),
-	QString("4.5.2"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("RemoteOutput"),
+	QStringLiteral("Remote device output"),
+    QStringLiteral("7.20.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString RemoteOutputPlugin::m_hardwareID = "RemoteOutput";
-const QString RemoteOutputPlugin::m_deviceTypeID = REMOTEOUTPUT_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "RemoteOutput";
+static constexpr const char* const m_deviceTypeID = REMOTEOUTPUT_DEVICE_TYPE_ID;
 
 RemoteOutputPlugin::RemoteOutputPlugin(QObject* parent) :
 	QObject(parent)
@@ -54,26 +57,51 @@ void RemoteOutputPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleSink(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices RemoteOutputPlugin::enumSampleSinks()
+void RemoteOutputPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
+{
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+    originDevices.append(OriginDevice(
+        "RemoteOutput",
+        m_hardwareID,
+        QString(),
+        0, // Sequence
+        0, // nb Rx
+        1  // nb Tx
+    ));
+
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices RemoteOutputPlugin::enumSampleSinks(const OriginDevices& originDevices)
 {
 	SamplingDevices result;
 
-    result.append(SamplingDevice(
-            "RemoteOutput",
-            m_hardwareID,
-            m_deviceTypeID,
-            QString::null,
-            0,
-            PluginInterface::SamplingDevice::BuiltInDevice,
-            PluginInterface::SamplingDevice::StreamSingleTx,
-            1,
-            0));
+    for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == m_hardwareID)
+        {
+            result.append(SamplingDevice(
+                it->displayableName,
+                it->hardwareId,
+                m_deviceTypeID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::BuiltInDevice,
+                PluginInterface::SamplingDevice::StreamSingleTx,
+                1,
+                0
+            ));
+        }
+    }
 
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* RemoteOutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* RemoteOutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -84,7 +112,7 @@ PluginInstanceGUI* RemoteOutputPlugin::createSampleSinkPluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* RemoteOutputPlugin::createSampleSinkPluginInstanceGUI(
+DeviceGUI* RemoteOutputPlugin::createSampleSinkPluginInstanceGUI(
         const QString& sinkId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -114,4 +142,9 @@ DeviceSampleSink* RemoteOutputPlugin::createSampleSinkPluginInstance(const QStri
         return 0;
     }
 
+}
+
+DeviceWebAPIAdapter *RemoteOutputPlugin::createDeviceWebAPIAdapter() const
+{
+    return new RemoteOutputWebAPIAdapter();
 }

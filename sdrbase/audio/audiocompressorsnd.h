@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>               //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // Audio compressor based on sndfilter by Sean Connelly (@voidqk)                //
 // https://github.com/voidqk/sndfilter                                           //
@@ -25,8 +25,7 @@
 #ifndef SDRBASE_AUDIO_AUDIOCOMPRESSORSND_H_
 #define SDRBASE_AUDIO_AUDIOCOMPRESSORSND_H_
 
-#define _USE_MATH_DEFINES
-#include <math.h>
+#include <cmath>
 
 // maximum number of samples in the delay buffer
 #define AUDIOCOMPRESSORSND_SF_COMPRESSOR_MAXDELAY   1024
@@ -161,7 +160,7 @@ private:
 
     static inline float fixf(float v, float def){
         // fix NaN and infinity values that sneak in... not sure why this is needed, but it is
-        if (isnan(v) || isinf(v))
+        if (std::isnan(v) || std::isinf(v))
             return def;
         return v;
     }

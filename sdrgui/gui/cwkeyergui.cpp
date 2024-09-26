@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2016-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,11 +20,12 @@
 #include <QDebug>
 
 #include "gui/cwkeyergui.h"
+#include "gui/dialpopup.h"
+#include "gui/cwmousekeyerenabler.h"
 #include "ui_cwkeyergui.h"
 #include "dsp/cwkeyer.h"
-#include "util/simpleserializer.h"
 #include "util/messagequeue.h"
-#include "commandkeyreceiver.h"
+#include "commands/commandkeyreceiver.h"
 #include "mainwindow.h"
 
 CWKeyerGUI::CWKeyerGUI(QWidget* parent) :
@@ -38,6 +39,12 @@ CWKeyerGUI::CWKeyerGUI(QWidget* parent) :
     m_commandKeyReceiver = new CommandKeyReceiver();
     m_commandKeyReceiver->setRelease(true);
     this->installEventFilter(m_commandKeyReceiver);
+    DialPopup::addPopupsToChildDials(this);
+    CWMouseKeyerEnabler *cwMouseKeyerEnabler = new CWMouseKeyerEnabler(ui->cwMouseKeyerPad);
+    QObject::connect(cwMouseKeyerEnabler, &CWMouseKeyerEnabler::leftButtonPress, this, &CWKeyerGUI::cwKeyerMouseLeftPressed);
+    QObject::connect(cwMouseKeyerEnabler, &CWMouseKeyerEnabler::leftButtonRelease, this, &CWKeyerGUI::cwKeyerMouseLeftReleased);
+    QObject::connect(cwMouseKeyerEnabler, &CWMouseKeyerEnabler::rightButtonPress, this, &CWKeyerGUI::cwKeyerMouseRightPressed);
+    QObject::connect(cwMouseKeyerEnabler, &CWMouseKeyerEnabler::rightButtonRelease, this, &CWKeyerGUI::cwKeyerMouseRightReleased);
 }
 
 CWKeyerGUI::~CWKeyerGUI()
@@ -79,6 +86,16 @@ bool CWKeyerGUI::deserialize(const QByteArray& data)
         resetToDefaults();
         return false;
     }
+}
+
+void CWKeyerGUI::formatTo(SWGSDRangel::SWGObject *swgObject) const
+{
+    m_settings.formatTo(swgObject);
+}
+
+void CWKeyerGUI::updateFrom(const QStringList& keys, const SWGSDRangel::SWGObject *swgObject)
+{
+    m_settings.updateFrom(keys, swgObject);
 }
 
 // === SLOTS ==================================================================
@@ -334,7 +351,7 @@ void CWKeyerGUI::setKeyLabel(QLabel *label, Qt::Key key, Qt::KeyboardModifiers k
     else if (keyModifiers != Qt::NoModifier)
     {
         QString altGrStr = keyModifiers & Qt::GroupSwitchModifier ? "Gr " : "";
-        int maskedModifiers = (keyModifiers & 0x3FFFFFFF) + ((keyModifiers & 0x40000000)>>3);
+        int maskedModifiers = ((int) keyModifiers & 0x3FFFFFFF) + (((int) keyModifiers & 0x40000000)>>3);
         label->setText(altGrStr + QKeySequence(maskedModifiers, key).toString());
     }
     else
@@ -346,4 +363,24 @@ void CWKeyerGUI::setKeyLabel(QLabel *label, Qt::Key key, Qt::KeyboardModifiers k
 void CWKeyerGUI::blockApplySettings(bool block)
 {
     m_doApplySettings = !block;
+}
+
+void CWKeyerGUI::cwKeyerMouseLeftPressed()
+{
+    m_cwKeyer->setKeyboardDots();
+}
+
+void CWKeyerGUI::cwKeyerMouseLeftReleased()
+{
+    m_cwKeyer->setKeyboardSilence();
+}
+
+void CWKeyerGUI::cwKeyerMouseRightPressed()
+{
+    m_cwKeyer->setKeyboardDashes();
+}
+
+void CWKeyerGUI::cwKeyerMouseRightReleased()
+{
+    m_cwKeyer->setKeyboardSilence();
 }

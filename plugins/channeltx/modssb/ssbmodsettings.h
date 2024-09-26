@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,6 +24,9 @@
 #include <QByteArray>
 #include <QString>
 #include <stdint.h>
+
+#include "dsp/cwkeyersettings.h"
+#include "dsp/dsptypes.h"
 
 class Serializable;
 
@@ -51,6 +57,8 @@ struct SSBModSettings
     bool m_audioMute;
     bool m_playLoop;
     bool m_agc;
+    int m_cmpPreGainDB;
+    int m_cmpThresholdDB;
     quint32 m_rgbColor;
 
     QString m_title;
@@ -59,24 +67,34 @@ struct SSBModSettings
     QString m_feedbackAudioDeviceName; //!< This is the audio device you send the audio samples to for audio feedback
     float m_feedbackVolumeFactor;
     bool m_feedbackAudioEnable;
+    int m_streamIndex;
 
     bool m_useReverseAPI;
     QString m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
     uint16_t m_reverseAPIDeviceIndex;
     uint16_t m_reverseAPIChannelIndex;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
 
     Serializable *m_channelMarker;
     Serializable *m_spectrumGUI;
     Serializable *m_cwKeyerGUI;
 
+    CWKeyerSettings m_cwKeyerSettings; //!< For standalone deserialize operation (without m_cwKeyerGUI)
+    Serializable *m_rollupState;
+
     SSBModSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     void setSpectrumGUI(Serializable *spectrumGUI) { m_spectrumGUI = spectrumGUI; }
     void setCWKeyerGUI(Serializable *cwKeyerGUI) { m_cwKeyerGUI = cwKeyerGUI; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    const CWKeyerSettings& getCWKeyerSettings() const { return m_cwKeyerSettings; }
+    void setCWKeyerSettings(const CWKeyerSettings& cwKeyerSettings) { m_cwKeyerSettings = cwKeyerSettings; }
 };
 
 

@@ -1,5 +1,31 @@
 <RCC>
   <qresource prefix="/">
+    <file>funnel.png</file>
+    <file>arrow_2head_h.png</file>
+    <file>truncate.png</file>
+    <file>caliper.png</file>
+    <file>flip_windows.png</file>
+    <file>waterfall_3d.png</file>
+    <file>bell_max.png</file>
+    <file>bell_phosphor.png</file>
+    <file>bell_red.png</file>
+    <file>bell_fill.png</file>
+    <file>bell_gradient.png</file>
+    <file>bell_line.png</file>
+    <file>world.png</file>
+    <file>sms.png</file>
+    <file>ruler.png</file>
+    <file>sort.png</file>
+    <file>audio_mic.png</file>
+    <file>info.png</file>
+    <file>darklight.png</file>
+    <file>lightdark.png</file>
+    <file>arrow_left.png</file>
+    <file>arrow_right.png</file>
+    <file>star.png</file>
+    <file>swap.png</file>
+    <file>gridpolar.png</file>
+    <file>gridrect.png</file>
     <file>double_arrow_up.png</file>
     <file>no_film.png</file>
     <file>gps.png</file>
@@ -98,6 +124,39 @@
     <file>load.png</file>
     <file>keyboard.png</file>
     <file>kill.png</file>
+    <file>zoomall.png</file>
+    <file>zoomin.png</file>
+    <file>zoomout.png</file>
+    <file>rx.png</file>
+    <file>tx.png</file>
+    <file>mimo.png</file>
+    <file>tool.png</file>
+    <file>tool_add.png</file>
+    <file>tool_star.png</file>
+    <file>gear.png</file>
+    <file>corner_topleft.png</file>
+    <file>corner_topright.png</file>
+    <file>corner_botleft.png</file>
+    <file>corner_botright.png</file>
+    <file>cross.png</file>
+    <file>cascade.png</file>
+    <file>tiles.png</file>
+    <file>dock.png</file>
+    <file>help.png</file>
+    <file>shrink.png</file>
+    <file>maximize.png</file>
+    <file>exit.png</file>
+    <file>hide.png</file>
+    <file>channels.png</file>
+    <file>channels_add.png</file>
+    <file>exit_round.png</file>
+    <file>3dspectrogram.png</file>
+    <file>stackvertical.png</file>
+    <file>stackcolumns.png</file>
+    <file>tab.png</file>
+    <file>clockfile.png</file>
+    <file>clockcurrent.png</file>
+    <file>mouse.png</file>
     <file>LiberationMono-Regular.ttf</file>
     <file>LiberationSans-Regular.ttf</file>
   </qresource>

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2018-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,108 +19,96 @@
 #ifndef INCLUDE_LOCALSINK_H_
 #define INCLUDE_LOCALSINK_H_
 
-#include <QObject>
 #include <QMutex>
 #include <QNetworkRequest>
 
 #include "dsp/basebandsamplesink.h"
+#include "dsp/spectrumvis.h"
 #include "channel/channelapi.h"
+#include "util/message.h"
+
 #include "localsinksettings.h"
+
+class QNetworkAccessManager;
+class QNetworkReply;
+class QThread;
 
 class DeviceAPI;
 class DeviceSampleSource;
-class ThreadedBasebandSampleSink;
-class DownChannelizer;
-class LocalSinkThread;
-class QNetworkAccessManager;
-class QNetworkReply;
+class LocalSinkBaseband;
+class ObjectPipe;
 
 class LocalSink : public BasebandSampleSink, public ChannelAPI {
-    Q_OBJECT
 public:
     class MsgConfigureLocalSink : public Message {
         MESSAGE_CLASS_DECLARATION
 
     public:
         const LocalSinkSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureLocalSink* create(const LocalSinkSettings& settings, bool force)
-        {
-            return new MsgConfigureLocalSink(settings, force);
+        static MsgConfigureLocalSink* create(const LocalSinkSettings& settings, const QList<QString>& settingsKeys, bool force) {
+            return new MsgConfigureLocalSink(settings, settingsKeys, force);
         }
 
     private:
         LocalSinkSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureLocalSink(const LocalSinkSettings& settings, bool force) :
+        MsgConfigureLocalSink(const LocalSinkSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
 
-    class MsgSampleRateNotification : public Message {
+    class MsgReportDevices : public Message {
         MESSAGE_CLASS_DECLARATION
 
     public:
-        static MsgSampleRateNotification* create(int sampleRate) {
-            return new MsgSampleRateNotification(sampleRate);
-        }
+        QList<int>& getDeviceSetIndexes() { return m_deviceSetIndexes; }
 
-        int getSampleRate() const { return m_sampleRate; }
-
-    private:
-
-        MsgSampleRateNotification(int sampleRate) :
-            Message(),
-            m_sampleRate(sampleRate)
-        { }
-
-        int m_sampleRate;
-    };
-
-    class MsgConfigureChannelizer : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        int getLog2Decim() const { return m_log2Decim; }
-        int getFilterChainHash() const { return m_filterChainHash; }
-
-        static MsgConfigureChannelizer* create(unsigned int log2Decim, unsigned int filterChainHash) {
-            return new MsgConfigureChannelizer(log2Decim, filterChainHash);
+        static MsgReportDevices* create() {
+            return new MsgReportDevices();
         }
 
     private:
-        unsigned int m_log2Decim;
-        unsigned int m_filterChainHash;
+        QList<int> m_deviceSetIndexes;
 
-        MsgConfigureChannelizer(unsigned int log2Decim, unsigned int filterChainHash) :
-            Message(),
-            m_log2Decim(log2Decim),
-            m_filterChainHash(filterChainHash)
+        MsgReportDevices() :
+            Message()
         { }
     };
 
     LocalSink(DeviceAPI *deviceAPI);
     virtual ~LocalSink();
     virtual void destroy() { delete this; }
+    virtual void setDeviceAPI(DeviceAPI *deviceAPI);
+    virtual DeviceAPI *getDeviceAPI() { return m_deviceAPI; }
+    SpectrumVis *getSpectrumVis() { return &m_spectrumVis; }
 
+    using BasebandSampleSink::feed;
     virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool po);
     virtual void start();
     virtual void stop();
-    virtual bool handleMessage(const Message& cmd);
+    virtual void pushMessage(Message *msg) { m_inputMessageQueue.push(msg); }
+    virtual QString getSinkName() { return objectName(); }
 
     virtual void getIdentifier(QString& id) { id = objectName(); }
+    virtual QString getIdentifier() const { return objectName(); }
     virtual void getTitle(QString& title) { title = "Local Sink"; }
     virtual qint64 getCenterFrequency() const { return m_frequencyOffset; }
+    virtual void setCenterFrequency(qint64) {}
 
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
 
     virtual int getNbSinkStreams() const { return 1; }
     virtual int getNbSourceStreams() const { return 0; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
 
     virtual qint64 getStreamCenterFrequency(int streamIndex, bool sinkElseSource) const
     {
@@ -132,54 +121,74 @@ public:
             SWGSDRangel::SWGChannelSettings& response,
             QString& errorMessage);
 
+    virtual int webapiWorkspaceGet(
+            SWGSDRangel::SWGWorkspaceInfo& response,
+            QString& errorMessage);
+
     virtual int webapiSettingsPutPatch(
             bool force,
             const QStringList& channelSettingsKeys,
             SWGSDRangel::SWGChannelSettings& response,
             QString& errorMessage);
 
-    /** Set center frequency given in Hz */
-    void setCenterFrequency(uint64_t centerFrequency) { m_centerFrequency = centerFrequency; }
+    static void webapiFormatChannelSettings(
+        SWGSDRangel::SWGChannelSettings& response,
+        const LocalSinkSettings& settings);
 
-    /** Set sample rate given in Hz */
-    void setSampleRate(uint32_t sampleRate) { m_sampleRate = sampleRate; }
+    static void webapiUpdateChannelSettings(
+            LocalSinkSettings& settings,
+            const QStringList& channelSettingsKeys,
+            SWGSDRangel::SWGChannelSettings& response);
 
-    void setChannelizer(unsigned int log2Decim, unsigned int filterChainHash);
-    void getLocalDevices(std::vector<uint32_t>& indexes);
+    uint32_t getNumberOfDeviceStreams() const;
+    const QList<int>& getDeviceSetList() { return m_localInputDeviceIndexes; }
 
-    static const QString m_channelIdURI;
-    static const QString m_channelId;
-
-signals:
-    void samplesAvailable(const quint8* data, uint count);
+    static const char* const m_channelIdURI;
+    static const char* const m_channelId;
 
 private:
     DeviceAPI *m_deviceAPI;
-    ThreadedBasebandSampleSink* m_threadedChannelizer;
-    DownChannelizer* m_channelizer;
+    QThread *m_thread;
+    LocalSinkBaseband *m_basebandSink;
     bool m_running;
-
     LocalSinkSettings m_settings;
-    LocalSinkThread *m_sinkThread;
+    QList<int> m_localInputDeviceIndexes;
+    SpectrumVis m_spectrumVis;
 
     uint64_t m_centerFrequency;
     int64_t m_frequencyOffset;
-    uint32_t m_sampleRate;
-    uint32_t m_deviceSampleRate;
+    uint32_t m_basebandSampleRate;
 
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
-    void applySettings(const LocalSinkSettings& settings, bool force = false);
-    DeviceSampleSource *getLocalDevice(uint32_t index);
-    void propagateSampleRateAndFrequency(uint32_t index);
-    void validateFilterChainHash(LocalSinkSettings& settings);
-    void calculateFrequencyOffset();
-    void webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& response, const LocalSinkSettings& settings);
-    void webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const LocalSinkSettings& settings, bool force);
+    virtual bool handleMessage(const Message& cmd);
+    void applySettings(const LocalSinkSettings& settings, const QList<QString>& settingsKeys, bool force = false);
+    void propagateSampleRateAndFrequency(int index, uint32_t log2Decim);
+    static void validateFilterChainHash(LocalSinkSettings& settings);
+    void calculateFrequencyOffset(uint32_t log2Decim, uint32_t filterChainHash);
+    void updateDeviceSetList();
+    DeviceSampleSource *getLocalDevice(int index);
+    void startProcessing();
+    void stopProcessing();
+
+    void webapiReverseSendSettings(const QList<QString>& channelSettingsKeys, const LocalSinkSettings& settings, bool force);
+    void sendChannelSettings(
+        const QList<ObjectPipe*>& pipes,
+        const QList<QString>& channelSettingsKeys,
+        const LocalSinkSettings& settings,
+        bool force
+    );
+    void webapiFormatChannelSettings(
+        const QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const LocalSinkSettings& settings,
+        bool force
+    );
 
 private slots:
     void networkManagerFinished(QNetworkReply *reply);
+    void handleIndexInDeviceSetChanged(int index);
 };
 
 #endif /* INCLUDE_LOCALSINK_H_ */

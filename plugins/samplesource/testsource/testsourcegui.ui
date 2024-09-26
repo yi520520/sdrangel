@@ -7,11 +7,11 @@
     <x>0</x>
     <y>0</y>
     <width>360</width>
-    <height>300</height>
+    <height>331</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
@@ -19,14 +19,19 @@
   <property name="minimumSize">
    <size>
     <width>360</width>
-    <height>300</height>
+    <height>331</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>380</width>
+    <height>343</height>
    </size>
   </property>
   <property name="font">
    <font>
     <family>Liberation Sans</family>
     <pointsize>9</pointsize>
-    <weight>50</weight>
     <italic>false</italic>
     <bold>false</bold>
    </font>
@@ -71,20 +76,6 @@
             <iconset resource="../../../sdrgui/resources/res.qrc">
              <normaloff>:/play.png</normaloff>
              <normalon>:/stop.png</normalon>:/play.png</iconset>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="ButtonSwitch" name="record">
-           <property name="toolTip">
-            <string>Toggle record I/Q samples from device</string>
-           </property>
-           <property name="text">
-            <string/>
-           </property>
-           <property name="icon">
-            <iconset resource="../../../sdrgui/resources/res.qrc">
-             <normaloff>:/record_off.png</normaloff>:/record_off.png</iconset>
            </property>
           </widget>
          </item>
@@ -145,7 +136,9 @@
        <property name="font">
         <font>
          <family>Liberation Mono</family>
-         <pointsize>20</pointsize>
+         <pointsize>16</pointsize>
+         <italic>false</italic>
+         <bold>false</bold>
         </font>
        </property>
        <property name="cursor">
@@ -283,6 +276,12 @@
      </item>
      <item>
       <widget class="QComboBox" name="fcPos">
+       <property name="minimumSize">
+        <size>
+         <width>55</width>
+         <height>0</height>
+        </size>
+       </property>
        <property name="maximumSize">
         <size>
          <width>50</width>
@@ -417,6 +416,8 @@
         <font>
          <family>Liberation Mono</family>
          <pointsize>12</pointsize>
+         <italic>false</italic>
+         <bold>false</bold>
         </font>
        </property>
        <property name="cursor">
@@ -573,6 +574,8 @@
         <font>
          <family>Liberation Mono</family>
          <pointsize>12</pointsize>
+         <italic>false</italic>
+         <bold>false</bold>
         </font>
        </property>
        <property name="cursor">
@@ -701,16 +704,15 @@
     </widget>
    </item>
    <item>
-    <widget class="Line" name="line_3">
-     <property name="orientation">
-      <enum>Qt::Horizontal</enum>
-     </property>
-    </widget>
-   </item>
-   <item>
     <layout class="QGridLayout" name="amplitudeLayout">
      <item row="1" column="0">
       <widget class="QLabel" name="amplitudeFineLabel">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>22</height>
+        </size>
+       </property>
        <property name="text">
         <string>Amp fine</string>
        </property>
@@ -723,6 +725,12 @@
          <horstretch>0</horstretch>
          <verstretch>0</verstretch>
         </sizepolicy>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>22</height>
+        </size>
        </property>
        <property name="text">
         <string>Amp coarse</string>
@@ -822,6 +830,12 @@
      </item>
      <item row="2" column="0">
       <widget class="QLabel" name="qBiasLabel">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>22</height>
+        </size>
+       </property>
        <property name="text">
         <string>Q bias</string>
        </property>
@@ -843,6 +857,12 @@
      </item>
      <item row="1" column="0">
       <widget class="QLabel" name="iBiasLabel">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>22</height>
+        </size>
+       </property>
        <property name="text">
         <string>I bias</string>
        </property>
@@ -887,6 +907,12 @@
      </item>
      <item row="0" column="0">
       <widget class="QLabel" name="dcBiasLabel">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>22</height>
+        </size>
+       </property>
        <property name="text">
         <string>DC bias</string>
        </property>
@@ -931,6 +957,12 @@
      </item>
      <item row="3" column="0">
       <widget class="QLabel" name="phaseImbalanceLabel">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>22</height>
+        </size>
+       </property>
        <property name="text">
         <string>Phase</string>
        </property>
@@ -980,9 +1012,6 @@
       </widget>
      </item>
     </layout>
-   </item>
-   <item>
-    <layout class="QHBoxLayout" name="fillerLayout"/>
    </item>
   </layout>
  </widget>

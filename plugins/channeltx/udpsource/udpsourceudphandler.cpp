@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -26,12 +26,14 @@
 MESSAGE_CLASS_DEFINITION(UDPSourceUDPHandler::MsgUDPAddressAndPort, Message)
 
 UDPSourceUDPHandler::UDPSourceUDPHandler() :
-    m_dataSocket(0),
+    m_dataSocket(nullptr),
     m_dataAddress(QHostAddress::LocalHost),
     m_remoteAddress(QHostAddress::LocalHost),
+    m_multicastAddress(QStringLiteral("224.0.0.1")),
     m_dataPort(9999),
     m_remotePort(0),
     m_dataConnected(false),
+    m_multicast(false),
     m_udpDumpIndex(0),
     m_nbUDPFrames(m_minNbUDPFrames),
     m_nbAllocatedUDPFrames(m_minNbUDPFrames),
@@ -41,7 +43,7 @@ UDPSourceUDPHandler::UDPSourceUDPHandler() :
     m_rwDelta(m_minNbUDPFrames/2),
     m_d(0),
     m_autoRWBalance(true),
-    m_feedbackMessageQueue(0)
+    m_feedbackMessageQueue(nullptr)
 {
     m_udpBuf = new udpBlk_t[m_minNbUDPFrames];
     std::fill(m_udpDump, m_udpDump + m_udpBlockSize + 8192, 0);
@@ -50,6 +52,7 @@ UDPSourceUDPHandler::UDPSourceUDPHandler() :
 
 UDPSourceUDPHandler::~UDPSourceUDPHandler()
 {
+    stop();
     delete[] m_udpBuf;
 }
 
@@ -57,17 +60,25 @@ void UDPSourceUDPHandler::start()
 {
     qDebug("UDPSourceUDPHandler::start");
 
-    if (!m_dataSocket)
-    {
+    if (!m_dataSocket) {
         m_dataSocket = new QUdpSocket(this);
     }
 
     if (!m_dataConnected)
     {
-
-        if (m_dataSocket->bind(m_dataAddress, m_dataPort))
+        if (m_dataSocket->bind(m_multicast ? QHostAddress::AnyIPv4 : m_dataAddress, m_dataPort, QUdpSocket::ShareAddress))
         {
             qDebug("UDPSourceUDPHandler::start: bind data socket to %s:%d", m_dataAddress.toString().toStdString().c_str(),  m_dataPort);
+
+            if (m_multicast)
+            {
+                if (m_dataSocket->joinMulticastGroup(m_multicastAddress)) {
+                    qDebug("UDPSourceUDPHandler::start: joined multicast group %s", qPrintable(m_multicastAddress.toString()));
+                } else {
+                    qDebug("UDPSourceUDPHandler::start: failed joining multicast group %s", qPrintable(m_multicastAddress.toString()));
+                }
+            }
+
             connect(m_dataSocket, SIGNAL(readyRead()), this, SLOT(dataReadyRead())); // , Qt::QueuedConnection gets stuck since Qt 5.8.0
             m_dataConnected = true;
         }
@@ -92,7 +103,7 @@ void UDPSourceUDPHandler::stop()
     if (m_dataSocket)
     {
         delete m_dataSocket;
-        m_dataSocket = 0;
+        m_dataSocket = nullptr;
     }
 }
 
@@ -176,7 +187,8 @@ void UDPSourceUDPHandler::readSample(Sample &s)
     }
     else
     {
-        memcpy(&s, &m_udpBuf[m_readFrameIndex][m_readIndex], sizeof(Sample));
+        Sample *u = (Sample *) &m_udpBuf[m_readFrameIndex][m_readIndex];
+        s = *u;
         advanceReadPointer((int) sizeof(Sample));
     }
 }
@@ -224,21 +236,35 @@ void UDPSourceUDPHandler::advanceReadPointer(int nbBytes)
     }
 }
 
-void UDPSourceUDPHandler::configureUDPLink(const QString& address, quint16 port)
+void UDPSourceUDPHandler::configureUDPLink(const QString& address, quint16 port, const QString& multicastAddress, bool multicastJoin)
 {
-    Message* msg = MsgUDPAddressAndPort::create(address, port);
+    Message* msg = MsgUDPAddressAndPort::create(address, port, multicastAddress, multicastJoin);
     m_inputMessageQueue.push(msg);
 }
 
-void UDPSourceUDPHandler::applyUDPLink(const QString& address, quint16 port)
+void UDPSourceUDPHandler::applyUDPLink(const QString& address, quint16 port, const QString& multicastAddress, bool multicastJoin)
 {
-    qDebug("UDPSourceUDPHandler::configureUDPLink: %s:%d", address.toStdString().c_str(), port);
+    qDebug() << "UDPSourceUDPHandler::applyUDPLink: "
+        << " address: " << address
+        << " port: " << port
+        << " multicastAddress: " << multicastAddress
+        << " multicastJoin: " << multicastJoin;
+
     bool addressOK = m_dataAddress.setAddress(address);
 
     if (!addressOK)
     {
-        qWarning("UDPSourceUDPHandler::configureUDPLink: invalid address %s. Set to localhost.", address.toStdString().c_str());
+        qWarning("UDPSourceUDPHandler::applyUDPLink: invalid address %s. Set to localhost.", address.toStdString().c_str());
         m_dataAddress = QHostAddress::LocalHost;
+    }
+
+    m_multicast = multicastJoin;
+    addressOK = m_multicastAddress.setAddress(multicastAddress);
+
+    if (!addressOK)
+    {
+        qWarning("UDPSourceUDPHandler::applyUDPLink: invalid multicast address %s. disabling multicast.", address.toStdString().c_str());
+        m_multicast = false;
     }
 
     stop();
@@ -291,7 +317,7 @@ bool UDPSourceUDPHandler::handleMessage(const Message& cmd)
     if (UDPSourceUDPHandler::MsgUDPAddressAndPort::match(cmd))
     {
         UDPSourceUDPHandler::MsgUDPAddressAndPort& notif = (UDPSourceUDPHandler::MsgUDPAddressAndPort&) cmd;
-        applyUDPLink(notif.getAddress(), notif.getPort());
+        applyUDPLink(notif.getAddress(), notif.getPort(), notif.getMulticastAddress(), notif.getMulticastJoin());
         return true;
     }
     else

@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,7 +21,7 @@
 // BladerRF2 is a SISO/MIMO device with a single stream supporting one or two Rx
 // Therefore only one thread can be allocated for the Rx side
 // All FIFOs must be registered before calling startWork() else SISO/MIMO switch will not work properly
-// with unpredicatable results
+// with unpredictable results
 
 #include <QThread>
 #include <QMutex>
@@ -51,6 +51,7 @@ public:
     int getFcPos(unsigned int channel) const;
     void setFifo(unsigned int channel, SampleSinkFifo *sampleFifo);
     SampleSinkFifo *getFifo(unsigned int channel);
+    void setIQOrder(bool iqOrder) { m_iqOrder = iqOrder; }
 
 private:
     struct Channel
@@ -59,7 +60,8 @@ private:
         SampleSinkFifo* m_sampleFifo;
         unsigned int m_log2Decim;
         int m_fcPos;
-        Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12> m_decimators;
+        Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12, true> m_decimatorsIQ;
+        Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12, false> m_decimatorsQI;
 
         Channel() :
             m_sampleFifo(0),
@@ -79,10 +81,12 @@ private:
     Channel *m_channels; //!< Array of channels dynamically allocated for the given number of Rx channels
     qint16 *m_buf; //!< Full buffer for SISO or MIMO operation
     unsigned int m_nbChannels;
+    bool m_iqOrder;
 
     void run();
     unsigned int getNbFifos();
-    void callbackSI(const qint16* buf, qint32 len, unsigned int channel = 0);
+    void callbackSIIQ(const qint16* buf, qint32 len, unsigned int channel = 0);
+    void callbackSIQI(const qint16* buf, qint32 len, unsigned int channel = 0);
     void callbackMI(const qint16* buf, qint32 samplesPerChannel);
 };
 

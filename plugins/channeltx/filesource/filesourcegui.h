@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,12 +22,10 @@
 #ifndef PLUGINS_CHANNELTX_FILESOURCE_FILESOURCEGUI_H_
 #define PLUGINS_CHANNELTX_FILESOURCE_FILESOURCEGUI_H_
 
-#include <QTime>
-
-#include "plugin/plugininstancegui.h"
 #include "dsp/channelmarker.h"
-#include "gui/rollupwidget.h"
+#include "channel/channelgui.h"
 #include "util/messagequeue.h"
+#include "settings/rollupstate.h"
 
 #include "filesourcesettings.h"
 
@@ -36,23 +38,28 @@ namespace Ui {
     class FileSourceGUI;
 }
 
-class FileSourceGUI : public RollupWidget, public PluginInstanceGUI {
+class FileSourceGUI : public ChannelGUI {
     Q_OBJECT
 
 public:
     static FileSourceGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx);
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
-
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
+    virtual void setWorkspaceIndex(int index) { m_settings.m_workspaceIndex = index; };
+    virtual int getWorkspaceIndex() const { return m_settings.m_workspaceIndex; };
+    virtual void setGeometryBytes(const QByteArray& blob) { m_settings.m_geometryBytes = blob; };
+    virtual QByteArray getGeometryBytes() const { return m_settings.m_geometryBytes; };
+    virtual QString getTitle() const { return m_settings.m_title; };
+    virtual QColor getTitleColor() const  { return m_settings.m_rgbColor; };
+    virtual void zetHidden(bool hidden) { m_settings.m_hidden = hidden; }
+    virtual bool getHidden() const { return m_settings.m_hidden; }
+    virtual ChannelMarker& getChannelMarker() { return m_channelMarker; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
+    virtual void setStreamIndex(int streamIndex) { m_settings.m_streamIndex = streamIndex; }
 
 public slots:
     void channelMarkerChangedByCursor();
@@ -62,13 +69,14 @@ private:
     PluginAPI* m_pluginAPI;
     DeviceUISet* m_deviceUISet;
     ChannelMarker m_channelMarker;
+    RollupState m_rollupState;
     FileSourceSettings m_settings;
+    qint64 m_deviceCenterFrequency;
     int m_sampleRate;
     double m_shiftFrequencyFactor; //!< Channel frequency shift factor
-    QString m_fileName;
     int m_fileSampleRate;
     quint32 m_fileSampleSize;
-    quint64 m_recordLength;
+    quint64 m_recordLengthMuSec;
     quint64 m_startingTimeStamp;
     quint64 m_samplesCount;
     bool m_acquisition;
@@ -78,7 +86,6 @@ private:
     FileSource* m_fileSource;
     MessageQueue m_inputMessageQueue;
 
-    QTime m_time;
     uint32_t m_tickCount;
 
     explicit FileSourceGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent = nullptr);
@@ -86,16 +93,18 @@ private:
 
     void blockApplySettings(bool block);
     void applySettings(bool force = false);
-    void applyChannelSettings();
     void configureFileName();
 	void updateWithAcquisition();
 	void updateWithStreamData();
 	void updateWithStreamTime();
     void displaySettings();
     void displayRateAndShift();
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
+    void updateAbsoluteCenterFrequency();
 
     void leaveEvent(QEvent*);
-    void enterEvent(QEvent*);
+    void enterEvent(EnterEventType*);
 
     void applyInterpolation();
     void applyPosition();

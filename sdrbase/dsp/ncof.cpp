@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2016-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,12 +20,8 @@
 
 #include <QtGlobal>
 #include <stdio.h>
-#define _USE_MATH_DEFINES
-#include <math.h>
+#include <cmath>
 #include "dsp/ncof.h"
-
-#undef M_PI
-#define M_PI		3.14159265358979323846
 
 Real NCOF::m_table[NCOF::TableSize+1];
 bool NCOF::m_tableInitialized = false;
@@ -50,8 +49,8 @@ NCOF::NCOF()
 
 void NCOF::setFreq(Real freq, Real sampleRate)
 {
-	m_phaseIncrement = (freq * TableSize) / sampleRate;
-	qDebug("NCOF::setFreq: freq: %f m_phaseIncrement: %f", freq, m_phaseIncrement);
+	m_phaseIncrement = sampleRate == 0 ? 0 : (freq * TableSize) / sampleRate;
+	qDebug("NCOF::setFreq: freq: %f sr: %f m_phaseIncrement: %f", freq, sampleRate, m_phaseIncrement);
 }
 
 float NCOF::next()

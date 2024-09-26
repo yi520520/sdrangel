@@ -4,7 +4,7 @@
 
 This output sample sink plugin sends its samples to a [LimeSDR device](https://myriadrf.org/projects/limesdr/).
 
-<p>&#9888; Version 18.04.1 of LimeSuite is used in the buildsand corresponding gateware loaded in the LimeSDR should be is used (2.16 for LimeSDR-USB and 1.24 for LimeSDR-Mini). If you compile from source version 18.04.1 of LimeSuite must be used.</p>
+<p>&#9888; Version 18.04.1 of LimeSuite is used in the builds and corresponding gateware loaded in the LimeSDR should be is used (2.16 for LimeSDR-USB and 1.24 for LimeSDR-Mini). If you compile from source version 18.04.1 of LimeSuite must be used.</p>
 
 <p>&#9888; LimeSDR-Mini seems to have problems with Zadig driver therefore it is supported in Linux only.</p>
 
@@ -31,6 +31,8 @@ Then add the following defines on `cmake` command line:
 &#9758; LimeSuite is built in the binary packages so there is no external dependency
 
 <h2>Interface</h2>
+
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
 
 ![LimeSDR output plugin GUI](../../../doc/img/LimeSDROutput_plugin.png)
 
@@ -61,6 +63,8 @@ Transmission latency depends essentially in the delay in the sample FIFO. The si
 <h3>3: Center frequency</h3>
 
 This is the center frequency of transmission in kHz.
+
+The NCO must be enabled with a negative value in order to set this below 30MHz.
 
 <h3>3A: Center frequency units</h3>
 
@@ -124,7 +128,7 @@ Can be varied from 5 to 300 MHz
 
 Use the thumbwheels to adjust frequency as done with the LO (1.1). Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2. The boundaries are dynamically calculated from the LO center frequency, sample rate and hardware decimation factor.
 
-<h4>7A.2: Enable/disable external clock input</h7A>
+<h4>7A.2: Enable/disable external clock input</h4>
 
 Use this checkbox to enable or disable the external clock input
 
@@ -169,6 +173,8 @@ The LMS7002M uses the same clock for both the ADCs and DACs therefore this sampl
 
 This is the Tx hardware filter bandwidth in kHz in the LMS7002M device for the given channel. Boundaries are updated automatically but generally are from 5 to 130 MHz in 1 kHz steps. Use the wheels to adjust the value. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
 
+The filter is centered at the LO frequency, so if using the NCO to achieve frequencies below 30MHz, the filter bandwidth needs to be set wide enough for not only your desired signal but the offset from the 30MHz LO as well.
+
 <h3>12: TSP FIR filter toggle</h3>
 
 The TSP in the LMS7002M chip has a FIR filter chain per channel. Use this button to activate or deactivate the TSP FIR filter.
@@ -177,15 +183,15 @@ The TSP in the LMS7002M chip has a FIR filter chain per channel. Use this button
 
 Use the wheels to adjust the bandwidth of the hardware TSP FIR filter. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
 
-<h3>14: Gain</h2>
+<h3>14: Gain</h3>
 
 Use this slider to adjust the global gain of the Tx chain. LimeSuite software automatically set optimal values of the amplifiers to achieve this global gain. This gain can be set between 0 and 70 dB in 1 dB steps. The value in dB appears at the right of the slider.
 
 <h3>15: Antenna selection</h3>
 
-  - ** No **: no output
-  - ** Lo **: Tx low range 30 MHz to 1.9 GHz
-  - ** Hi **: Tx high range: 2 GHz and above
+  - **No**: no output
+  - **Lo**: Tx low range 30 MHz to 1.9 GHz
+  - **Hi**: Tx high range: 2 GHz and above
 
 <h3>16: Stream status indicator</h3>
 
@@ -196,6 +202,7 @@ This label turns green when status can be obtained from the current stream. Usua
   - **U**: turns red if stream experiences underruns
   - **O**: turns red if stream experiences overruns
   - **P**: turns red if stream experiences packet drop outs
+  - **C**: turns red if calibration fails
 
 <h3>18: Stream global (all Tx) throughput in MB/s</h3>
 

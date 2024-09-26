@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021, 2023 Jon Beniston, M7RCE <jon@beniston.com>               //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -25,14 +29,17 @@
 #include <QString>
 #include <QByteArray>
 #include <QTimer>
+#include <QThread>
+#include <QMutex>
 #include <QNetworkRequest>
+#include <QFile>
 
 #include "dsp/devicesamplesource.h"
 #include "fileinputsettings.h"
 
 class QNetworkAccessManager;
 class QNetworkReply;
-class FileInputThread;
+class FileInputWorker;
 class DeviceAPI;
 
 class FileInput : public DeviceSampleSource {
@@ -43,20 +50,22 @@ public:
 
 	public:
 		const FileInputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
 		bool getForce() const { return m_force; }
 
-		static MsgConfigureFileInput* create(const FileInputSettings& settings, bool force)
-		{
-			return new MsgConfigureFileInput(settings, force);
+		static MsgConfigureFileInput* create(const FileInputSettings& settings, const QList<QString>& settingsKeys, bool force) {
+			return new MsgConfigureFileInput(settings, settingsKeys, force);
 		}
 
 	private:
 		FileInputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-		MsgConfigureFileInput(const FileInputSettings& settings, bool force) :
+		MsgConfigureFileInput(const FileInputSettings& settings, const QList<QString>& settingsKeys, bool force) :
 			Message(),
 			m_settings(settings),
+            m_settingsKeys(settingsKeys),
 			m_force(force)
 		{ }
 	};
@@ -204,7 +213,7 @@ public:
 		quint32 getSampleSize() const { return m_sampleSize; }
 		quint64 getCenterFrequency() const { return m_centerFrequency; }
         quint64 getStartingTimeStamp() const { return m_startingTimeStamp; }
-        quint64 getRecordLength() const { return m_recordLength; }
+        quint64 getRecordLengthMuSec() const { return m_recordLengthMuSec; }
 
 		static MsgReportFileInputStreamData* create(int sampleRate,
 		        quint32 sampleSize,
@@ -220,19 +229,19 @@ public:
 		quint32 m_sampleSize;
 		quint64 m_centerFrequency;
         quint64 m_startingTimeStamp;
-        quint64 m_recordLength;
+        quint64 m_recordLengthMuSec;
 
 		MsgReportFileInputStreamData(int sampleRate,
 		        quint32 sampleSize,
 				quint64 centerFrequency,
                 quint64 startingTimeStamp,
-                quint64 recordLength) :
+                quint64 recordLengthMuSec) :
 			Message(),
 			m_sampleRate(sampleRate),
 			m_sampleSize(sampleSize),
 			m_centerFrequency(centerFrequency),
 			m_startingTimeStamp(startingTimeStamp),
-			m_recordLength(recordLength)
+			m_recordLengthMuSec(recordLengthMuSec)
 		{ }
 	};
 
@@ -294,8 +303,6 @@ public:
     virtual void setCenterFrequency(qint64 centerFrequency);
     quint64 getStartingTimeStamp() const;
 
-	virtual bool handleMessage(const Message& message);
-
 	virtual int webapiSettingsGet(
 	            SWGSDRangel::SWGDeviceSettings& response,
 	            QString& errorMessage);
@@ -319,30 +326,46 @@ public:
             SWGSDRangel::SWGDeviceReport& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const FileInputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            FileInputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 	private:
 	DeviceAPI *m_deviceAPI;
 	QMutex m_mutex;
 	FileInputSettings m_settings;
+#ifdef ANDROID
+    QFile m_inputFile;
+#else
 	std::ifstream m_ifstream;
-	FileInputThread* m_fileInputThread;
+#endif
+	FileInputWorker* m_fileInputWorker;
+	QThread m_fileInputWorkerThread;
 	QString m_deviceDescription;
-	QString m_fileName;
 	int m_sampleRate;
 	quint32 m_sampleSize;
 	quint64 m_centerFrequency;
-    quint64 m_recordLength; //!< record length in seconds computed from file size
+	qint64 m_dataStartPos;       //!< Position of IQ data in file
+    quint64 m_recordLengthMuSec; //!< record length in microseconds computed from file size
     quint64 m_startingTimeStamp;
 	QTimer m_masterTimer;
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
+	void startWorker();
+	void stopWorker();
 	void openFileStream();
 	void seekFileStream(int seekMillis);
-	bool applySettings(const FileInputSettings& settings, bool force = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const FileInputSettings& settings);
+	bool applySettings(const FileInputSettings& settings, const QList<QString>& settingsKeys, bool force = false);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const FileInputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const FileInputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
+	bool handleMessage(const Message& message);
 
 private slots:
     void networkManagerFinished(QNetworkReply *reply);

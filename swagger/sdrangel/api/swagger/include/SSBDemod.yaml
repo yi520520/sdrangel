@@ -4,17 +4,32 @@ SSBDemodSettings:
     inputFrequencyOffset:
       type: integer
       format: int64
+    filterIndex:
+      type: integer
+    spanLog2:
+      type: integer
     rfBandwidth:
       type: number
       format: float
     lowCutoff:
       type: number
       format: float
+    fftWindow:
+      type: integer
+      description: >
+        FFT Window index (FFTWindow::Function):
+          * 0 - Bartlett
+          * 1 - Blackman-Harris 4 term
+          * 2 - Flattop
+          * 3 - Hamming
+          * 4 - Hanning
+          * 5 - Rectangle
+          * 6 - Kaiser
+          * 7 - Blackman 3 term
+          * 8 - Blackman-Harris 7 term
     volume:
       type: number
       format: float
-    spanLog2:
-      type: integer
     audioBinaural:
       description: Audio binaural mode (1 if active else 0)
       type: integer
@@ -42,12 +57,43 @@ SSBDemodSettings:
     agcThresholdGate:
       description: Audio squelch gate in ms
       type: integer
+    dnr:
+      type: integer
+      description: >
+        Toggle noise reduction:
+          * 0 - Noise reduction off
+          * 1 - Noise reduction on
+    dnrScheme:
+      type: integer
+      description: >
+        Noise reduction scheme:
+          * 0 - Average of magnitudes
+          * 1 - Average and standard deviation of magnitudes
+          * 2 - Magnitude maxima (peaks)
+    dnrAboveAvgFactor:
+      type: number
+      format: float
+      description: Multiplier of the average to determine magnitude threshold in average scheme
+    dnrSigmaFactor:
+      type: number
+      format: float
+      description: Standard deviation (sigma) multiplier to determine magnitude threshold in average and standard deviation scheme
+    dnrNbPeaks:
+      type: integer
+      description: Number of magnitude peak maxima selected in peaks scheme
+    dnrAlpha:
+      type: number
+      format: float
+      description: Smoothing constant (alpha) of the exponential smoothing filter. Must be between  0 and 1.
     rgbColor:
       type: integer
     title:
       type: string
     audioDeviceName:
       type: string
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -59,6 +105,12 @@ SSBDemodSettings:
       type: integer
     reverseAPIChannelIndex:
       type: integer
+    spectrumConfig:
+      $ref: "http://swgserver:8081/api/swagger/include/GLSpectrum.yaml#/GLSpectrum"
+    channelMarker:
+      $ref: "http://swgserver:8081/api/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "http://swgserver:8081/api/swagger/include/RollupState.yaml#/RollupState"
 
 SSBDemodReport:
   description: SSBDemod

@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2023 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -34,17 +36,41 @@ public:
 
     const QString& getServerAddress() const { return m_serverAddress; }
     uint16_t getServerPort() const { return m_serverPort; }
-    bool getMIMOSupport() const { return m_mimoSupport; }
+    bool getScratch() const { return m_scratch; }
+    bool getSoapy() const { return m_soapy; }
+    const QString& getFFTWFWisdomFileName() const { return m_fftwfWindowFileName; }
+    bool getRemoteTCPSink() const { return m_remoteTCPSink; }
+    const QString& getRemoteTCPSinkAddressOption() const { return m_remoteTCPSinkAddress; }
+    int getRemoteTCPSinkPortOption() const { return m_remoteTCPSinkPort; }
+    const QString& getRemoteTCPSinkHWType() const { return m_remoteTCPSinkHWType; }
+    const QString& getRemoteTCPSinkSerial() const { return m_remoteTCPSinkSerial; }
+    bool getListDevices() const { return m_listDevices; }
 
 private:
     QString  m_serverAddress;
     uint16_t m_serverPort;
-    bool m_mimoSupport;
+    QString  m_fftwfWindowFileName;
+    bool m_scratch;
+    bool m_soapy;
+    bool m_remoteTCPSink;
+    QString m_remoteTCPSinkAddress;
+    int m_remoteTCPSinkPort;
+    QString m_remoteTCPSinkHWType;
+    QString m_remoteTCPSinkSerial;
+    bool m_listDevices;
 
     QCommandLineParser m_parser;
     QCommandLineOption m_serverAddressOption;
     QCommandLineOption m_serverPortOption;
-    QCommandLineOption m_mimoOption;
+    QCommandLineOption m_fftwfWisdomOption;
+    QCommandLineOption m_scratchOption;
+    QCommandLineOption m_soapyOption;
+    QCommandLineOption m_remoteTCPSinkOption;
+    QCommandLineOption m_remoteTCPSinkAddressOption;
+    QCommandLineOption m_remoteTCPSinkPortOption;
+    QCommandLineOption m_remoteTCPSinkHWTypeOption;
+    QCommandLineOption m_remoteTCPSinkSerialOption;
+    QCommandLineOption m_listDevicesOption;
 };
 
 

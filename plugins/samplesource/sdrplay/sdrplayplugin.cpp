@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,6 @@
 #include <QtPlugin>
 #include <mirisdr.h>
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 
 #ifdef SERVER_MODE
 #include "sdrplayinput.h"
@@ -26,18 +27,20 @@
 #include "sdrplaygui.h"
 #endif
 #include "sdrplayplugin.h"
+#include "sdrplaywebapiadapter.h"
 
 const PluginDescriptor SDRPlayPlugin::m_pluginDescriptor = {
-    QString("SDRPlay RSP1 Input"),
-    QString("4.5.2"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("SDRPlay"),
+    QStringLiteral("SDRPlay RSP1 Input"),
+    QStringLiteral("7.21.2"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString SDRPlayPlugin::m_hardwareID = "SDRplay1";
-const QString SDRPlayPlugin::m_deviceTypeID = SDRPLAY_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "SDRplay1";
+static constexpr const char* const m_deviceTypeID = SDRPLAY_DEVICE_TYPE_ID;
 
 SDRPlayPlugin::SDRPlayPlugin(QObject* parent) :
     QObject(parent)
@@ -54,9 +57,12 @@ void SDRPlayPlugin::initPlugin(PluginAPI* pluginAPI)
     pluginAPI->registerSampleSource(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices SDRPlayPlugin::enumSampleSources()
+void SDRPlayPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
 {
-	SamplingDevices result;
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
 	int count = mirisdr_get_device_count();
 
 	char vendor[256];
@@ -75,24 +81,49 @@ PluginInterface::SamplingDevices SDRPlayPlugin::enumSampleSources()
 		}
 
 		qDebug("SDRPlayPlugin::enumSampleSources: found %s:%s (%s)", vendor, product, serial);
-		QString displayedName(QString("SDRPlay[%1] %2").arg(i).arg(serial));
+		QString displayableName(QString("SDRPlay[%1] %2").arg(i).arg(serial));
 
-		result.append(SamplingDevice(displayedName,
-		        m_hardwareID,
-				m_deviceTypeID,
-				QString(serial),
-				i,
-				PluginInterface::SamplingDevice::PhysicalDevice,
-				PluginInterface::SamplingDevice::StreamSingleRx,
-				1,
-				0));
+        originDevices.append(OriginDevice(
+            displayableName,
+            m_hardwareID,
+            serial,
+            i, // sequence
+            1, // Nb Rx
+            0  // Nb Tx
+        ));
 	}
 
-    return result;
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices SDRPlayPlugin::enumSampleSources(const OriginDevices& originDevices)
+{
+	SamplingDevices result;
+
+	for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == m_hardwareID)
+        {
+            result.append(SamplingDevice(
+                it->displayableName,
+                it->hardwareId,
+                m_deviceTypeID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::PhysicalDevice,
+                PluginInterface::SamplingDevice::StreamSingleRx,
+                1,
+                0
+            ));
+            qDebug("SDRPlayPlugin::enumSampleSources: enumerated SDRPlay RSP1 device #%d", it->sequence);
+        }
+    }
+
+	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* SDRPlayPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* SDRPlayPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -103,7 +134,7 @@ PluginInstanceGUI* SDRPlayPlugin::createSampleSourcePluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* SDRPlayPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* SDRPlayPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -134,3 +165,7 @@ DeviceSampleSource *SDRPlayPlugin::createSampleSourcePluginInstance(const QStrin
     }
 }
 
+DeviceWebAPIAdapter *SDRPlayPlugin::createDeviceWebAPIAdapter() const
+{
+    return new SDRPlayWebAPIAdapter();
+}

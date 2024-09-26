@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -41,20 +44,22 @@ public:
 
     public:
         const BladeRF2OutputSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureBladeRF2* create(const BladeRF2OutputSettings& settings, bool force)
-        {
-            return new MsgConfigureBladeRF2(settings, force);
+        static MsgConfigureBladeRF2* create(const BladeRF2OutputSettings& settings, const QList<QString>& settingsKeys, bool force) {
+            return new MsgConfigureBladeRF2(settings, settingsKeys, force);
         }
 
     private:
         BladeRF2OutputSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureBladeRF2(const BladeRF2OutputSettings& settings, bool force) :
+        MsgConfigureBladeRF2(const BladeRF2OutputSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
@@ -85,21 +90,24 @@ public:
         int getMin() const { return m_min; }
         int getMax() const { return m_max; }
         int getStep() const { return m_step; }
+        float getScale() const { return m_scale; }
 
-        static MsgReportGainRange* create(int min, int max, int step) {
-            return new MsgReportGainRange(min, max, step);
+        static MsgReportGainRange* create(int min, int max, int step, float scale) {
+            return new MsgReportGainRange(min, max, step, scale);
         }
 
     protected:
         int m_min;
         int m_max;
         int m_step;
+        float m_scale;
 
-        MsgReportGainRange(int min, int max, int step) :
+        MsgReportGainRange(int min, int max, int step, float scale) :
             Message(),
             m_min(min),
             m_max(max),
-            m_step(step)
+            m_step(step),
+            m_scale(scale)
         {}
     };
 
@@ -123,10 +131,10 @@ public:
     virtual quint64 getCenterFrequency() const;
     virtual void setCenterFrequency(qint64 centerFrequency);
 
-    void getFrequencyRange(uint64_t& min, uint64_t& max, int& step);
-    void getSampleRateRange(int& min, int& max, int& step);
-    void getBandwidthRange(int& min, int& max, int& step);
-    void getGlobalGainRange(int& min, int& max, int& step);
+    void getFrequencyRange(uint64_t& min, uint64_t& max, int& step, float& scale);
+    void getSampleRateRange(int& min, int& max, int& step, float& scale);
+    void getBandwidthRange(int& min, int& max, int& step, float& scale);
+    void getGlobalGainRange(int& min, int& max, int& step, float& scale);
 
     virtual bool handleMessage(const Message& message);
 
@@ -153,6 +161,15 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const BladeRF2OutputSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            BladeRF2OutputSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 private:
     DeviceAPI *m_deviceAPI;
     QMutex m_mutex;
@@ -169,12 +186,11 @@ private:
     void closeDevice();
     BladeRF2OutputThread *findThread();
     void moveThreadToBuddy();
-    bool applySettings(const BladeRF2OutputSettings& settings, bool force);
+    bool applySettings(const BladeRF2OutputSettings& settings, const QList<QString>& settingsKeys, bool force);
     int getNbChannels();
     bool setDeviceCenterFrequency(struct bladerf *dev, int requestedChannel, quint64 freq_hz, int loPpmTenths);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const BladeRF2OutputSettings& settings);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const BladeRF2OutputSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const BladeRF2OutputSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

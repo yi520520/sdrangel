@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Vort                                                       //
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Vort <vvort@yandex.ru>                                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,7 +25,6 @@
 #include <QString>
 #include <QByteArray>
 #include <QTimer>
-#include <QThread>
 #include <QNetworkRequest>
 
 #include <dsp/devicesamplesource.h>
@@ -30,9 +32,9 @@
 
 class DeviceAPI;
 class KiwiSDRWorker;
-class FileRecord;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 
 class KiwiSDRInput : public DeviceSampleSource {
     Q_OBJECT
@@ -42,42 +44,26 @@ public:
 
 	public:
 		const KiwiSDRSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
 		bool getForce() const { return m_force; }
 
-		static MsgConfigureKiwiSDR* create(const KiwiSDRSettings& settings, bool force)
+		static MsgConfigureKiwiSDR* create(const KiwiSDRSettings& settings, const QList<QString>& settingsKeys, bool force)
 		{
-			return new MsgConfigureKiwiSDR(settings, force);
+			return new MsgConfigureKiwiSDR(settings, settingsKeys, force);
 		}
 
 	private:
 		KiwiSDRSettings m_settings;
+        QList<QString> m_settingsKeys;
 		bool m_force;
 
-		MsgConfigureKiwiSDR(const KiwiSDRSettings& settings, bool force) :
+		MsgConfigureKiwiSDR(const KiwiSDRSettings& settings, const QList<QString>& settingsKeys, bool force) :
 			Message(),
 			m_settings(settings),
+            m_settingsKeys(settingsKeys),
 			m_force(force)
 		{ }
 	};
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
-        { }
-    };
 
     class MsgStartStop : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -160,24 +146,35 @@ public:
             SWGSDRangel::SWGDeviceReport& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const KiwiSDRSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            KiwiSDRSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
 private:
 	DeviceAPI *m_deviceAPI;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
 	QMutex m_mutex;
+    int m_sampleRate;
 	KiwiSDRSettings m_settings;
 	KiwiSDRWorker* m_kiwiSDRWorker;
-	QThread m_kiwiSDRWorkerThread;
+	QThread *m_kiwiSDRWorkerThread;
 	QString m_deviceDescription;
 	bool m_running;
     const QTimer& m_masterTimer;
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
+    float m_latitude;
+    float m_longitude;
+    float m_altitude;
 
     int getStatus() const;
-	bool applySettings(const KiwiSDRSettings& settings, bool force);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const KiwiSDRSettings& settings);
+	bool applySettings(const KiwiSDRSettings& settings, const QList<QString>& settingsKeys, bool force);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const KiwiSDRSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const KiwiSDRSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 signals:

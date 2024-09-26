@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2016, 2018-2019, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -125,6 +129,54 @@
 #  endif
 #else
 #  define SWG_API
+#endif
+
+/* the 'SDRBENCH_API' controls the import/export of 'sdrbench' symbols
+ */
+#if !defined(sdrangel_STATIC)
+#  ifdef sdrbench_EXPORTS
+#    define SDRBENCH_API __SDR_EXPORT
+#  else
+#    define SDRBENCH_API __SDR_IMPORT
+#  endif
+#else
+#  define SDRBENCH_API
+#endif
+
+/* the 'MODEMM17_API' controls the import/export of 'modemm17' symbols
+ */
+#if !defined(sdrangel_STATIC)
+#  ifdef modemm17_EXPORTS
+#    define MODEMM17_API __SDR_EXPORT
+#  else
+#    define MODEMM17_API __SDR_IMPORT
+#  endif
+#else
+#  define MODEMM17_API
+#endif
+
+/* the 'FT8_API' controls the import/export of 'ft8' symbols
+ */
+#if !defined(sdrangel_STATIC)
+#  ifdef ft8_EXPORTS
+#    define FT8_API __SDR_EXPORT
+#  else
+#    define FT8_API __SDR_IMPORT
+#  endif
+#else
+#  define FT8_API
+#endif
+
+/* the 'WDSP_API' controls the import/export of 'wdsp' symbols
+ */
+#if !defined(sdrangel_STATIC)
+#  ifdef wdsp_EXPORTS
+#    define WDSP_API __SDR_EXPORT
+#  else
+#    define WDSP_API __SDR_IMPORT
+#  endif
+#else
+#  define WDSP_API
 #endif
 
 #endif /* __SDRANGEL_EXPORT_H */

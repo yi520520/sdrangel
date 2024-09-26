@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2018-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,16 +20,16 @@
 #include <QMessageBox>
 #include <QDebug>
 
-#include "filesourcegui.h"
-
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 #include "dsp/hbfilterchainconverter.h"
+#include "dsp/dspcommands.h"
 #include "gui/basicchannelsettingsdialog.h"
+#include "gui/dialogpositioner.h"
 #include "util/db.h"
 
-#include "mainwindow.h"
-
+#include "filesourcereport.h"
+#include "filesourcegui.h"
 #include "filesource.h"
 #include "ui_filesourcegui.h"
 
@@ -41,25 +42,6 @@ FileSourceGUI* FileSourceGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUI
 void FileSourceGUI::destroy()
 {
     delete this;
-}
-
-void FileSourceGUI::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString FileSourceGUI::getName() const
-{
-    return objectName();
-}
-
-qint64 FileSourceGUI::getCenterFrequency() const {
-    return 0;
-}
-
-void FileSourceGUI::setCenterFrequency(qint64 centerFrequency)
-{
-    (void) centerFrequency;
 }
 
 void FileSourceGUI::resetToDefaults()
@@ -88,18 +70,21 @@ bool FileSourceGUI::deserialize(const QByteArray& data)
 
 bool FileSourceGUI::handleMessage(const Message& message)
 {
-    if (FileSource::MsgSampleRateNotification::match(message))
+    if (DSPSignalNotification::match(message))
     {
-        FileSource::MsgSampleRateNotification& notif = (FileSource::MsgSampleRateNotification&) message;
+        DSPSignalNotification& notif = (DSPSignalNotification&) message;
+        m_deviceCenterFrequency = notif.getCenterFrequency();
         m_sampleRate = notif.getSampleRate();
+        updateAbsoluteCenterFrequency();
         displayRateAndShift();
         return true;
     }
-    else if (FileSource::MsgConfigureFileSource::match(message))
+    else if (FileSource::MsgConfigureFileSource::match(message)) // API settings feedback
     {
         const FileSource::MsgConfigureFileSource& cfg = (FileSource::MsgConfigureFileSource&) message;
         m_settings = cfg.getSettings();
         blockApplySettings(true);
+        m_channelMarker.updateSettings(static_cast<const ChannelMarker*>(m_settings.m_channelMarker));
         displaySettings();
         blockApplySettings(false);
         return true;
@@ -110,24 +95,24 @@ bool FileSourceGUI::handleMessage(const Message& message)
 		updateWithAcquisition();
 		return true;
 	}
-	else if (FileSource::MsgReportFileSourceStreamData::match(message))
+	else if (FileSourceReport::MsgReportFileSourceStreamData::match(message))
 	{
-		m_fileSampleRate = ((FileSource::MsgReportFileSourceStreamData&)message).getSampleRate();
-		m_fileSampleSize = ((FileSource::MsgReportFileSourceStreamData&)message).getSampleSize();
-		m_startingTimeStamp = ((FileSource::MsgReportFileSourceStreamData&)message).getStartingTimeStamp();
-		m_recordLength = ((FileSource::MsgReportFileSourceStreamData&)message).getRecordLength();
+		m_fileSampleRate = ((FileSourceReport::MsgReportFileSourceStreamData&)message).getSampleRate();
+		m_fileSampleSize = ((FileSourceReport::MsgReportFileSourceStreamData&)message).getSampleSize();
+		m_startingTimeStamp = ((FileSourceReport::MsgReportFileSourceStreamData&)message).getStartingTimeStamp();
+		m_recordLengthMuSec = ((FileSourceReport::MsgReportFileSourceStreamData&)message).getRecordLengthMuSec();
 		updateWithStreamData();
 		return true;
 	}
-	else if (FileSource::MsgReportFileSourceStreamTiming::match(message))
+	else if (FileSourceReport::MsgReportFileSourceStreamTiming::match(message))
 	{
-		m_samplesCount = ((FileSource::MsgReportFileSourceStreamTiming&)message).getSamplesCount();
+		m_samplesCount = ((FileSourceReport::MsgReportFileSourceStreamTiming&)message).getSamplesCount();
 		updateWithStreamTime();
 		return true;
 	}
-	else if (FileSource::MsgPlayPause::match(message))
+	else if (FileSourceReport::MsgPlayPause::match(message))
 	{
-	    FileSource::MsgPlayPause& notif = (FileSource::MsgPlayPause&) message;
+	    FileSourceReport::MsgPlayPause& notif = (FileSourceReport::MsgPlayPause&) message;
 	    bool checked = notif.getPlayPause();
 	    ui->play->setChecked(checked);
 	    ui->navTime->setEnabled(!checked);
@@ -135,9 +120,9 @@ bool FileSourceGUI::handleMessage(const Message& message)
 
 	    return true;
 	}
-	else if (FileSource::MsgReportHeaderCRC::match(message))
+	else if (FileSourceReport::MsgReportHeaderCRC::match(message))
 	{
-		FileSource::MsgReportHeaderCRC& notif = (FileSource::MsgReportHeaderCRC&) message;
+		FileSourceReport::MsgReportHeaderCRC& notif = (FileSourceReport::MsgReportHeaderCRC&) message;
 
         if (notif.isOK()) {
 			ui->crcLabel->setStyleSheet("QLabel { background-color : green; }");
@@ -147,6 +132,30 @@ bool FileSourceGUI::handleMessage(const Message& message)
 
 		return true;
 	}
+    else if (FileSource::MsgConfigureFileSourceWork::match(message)) // API action "play" feedback
+    {
+        const FileSource::MsgConfigureFileSourceWork& notif = (const FileSource::MsgConfigureFileSourceWork&) message;
+        bool play = notif.isWorking();
+        ui->play->blockSignals(true);
+        ui->navTime->blockSignals(true);
+        ui->play->setChecked(play);
+        ui->navTime->setEnabled(!play);
+        m_enableNavTime = !play;
+        ui->play->blockSignals(false);
+        ui->navTime->blockSignals(false);
+
+        return true;
+    }
+    else if (FileSource::MsgConfigureFileSourceSeek::match(message)) // API action "seekms" feedback
+    {
+        const FileSource::MsgConfigureFileSourceSeek& notif = (FileSource::MsgConfigureFileSourceSeek&) message;
+        int seekMillis = notif.getMillis();
+        ui->navTime->blockSignals(true);
+        ui->navTime->setValue(seekMillis);
+        ui->navTime->blockSignals(false);
+
+        return true;
+    }
     else
     {
         return false;
@@ -154,15 +163,16 @@ bool FileSourceGUI::handleMessage(const Message& message)
 }
 
 FileSourceGUI::FileSourceGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent) :
-        RollupWidget(parent),
+        ChannelGUI(parent),
         ui(new Ui::FileSourceGUI),
         m_pluginAPI(pluginAPI),
         m_deviceUISet(deviceUISet),
+        m_deviceCenterFrequency(0),
         m_sampleRate(0),
         m_shiftFrequencyFactor(0.0),
         m_fileSampleRate(0),
         m_fileSampleSize(0),
-        m_recordLength(0),
+        m_recordLengthMuSec(0),
         m_startingTimeStamp(0),
         m_samplesCount(0),
         m_acquisition(false),
@@ -170,14 +180,16 @@ FileSourceGUI::FileSourceGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, Bas
         m_doApplySettings(true),
         m_tickCount(0)
 {
-    (void) channelTx;
-
-    ui->setupUi(this);
-    ui->channelPowerMeter->setColorTheme(LevelMeterSignalDB::ColorGreenAndBlue);
-
     setAttribute(Qt::WA_DeleteOnClose, true);
-    connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
+    m_helpURL = "plugins/channeltx/filesource/readme.md";
+    RollupContents *rollupContents = getRollupContents();
+	ui->setupUi(rollupContents);
+    setSizePolicy(rollupContents->sizePolicy());
+    rollupContents->arrangeRollups();
+	connect(rollupContents, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
     connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
+
+    ui->channelPowerMeter->setColorTheme(LevelMeterSignalDB::ColorGreenAndBlue);
 
     m_fileSource = (FileSource*) channelTx;
     m_fileSource->setMessageQueueToGUI(getInputMessageQueue());
@@ -194,24 +206,21 @@ FileSourceGUI::FileSourceGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, Bas
     m_channelMarker.setVisible(true); // activate signal on the last setting only
 
     m_settings.setChannelMarker(&m_channelMarker);
+    m_settings.setRollupState(&m_rollupState);
 
-    m_deviceUISet->registerTxChannelInstance(FileSource::m_channelIdURI, this);
     m_deviceUISet->addChannelMarker(&m_channelMarker);
-    m_deviceUISet->addRollupWidget(this);
 
     connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
     connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleSourceMessages()));
 
-    m_time.start();
-
     displaySettings();
+    makeUIConnections();
     applySettings(true);
+    m_resizer.enableChildMouseTracking();
 }
 
 FileSourceGUI::~FileSourceGUI()
 {
-    m_deviceUISet->removeTxChannelInstance(this);
-    delete m_fileSource;
     delete ui;
 }
 
@@ -231,22 +240,10 @@ void FileSourceGUI::applySettings(bool force)
     }
 }
 
-void FileSourceGUI::applyChannelSettings()
-{
-    if (m_doApplySettings)
-    {
-        FileSource::MsgConfigureChannelizer *msgChan = FileSource::MsgConfigureChannelizer::create(
-                m_settings.m_log2Interp,
-                m_settings.m_filterChainHash);
-        m_fileSource->getInputMessageQueue()->push(msgChan);
-    }
-}
-
 void FileSourceGUI::configureFileName()
 {
-	qDebug() << "FileSourceGui::configureFileName: " << m_fileName.toStdString().c_str();
-	FileSource::MsgConfigureFileSourceName* message = FileSource::MsgConfigureFileSourceName::create(m_fileName);
-	m_fileSource->getInputMessageQueue()->push(message);
+	qDebug() << "FileSourceGui::configureFileName: " << m_settings.m_fileName.toStdString().c_str();
+    applySettings();
 }
 
 void FileSourceGUI::updateWithAcquisition()
@@ -262,8 +259,8 @@ void FileSourceGUI::updateWithStreamData()
 	ui->sampleRateText->setText(tr("%1k").arg((float) m_fileSampleRate / 1000));
 	ui->sampleSizeText->setText(tr("%1b").arg(m_fileSampleSize));
 	QTime recordLength(0, 0, 0, 0);
-	recordLength = recordLength.addSecs(m_recordLength);
-	QString s_time = recordLength.toString("HH:mm:ss");
+	recordLength = recordLength.addMSecs(m_recordLengthMuSec/1000UL);
+	QString s_time = recordLength.toString("HH:mm:ss.zzz");
 	ui->recordLengthText->setText(s_time);
 	updateWithStreamTime();
 }
@@ -294,7 +291,7 @@ void FileSourceGUI::updateWithStreamTime()
 
 	if (!m_enableNavTime)
 	{
-		float posRatio = (float) t_sec / (float) m_recordLength;
+		float posRatio = (float) (t_sec*1000000L + t_msec*1000L) / (float) m_recordLengthMuSec;
 		ui->navTime->setValue((int) (posRatio * 1000.0));
 	}
 }
@@ -310,12 +307,18 @@ void FileSourceGUI::displaySettings()
 
     setTitleColor(m_settings.m_rgbColor);
     setWindowTitle(m_channelMarker.getTitle());
+    setTitle(m_channelMarker.getTitle());
+
+    updateIndexLabel();
 
     blockApplySettings(true);
+    ui->fileNameText->setText(m_settings.m_fileName);
     ui->gain->setValue(m_settings.m_gainDB);
     ui->gainText->setText(tr("%1 dB").arg(m_settings.m_gainDB));
     ui->interpolationFactor->setCurrentIndex(m_settings.m_log2Interp);
     applyInterpolation();
+    getRollupContents()->restoreState(m_rollupState);
+    updateAbsoluteCenterFrequency();
     blockApplySettings(false);
 }
 
@@ -330,14 +333,16 @@ void FileSourceGUI::displayRateAndShift()
     m_channelMarker.setBandwidth(channelSampleRate);
 }
 
-void FileSourceGUI::leaveEvent(QEvent*)
+void FileSourceGUI::leaveEvent(QEvent* event)
 {
     m_channelMarker.setHighlighted(false);
+    ChannelGUI::leaveEvent(event);
 }
 
-void FileSourceGUI::enterEvent(QEvent*)
+void FileSourceGUI::enterEvent(EnterEventType* event)
 {
     m_channelMarker.setHighlighted(true);
+    ChannelGUI::enterEvent(event);
 }
 
 void FileSourceGUI::handleSourceMessages()
@@ -357,11 +362,14 @@ void FileSourceGUI::onWidgetRolled(QWidget* widget, bool rollDown)
 {
     (void) widget;
     (void) rollDown;
+
+    getRollupContents()->saveState(m_rollupState);
+    applySettings();
 }
 
 void FileSourceGUI::onMenuDialogCalled(const QPoint &p)
 {
-    if (m_contextMenuType == ContextMenuChannelSettings)
+    if (m_contextMenuType == ContextMenuType::ContextMenuChannelSettings)
     {
         BasicChannelSettingsDialog dialog(&m_channelMarker, this);
         dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
@@ -369,8 +377,16 @@ void FileSourceGUI::onMenuDialogCalled(const QPoint &p)
         dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
         dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
         dialog.setReverseAPIChannelIndex(m_settings.m_reverseAPIChannelIndex);
+        dialog.setDefaultTitle(m_displayedName);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            dialog.setNumberOfStreams(m_fileSource->getNumberOfDeviceStreams());
+            dialog.setStreamIndex(m_settings.m_streamIndex);
+        }
 
         dialog.move(p);
+        new DialogPositioner(&dialog, false);
         dialog.exec();
 
         m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
@@ -383,6 +399,14 @@ void FileSourceGUI::onMenuDialogCalled(const QPoint &p)
 
         setWindowTitle(m_settings.m_title);
         setTitleColor(m_settings.m_rgbColor);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            m_settings.m_streamIndex = dialog.getSelectedStreamIndex();
+            m_channelMarker.clearStreamIndexes();
+            m_channelMarker.addStreamIndex(m_settings.m_streamIndex);
+            updateIndexLabel();
+        }
 
         applySettings();
     }
@@ -413,12 +437,12 @@ void FileSourceGUI::on_showFileDialog_clicked(bool checked)
 {
     (void) checked;
 	QString fileName = QFileDialog::getOpenFileName(this,
-	    tr("Open I/Q record file"), ".", tr("SDR I/Q Files (*.sdriq)"), 0, QFileDialog::DontUseNativeDialog);
+	    tr("Open I/Q record file"), ".", tr("SDR I/Q Files (*.sdriq *.wav)"), 0, QFileDialog::DontUseNativeDialog);
 
 	if (fileName != "")
 	{
-		m_fileName = fileName;
-		ui->fileNameText->setText(m_fileName);
+		m_settings.m_fileName = fileName;
+		ui->fileNameText->setText(m_settings.m_fileName);
 		ui->crcLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
 		configureFileName();
 	}
@@ -472,8 +496,9 @@ void FileSourceGUI::applyPosition()
     m_shiftFrequencyFactor = HBFilterChainConverter::convertToString(m_settings.m_log2Interp, m_settings.m_filterChainHash, s);
     ui->filterChainText->setText(s);
 
+    updateAbsoluteCenterFrequency();
     displayRateAndShift();
-    applyChannelSettings();
+    applySettings();
 }
 
 void FileSourceGUI::tick()
@@ -503,4 +528,21 @@ void FileSourceGUI::tick()
 
 void FileSourceGUI::channelMarkerChangedByCursor()
 {
+}
+
+void FileSourceGUI::makeUIConnections()
+{
+    QObject::connect(ui->interpolationFactor, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FileSourceGUI::on_interpolationFactor_currentIndexChanged);
+    QObject::connect(ui->position, &QSlider::valueChanged, this, &FileSourceGUI::on_position_valueChanged);
+    QObject::connect(ui->gain, &QSlider::valueChanged, this, &FileSourceGUI::on_gain_valueChanged);
+    QObject::connect(ui->showFileDialog, &QPushButton::clicked, this, &FileSourceGUI::on_showFileDialog_clicked);
+    QObject::connect(ui->playLoop, &ButtonSwitch::toggled, this, &FileSourceGUI::on_playLoop_toggled);
+    QObject::connect(ui->play, &ButtonSwitch::toggled, this, &FileSourceGUI::on_play_toggled);
+    QObject::connect(ui->navTime, &QSlider::valueChanged, this, &FileSourceGUI::on_navTime_valueChanged);
+}
+
+void FileSourceGUI::updateAbsoluteCenterFrequency()
+{
+    int shift = m_shiftFrequencyFactor * m_sampleRate;
+    setStatusFrequency(m_deviceCenterFrequency + shift);
 }

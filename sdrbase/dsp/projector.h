@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -16,8 +18,11 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
+#ifndef SDRBASE_DSP_PROJECTOR_H
+#define SDRBASE_DSP_PROJECTOR_H
+
 #include "export.h"
-#include "dsptypes.h"
+#include "dsp/dsptypes.h"
 
 class SDRBASE_API Projector
 {
@@ -28,8 +33,11 @@ public:
         ProjectionImag,     //!< Extract imaginary part
         ProjectionMagLin,   //!< Calculate linear magnitude or modulus
         ProjectionMagSq,    //!< Calculate linear squared magnitude or power
+        ProjectionDMagSq,   //!< Calculate time derivative of linear squared magnitude or power
         ProjectionMagDB,    //!< Calculate logarithmic (dB) of squared magnitude
         ProjectionPhase,    //!< Calculate phase
+        ProjectionDOAP,     //!< Calculate ambiguous DOA from phase as phase difference (assuming positive)
+        ProjectionDOAN,     //!< Calculate ambiguous DOA from phase as phase difference (assuming negative)
         ProjectionDPhase,   //!< Calculate phase derivative i.e. instantaneous frequency scaled to sample rate
         ProjectionBPSK,     //!< Phase comparator BPSK evaluation
         ProjectionQPSK,     //!< Phase comparator QPSK evaluation
@@ -47,11 +55,15 @@ public:
     void setCacheMaster(bool cacheMaster) { m_cacheMaster = cacheMaster; }
 
     Real run(const Sample& s);
+    Real run(const std::complex<float>& s);
 
 private:
     static Real normalizeAngle(Real angle);
     ProjectionType m_projectionType;
     Real m_prevArg;
+    Real m_prevVal;
     Real *m_cache;
     bool m_cacheMaster;
 };
+
+#endif // SDRBASE_DSP_PROJECTOR_H

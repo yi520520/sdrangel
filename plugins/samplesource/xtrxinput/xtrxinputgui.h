@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017, 2018 Edouard Griffiths, F4EXB                             //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 // Copyright (C) 2017 Sergey Kostanbaev, Fairwaves Inc.                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -19,7 +20,7 @@
 #ifndef PLUGINS_SAMPLESOURCE_XTRXINPUT_XTRXINPUTGUI_H_
 #define PLUGINS_SAMPLESOURCE_XTRXINPUT_XTRXINPUTGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -33,7 +34,7 @@ namespace Ui {
 class XTRXInputGUI;
 }
 
-class XTRXInputGUI : public QWidget, public PluginInstanceGUI {
+class XTRXInputGUI : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -41,23 +42,17 @@ public:
     virtual ~XTRXInputGUI();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
 
 private:
     Ui::XTRXInputGUI* ui;
 
-    DeviceUISet* m_deviceUISet;
     XTRXInput* m_XTRXInput; //!< Same object as above but gives easy access to XTRXInput methods and attributes that are used intensively
     XTRXInputSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
     QTimer m_updateTimer;
     QTimer m_statusTimer;
@@ -79,11 +74,12 @@ private:
     void updateSampleRateAndFrequency();
     void updateADCRate();
     void blockApplySettings(bool block);
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
     void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void on_centerFrequency_changed(quint64 value);
     void on_ncoFrequency_changed(qint64 value);
     void on_ncoEnable_toggled(bool checked);

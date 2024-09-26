@@ -47,8 +47,19 @@ UDPSourceSettings:
     udpPort:
       type: integer
       format: uint16
+    multicastAddress:
+      type: string
+    multicastJoin:
+      type: integer
+      description: >
+        Join multicast group
+        * 0 - leave group
+        * 1 - join group
     title:
       type: string
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -60,6 +71,12 @@ UDPSourceSettings:
       type: integer
     reverseAPIChannelIndex:
       type: integer
+    spectrumConfig:
+      $ref: "/doc/swagger/include/GLSpectrum.yaml#/GLSpectrum"
+    channelMarker:
+      $ref: "/doc/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "/doc/swagger/include/RollupState.yaml#/RollupState"
 
 UDPSourceReport:
   description: UDPSource

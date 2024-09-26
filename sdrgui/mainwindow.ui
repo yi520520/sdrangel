@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1012</width>
-    <height>721</height>
+    <height>811</height>
    </rect>
   </property>
   <property name="font">
@@ -64,7 +64,7 @@
      <x>0</x>
      <y>0</y>
      <width>1012</width>
-     <height>20</height>
+     <height>27</height>
     </rect>
    </property>
    <widget class="QMenu" name="menu_File">
@@ -92,6 +92,9 @@
     <property name="title">
      <string>&amp;Help</string>
     </property>
+    <addaction name="action_Quick_Start"/>
+    <addaction name="action_Main_Window"/>
+    <addaction name="separator"/>
     <addaction name="action_Loaded_Plugins"/>
     <addaction name="separator"/>
     <addaction name="action_About"/>
@@ -125,19 +128,29 @@
     </widget>
     <addaction name="action_Audio"/>
     <addaction name="action_Logging"/>
-    <addaction name="action_AMBE"/>
     <addaction name="action_My_Position"/>
+    <addaction name="action_FFT"/>
+    <addaction name="action_AMBE"/>
+    <addaction name="action_LimeRFE"/>
     <addaction name="menuDevices"/>
+   </widget>
+   <widget class="QMenu" name="menuFeatureSets">
+    <property name="title">
+     <string>F&amp;eatureSets</string>
+    </property>
+    <addaction name="action_addFeatureSet"/>
+    <addaction name="action_removeLastFeatureSet"/>
    </widget>
    <addaction name="menu_File"/>
    <addaction name="menu_View"/>
    <addaction name="menu_Devices"/>
+   <addaction name="menuFeatureSets"/>
    <addaction name="menu_Window"/>
    <addaction name="menuPreferences"/>
    <addaction name="menu_Help"/>
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
-  <widget class="QDockWidget" name="inputViewDock">
+  <widget class="SamplingDevicesDock" name="inputViewDock">
    <property name="windowTitle">
     <string>Sampling devices</string>
    </property>
@@ -180,55 +193,9 @@
     </layout>
    </widget>
   </widget>
-  <widget class="QDockWidget" name="inputSelectDock">
+  <widget class="QDockWidget" name="spectraControlDock">
    <property name="windowTitle">
-    <string>Sampling devices control</string>
-   </property>
-   <attribute name="dockWidgetArea">
-    <number>1</number>
-   </attribute>
-   <widget class="QWidget" name="intputSelectDockWidget">
-    <property name="sizePolicy">
-     <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
-      <horstretch>0</horstretch>
-      <verstretch>0</verstretch>
-     </sizepolicy>
-    </property>
-    <layout class="QVBoxLayout" name="verticalLayout_3">
-     <property name="spacing">
-      <number>3</number>
-     </property>
-     <property name="leftMargin">
-      <number>2</number>
-     </property>
-     <property name="topMargin">
-      <number>2</number>
-     </property>
-     <property name="rightMargin">
-      <number>2</number>
-     </property>
-     <property name="bottomMargin">
-      <number>2</number>
-     </property>
-     <item>
-      <widget class="QTabWidget" name="tabInputsSelect">
-       <property name="minimumSize">
-        <size>
-         <width>0</width>
-         <height>110</height>
-        </size>
-       </property>
-       <property name="currentIndex">
-        <number>-1</number>
-       </property>
-      </widget>
-     </item>
-    </layout>
-   </widget>
-  </widget>
-  <widget class="QDockWidget" name="spectraDisplayDock">
-   <property name="windowTitle">
-    <string>Spectrum Display</string>
+    <string>Spectrum Control</string>
    </property>
    <attribute name="dockWidgetArea">
     <number>1</number>
@@ -499,7 +466,7 @@
     </layout>
    </widget>
   </widget>
-  <widget class="QDockWidget" name="channelDock">
+  <widget class="ChannelsDock" name="channelDock">
    <property name="windowTitle">
     <string>Channels</string>
    </property>
@@ -736,6 +703,49 @@
     </layout>
    </widget>
   </widget>
+  <widget class="FeaturesDock" name="featureDock">
+   <property name="windowTitle">
+    <string>Features</string>
+   </property>
+   <attribute name="dockWidgetArea">
+    <number>2</number>
+   </attribute>
+   <widget class="QWidget" name="featureWidgetContents">
+    <layout class="QVBoxLayout" name="verticalLayout_3">
+     <property name="spacing">
+      <number>3</number>
+     </property>
+     <property name="leftMargin">
+      <number>2</number>
+     </property>
+     <property name="topMargin">
+      <number>2</number>
+     </property>
+     <property name="rightMargin">
+      <number>2</number>
+     </property>
+     <property name="bottomMargin">
+      <number>2</number>
+     </property>
+     <item>
+      <widget class="QTabWidget" name="tabFeatures">
+       <property name="tabPosition">
+        <enum>QTabWidget::East</enum>
+       </property>
+       <property name="currentIndex">
+        <number>-1</number>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </widget>
+  </widget>
+  <widget class="Workspace" name="workspaceDock">
+   <attribute name="dockWidgetArea">
+    <number>2</number>
+   </attribute>
+   <widget class="QWidget" name="dockWidgetContents"/>
+  </widget>
   <action name="action_Exit">
    <property name="text">
     <string>E&amp;xit</string>
@@ -943,9 +953,54 @@
     <string>AMBE</string>
    </property>
   </action>
+  <action name="action_LimeRFE">
+   <property name="text">
+    <string>LimeRFE</string>
+   </property>
+  </action>
+  <action name="action_addFeatureSet">
+   <property name="text">
+    <string>Add feature set</string>
+   </property>
+   <property name="font">
+    <font>
+     <family>Liberation Sans</family>
+     <pointsize>9</pointsize>
+     <bold>false</bold>
+    </font>
+   </property>
+  </action>
+  <action name="action_removeLastFeatureSet">
+   <property name="text">
+    <string>Remove last feature set</string>
+   </property>
+   <property name="font">
+    <font>
+     <family>Liberation Sans</family>
+     <pointsize>9</pointsize>
+    </font>
+   </property>
+  </action>
+  <action name="action_FFT">
+   <property name="text">
+    <string>FFT</string>
+   </property>
+  </action>
+  <action name="action_Quick_Start">
+   <property name="text">
+    <string>&amp;Quick Start...</string>
+   </property>
+  </action>
+  <action name="action_Main_Window">
+   <property name="text">
+    <string>&amp;Main Window...</string>
+   </property>
+  </action>
   <zorder>presetDock</zorder>
   <zorder>channelDock</zorder>
   <zorder>commandsDock</zorder>
+  <zorder>featureDock</zorder>
+  <zorder>workspaceDock</zorder>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <customwidgets>
@@ -953,6 +1008,30 @@
    <class>ButtonSwitch</class>
    <extends>QToolButton</extends>
    <header>gui/buttonswitch.h</header>
+  </customwidget>
+  <customwidget>
+   <class>ChannelsDock</class>
+   <extends>QDockWidget</extends>
+   <header>gui/channelsdock.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>SamplingDevicesDock</class>
+   <extends>QDockWidget</extends>
+   <header>gui/samplingdevicesdock.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>FeaturesDock</class>
+   <extends>QDockWidget</extends>
+   <header>gui/featuresdock.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>Workspace</class>
+   <extends>QDockWidget</extends>
+   <header>gui/workspace.h</header>
+   <container>1</container>
   </customwidget>
  </customwidgets>
  <tabstops>

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2018-2019, 2021-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // Remote sink channel (Rx) UDP sender thread                                    //
 //                                                                               //
@@ -37,7 +38,8 @@ RemoteSinkSettings::RemoteSinkSettings()
 void RemoteSinkSettings::resetToDefaults()
 {
     m_nbFECBlocks = 0;
-    m_txDelay = 35;
+    m_nbTxBytes = 2;
+    m_deviceCenterFrequency = 0;
     m_dataAddress = "127.0.0.1";
     m_dataPort = 9090;
     m_rgbColor = QColor(140, 4, 4).rgb();
@@ -45,18 +47,22 @@ void RemoteSinkSettings::resetToDefaults()
     m_log2Decim = 0;
     m_filterChainHash = 0;
     m_channelMarker = nullptr;
+    m_rollupState = nullptr;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray RemoteSinkSettings::serialize() const
 {
     SimpleSerializer s(1);
     s.writeU32(1, m_nbFECBlocks);
-    s.writeU32(2, m_txDelay);
+    s.writeU32(2, m_nbTxBytes);
     s.writeString(3, m_dataAddress);
     s.writeU32(4, m_dataPort);
     s.writeU32(5, m_rgbColor);
@@ -68,6 +74,21 @@ QByteArray RemoteSinkSettings::serialize() const
     s.writeU32(11, m_reverseAPIChannelIndex);
     s.writeU32(12, m_log2Decim);
     s.writeU32(13, m_filterChainHash);
+    s.writeS32(14, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(15, m_rollupState->serialize());
+    }
+
+    s.writeU64(16, m_deviceCenterFrequency);
+
+    if (m_channelMarker) {
+        s.writeBlob(17, m_channelMarker->serialize());
+    }
+
+    s.writeS32(18, m_workspaceIndex);
+    s.writeBlob(19, m_geometryBytes);
+    s.writeBool(20, m_hidden);
 
     return s.final();
 }
@@ -86,6 +107,7 @@ bool RemoteSinkSettings::deserialize(const QByteArray& data)
     {
         uint32_t tmp;
         QString strtmp;
+        QByteArray bytetmp;
 
         d.readU32(1, &tmp, 0);
 
@@ -95,7 +117,7 @@ bool RemoteSinkSettings::deserialize(const QByteArray& data)
             m_nbFECBlocks = 0;
         }
 
-        d.readU32(2, &m_txDelay, 35);
+        d.readU32(2, &m_nbTxBytes, 2);
         d.readString(3, &m_dataAddress, "127.0.0.1");
         d.readU32(4, &tmp, 0);
 
@@ -124,6 +146,25 @@ bool RemoteSinkSettings::deserialize(const QByteArray& data)
         d.readU32(12, &tmp, 0);
         m_log2Decim = tmp > 6 ? 6 : tmp;
         d.readU32(13, &m_filterChainHash, 0);
+        d.readS32(14, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(15, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readU64(16, &m_deviceCenterFrequency, 0);
+
+        if (m_channelMarker)
+        {
+            d.readBlob(17, &bytetmp);
+            m_channelMarker->deserialize(bytetmp);
+        }
+
+        d.readS32(18, &m_workspaceIndex, 0);
+        d.readBlob(19, &m_geometryBytes);
+        d.readBool(20, &m_hidden, false);
 
         return true;
     }

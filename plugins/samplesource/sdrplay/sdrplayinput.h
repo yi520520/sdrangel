@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -32,7 +32,6 @@ class QNetworkAccessManager;
 class QNetworkReply;
 class DeviceAPI;
 class SDRPlayThread;
-class FileRecord;
 
 class SDRPlayInput : public DeviceSampleSource {
     Q_OBJECT
@@ -50,20 +49,22 @@ public:
 
     public:
         const SDRPlaySettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigureSDRPlay* create(const SDRPlaySettings& settings, bool force)
-        {
-            return new MsgConfigureSDRPlay(settings, force);
+        static MsgConfigureSDRPlay* create(const SDRPlaySettings& settings, const QList<QString>& settingsKeys, bool force) {
+            return new MsgConfigureSDRPlay(settings, settingsKeys, force);
         }
 
     private:
         SDRPlaySettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigureSDRPlay(const SDRPlaySettings& settings, bool force) :
+        MsgConfigureSDRPlay(const SDRPlaySettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
         { }
     };
@@ -94,25 +95,6 @@ public:
             m_mixerGain(mixerGain),
             m_basebandGain(basebandGain),
             m_tunerGain(tunerGain)
-        { }
-    };
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
         { }
     };
 
@@ -178,11 +160,20 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const SDRPlaySettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            SDRPlaySettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     SDRPlayVariant getVariant() const { return m_variant; }
 
 private:
     DeviceAPI *m_deviceAPI;
-    QMutex m_mutex;
+    QRecursiveMutex m_mutex;
     SDRPlayVariant m_variant;
     SDRPlaySettings m_settings;
     mirisdr_dev_t* m_dev;
@@ -190,17 +181,15 @@ private:
     QString m_deviceDescription;
     int m_devNumber;
     bool m_running;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
     bool openDevice();
     void closeDevice();
-    bool applySettings(const SDRPlaySettings& settings, bool forwardChange, bool force);
+    bool applySettings(const SDRPlaySettings& settings, const QList<QString>& settingsKeys, bool forwardChange, bool force);
     bool setDeviceCenterFrequency(quint64 freq);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const SDRPlaySettings& settings);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const SDRPlaySettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const SDRPlaySettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

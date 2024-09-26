@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -15,9 +15,8 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
+#include "dsp/samplesourcefifo.h"
 #include "plutosdr/deviceplutosdrbox.h"
-#include "plutosdroutputsettings.h"
-#include "iio.h"
 #include "plutosdroutputthread.h"
 
 PlutoSDROutputThread::PlutoSDROutputThread(uint32_t blocksizeSamples, DevicePlutoSDRBox* plutoBox, SampleSourceFifo* sampleFifo, QObject* parent) :
@@ -29,7 +28,6 @@ PlutoSDROutputThread::PlutoSDROutputThread(uint32_t blocksizeSamples, DevicePlut
     m_log2Interp(0)
 {
     m_buf = new qint16[blocksizeSamples*2];
-//    m_bufConv = new qint16[blocksizeSamples*(sizeof(Sample)/sizeof(qint16))];
 }
 
 PlutoSDROutputThread::~PlutoSDROutputThread()
@@ -44,8 +42,11 @@ void PlutoSDROutputThread::startWork()
 
     m_startWaitMutex.lock();
     start();
-    while(!m_running)
+
+    while(!m_running) {
         m_startWaiter.wait(&m_startWaitMutex, 100);
+    }
+
     m_startWaitMutex.unlock();
 }
 
@@ -115,9 +116,25 @@ void PlutoSDROutputThread::run()
 void PlutoSDROutputThread::convert(qint16* buf, qint32 len)
 {
     // pull samples from baseband generator
-    SampleVector::iterator beginRead;
-    m_sampleFifo->readAdvance(beginRead, len/(2*(1<<m_log2Interp)));
-    beginRead -= len/2;
+    SampleVector& data = m_sampleFifo->getData();
+    unsigned int iPart1Begin, iPart1End, iPart2Begin, iPart2End;
+    m_sampleFifo->read(len/(2*(1<<m_log2Interp)), iPart1Begin, iPart1End, iPart2Begin, iPart2End);
+
+    if (iPart1Begin != iPart1End) {
+        convertPart(buf, data, iPart1Begin, iPart1End);
+    }
+
+    unsigned int shift = (iPart1End - iPart1Begin)*(1<<m_log2Interp);
+
+    if (iPart2Begin != iPart2End) {
+        convertPart(buf + 2*shift, data, iPart2Begin, iPart2End);
+    }
+}
+
+void PlutoSDROutputThread::convertPart(qint16* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd)
+{
+    SampleVector::iterator beginRead = data.begin() + iBegin;
+    int len = 2*(iEnd - iBegin)*(1<<m_log2Interp);
 
     if (m_log2Interp == 0)
     {
@@ -150,4 +167,3 @@ void PlutoSDROutputThread::convert(qint16* buf, qint32 len)
         }
     }
 }
-

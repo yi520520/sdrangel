@@ -6,6 +6,8 @@ This input sample source plugin gets its samples from a [HackRF device](https://
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![HackRF input plugin GUI](../../../doc/img/HackRFInput_plugin.png)
 
 <h3>1: Common stream parameters</h3>
@@ -28,10 +30,6 @@ If you have the Tx open in another tab and it is running then it will be stopped
 
 The settings on Rx or Tx tab are reapplied on start so these settings can be considered independent.
 
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
-
 <h4>1.4: Stream sample rate</h4>
 
 In device to host sample rate input mode (6A) this is the baseband I/Q sample rate in kS/s. This is the device to host sample rate (6) divided by the decimation factor (7).
@@ -48,6 +46,7 @@ These buttons control the local DSP auto correction options:
 
   - **DC**: auto remove DC component
   - **IQ**: auto make I/Q balance. The DC correction must be enabled for this to be effective.
+  - **BBF**: auto select bandpass filter setting. Compute best value depending on sample rate.
 
 <h3>4: Bias tee</h3>
 
@@ -83,13 +82,13 @@ The device stream from the HackRF is decimated to obtain the baseband stream. Po
   - **16**: divide device stream sample rate by 16
   - **32**: divide device stream sample rate by 32
 
-<h3>8: Baseband center frequency position relative the the HackRF Rx center frequency</h3>
+<h3>8: Baseband center frequency position relative to the HackRF Rx center frequency</h3>
 
   - **Cen**: the decimation operation takes place around the HackRF Rx center frequency Fs
   - **Inf**: the decimation operation takes place around Fs - Fc.
   - **Sup**: the decimation operation takes place around Fs + Fc.
 
-With SR as the sample rate before decimation Fc is calculated depending on the decimaton factor:
+With SR as the sample rate before decimation Fc is calculated depending on the decimation factor:
 
   - **2**: Fc = SR/4
   - **4**: Fc = 3*SR/8

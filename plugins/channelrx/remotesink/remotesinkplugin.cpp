@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,14 +28,17 @@
 #include "remotesinkgui.h"
 #endif
 #include "remotesink.h"
+#include "remotesinkwebapiadapter.h"
+#include "remotesinkplugin.h"
 
 const PluginDescriptor RemoteSinkPlugin::m_pluginDescriptor = {
-    QString("Remote channel sink"),
-    QString("4.5.6"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    RemoteSink::m_channelId,
+    QStringLiteral("Remote channel sink"),
+    QStringLiteral("7.20.0"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 RemoteSinkPlugin::RemoteSinkPlugin(QObject* parent) :
@@ -53,30 +60,39 @@ void RemoteSinkPlugin::initPlugin(PluginAPI* pluginAPI)
     m_pluginAPI->registerRxChannel(RemoteSink::m_channelIdURI, RemoteSink::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* RemoteSinkPlugin::createRxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSink *rxChannel)
+void RemoteSinkPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		RemoteSink *instance = new RemoteSink(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* RemoteSinkPlugin::createRxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSink *rxChannel) const
+{
+	(void) deviceUISet;
+	(void) rxChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* RemoteSinkPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+ChannelGUI* RemoteSinkPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
     return RemoteSinkGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 }
 #endif
 
-BasebandSampleSink* RemoteSinkPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* RemoteSinkPlugin::createChannelWebAPIAdapter() const
 {
-    return new RemoteSink(deviceAPI);
+	return new RemoteSinkWebAPIAdapter();
 }
-
-ChannelAPI* RemoteSinkPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new RemoteSink(deviceAPI);
-}
-
-
-
-

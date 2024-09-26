@@ -1,3 +1,25 @@
+///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+//                                                                               //
+// Swagger server adapter interface                                              //
+//                                                                               //
+// This program is free software; you can redistribute it and/or modify          //
+// it under the terms of the GNU General Public License as published by          //
+// the Free Software Foundation as version 3 of the License, or                  //
+// (at your option) any later version.                                           //
+//                                                                               //
+// This program is distributed in the hope that it will be useful,               //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                  //
+// GNU General Public License V3 for more details.                               //
+//                                                                               //
+// You should have received a copy of the GNU General Public License             //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.          //
+///////////////////////////////////////////////////////////////////////////////////
+
 #include "util/simpleserializer.h"
 #include "settings/preset.h"
 
@@ -8,21 +30,45 @@ Preset::Preset()
 	resetToDefaults();
 }
 
+Preset::Preset(const Preset& other) :
+	m_presetType(other.m_presetType),
+	m_group(other.m_group),
+	m_description(other.m_description),
+	m_centerFrequency(other.m_centerFrequency),
+	m_spectrumConfig(other.m_spectrumConfig),
+	m_spectrumGeometry(other.m_spectrumGeometry),
+	m_spectrumWorkspaceIndex(other.m_spectrumWorkspaceIndex),
+	m_deviceGeometry(other.m_deviceGeometry),
+	m_deviceWorkspaceIndex(other.m_deviceWorkspaceIndex),
+	m_selectedDevice(other.m_selectedDevice),
+	m_dcOffsetCorrection(other.m_dcOffsetCorrection),
+	m_iqImbalanceCorrection(other.m_iqImbalanceCorrection),
+	m_channelConfigs(other.m_channelConfigs),
+	m_deviceConfigs(other.m_deviceConfigs),
+	m_showSpectrum(other.m_showSpectrum),
+	m_layout(other.m_layout)
+{}
+
 void Preset::resetToDefaults()
 {
-    m_sourcePreset = true;
+    m_presetType = PresetSource; // Rx
 	m_group = "default";
 	m_description = "no name";
 	m_centerFrequency = 0;
 	m_spectrumConfig.clear();
+	m_spectrumGeometry.clear();
+	m_spectrumWorkspaceIndex = 0;
+	m_selectedDevice.m_deviceId = "";
+	m_selectedDevice.m_deviceSerial = "";
+	m_selectedDevice.m_deviceSequence = 0;
+	m_selectedDevice.m_deviceItemIndex = 0;
+	m_deviceGeometry.clear();
+	m_deviceWorkspaceIndex = 0;
 	m_layout.clear();
-	m_spectrumConfig.clear();
 	m_channelConfigs.clear();
-	m_sourceId.clear();
-	m_sourceConfig.clear();
 	m_dcOffsetCorrection = false;
 	m_iqImbalanceCorrection = false;
-	m_sourceSequence = 0;
+	m_showSpectrum = true;
 }
 
 QByteArray Preset::serialize() const
@@ -40,7 +86,17 @@ QByteArray Preset::serialize() const
 	s.writeU64(3, m_centerFrequency);
 	s.writeBlob(4, m_layout);
 	s.writeBlob(5, m_spectrumConfig);
-	s.writeBool(6, m_sourcePreset);
+    s.writeBool(6, m_presetType == PresetSource);
+	s.writeS32(7, (int) m_presetType);
+	s.writeBool(8, m_showSpectrum);
+    s.writeBlob(9, m_spectrumGeometry);
+    s.writeS32(10, m_spectrumWorkspaceIndex);
+    s.writeBlob(11, m_deviceGeometry);
+    s.writeS32(12, m_deviceWorkspaceIndex);
+    s.writeString(13, m_selectedDevice.m_deviceId);
+    s.writeString(14, m_selectedDevice.m_deviceSerial);
+    s.writeS32(15, m_selectedDevice.m_deviceSequence);
+    s.writeS32(16, m_selectedDevice.m_deviceItemIndex);
 
 	s.writeS32(20, m_deviceConfigs.size());
 
@@ -88,12 +144,31 @@ bool Preset::deserialize(const QByteArray& data)
 
 	if (d.getVersion() == 1)
 	{
+        bool tmpBool;
+        int tmp;
+
 		d.readString(1, &m_group, "default");
 		d.readString(2, &m_description, "no name");
 		d.readU64(3, &m_centerFrequency, 0);
 		d.readBlob(4, &m_layout);
 		d.readBlob(5, &m_spectrumConfig);
-		d.readBool(6, &m_sourcePreset, true);
+		d.readBool(6, &tmpBool, true);
+        d.readS32(7, &tmp, PresetSource);
+        m_presetType = tmp < (int) PresetSource ? PresetSource : tmp > (int) PresetMIMO ? PresetMIMO : (PresetType) tmp;
+
+        if (m_presetType != PresetMIMO) {
+            m_presetType = tmpBool ? PresetSource : PresetSink;
+        }
+
+		d.readBool(8, &m_showSpectrum, true);
+        d.readBlob(9, &m_spectrumGeometry);
+        d.readS32(10, &m_spectrumWorkspaceIndex, 0);
+        d.readBlob(11, &m_deviceGeometry);
+        d.readS32(12, &m_deviceWorkspaceIndex, 0);
+        d.readString(13, &m_selectedDevice.m_deviceId);
+        d.readString(14, &m_selectedDevice.m_deviceSerial);
+        d.readS32(15, &m_selectedDevice.m_deviceSequence);
+        d.readS32(16, &m_selectedDevice.m_deviceItemIndex);
 
 //		qDebug("Preset::deserialize: m_group: %s mode: %s m_description: %s m_centerFrequency: %llu",
 //				qPrintable(m_group),
@@ -164,7 +239,7 @@ void Preset::addOrUpdateDeviceConfig(const QString& sourceId,
 		int sourceSequence,
 		const QByteArray& config)
 {
-	DeviceeConfigs::iterator it = m_deviceConfigs.begin();
+	DeviceConfigs::iterator it = m_deviceConfigs.begin();
 
 	for (; it != m_deviceConfigs.end(); ++it)
 	{
@@ -197,44 +272,62 @@ void Preset::addOrUpdateDeviceConfig(const QString& sourceId,
 	}
 }
 
-const QByteArray* Preset::findBestDeviceConfig(const QString& sourceId,
-		const QString& sourceSerial,
-		int sourceSequence) const
+const QByteArray* Preset::findDeviceConfig(
+        const QString& deviceId,
+        const QString& deviceSerial,
+        int deviceSequence) const
+{
+    DeviceConfigs::const_iterator it = m_deviceConfigs.begin();
+
+    for (; it != m_deviceConfigs.end(); ++it)
+	{
+        if ((it->m_deviceId == deviceId) && (it->m_deviceSerial == deviceSerial) && (it->m_deviceSequence == deviceSequence)) {
+            return &it->m_config;
+        }
+    }
+
+    return nullptr;
+}
+//_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence
+const QByteArray* Preset::findBestDeviceConfig(
+        const QString& deviceId,
+		const QString& deviceSerial,
+		int deviceSequence) const
 {
 	// Special case for SoapySDR based on serial (driver name)
-	if (sourceId == "sdrangel.samplesource.soapysdrinput") {
-		return findBestDeviceConfigSoapy(sourceId, sourceSerial);
-	} else if (sourceId == "sdrangel.samplesource.soapysdroutput") {
-		return findBestDeviceConfigSoapy(sourceId, sourceSerial);
+	if (deviceId == "sdrangel.samplesource.soapysdrinput") {
+		return findBestDeviceConfigSoapy(deviceId, deviceSerial);
+	} else if (deviceId == "sdrangel.samplesource.soapysdroutput") {
+		return findBestDeviceConfigSoapy(deviceId, deviceSerial);
 	}
 
-	DeviceeConfigs::const_iterator it = m_deviceConfigs.begin();
-	DeviceeConfigs::const_iterator itFirstOfKind = m_deviceConfigs.end();
-	DeviceeConfigs::const_iterator itMatchSequence = m_deviceConfigs.end();
+	DeviceConfigs::const_iterator it = m_deviceConfigs.begin();
+	DeviceConfigs::const_iterator itFirstOfKind = m_deviceConfigs.end();
+	DeviceConfigs::const_iterator itMatchSequence = m_deviceConfigs.end();
 
 	for (; it != m_deviceConfigs.end(); ++it)
 	{
-		if (it->m_deviceId == sourceId)
+		if (it->m_deviceId == deviceId)
 		{
 			if (itFirstOfKind == m_deviceConfigs.end())
 			{
 				itFirstOfKind = it;
 			}
 
-			if (sourceSerial.isNull() || sourceSerial.isEmpty())
+			if (deviceSerial.isNull() || deviceSerial.isEmpty())
 			{
-				if (it->m_deviceSequence == sourceSequence)
+				if (it->m_deviceSequence == deviceSequence)
 				{
 					break;
 				}
 			}
 			else
 			{
-				if (it->m_deviceSerial == sourceSerial)
+				if (it->m_deviceSerial == deviceSerial)
 				{
 					break;
 				}
-				else if(it->m_deviceSequence == sourceSequence)
+				else if(it->m_deviceSequence == deviceSequence)
 				{
 					itMatchSequence = it;
 				}
@@ -244,27 +337,27 @@ const QByteArray* Preset::findBestDeviceConfig(const QString& sourceId,
 
 	if (it == m_deviceConfigs.end()) // no exact match
 	{
-		if (itMatchSequence != m_deviceConfigs.end()) // match sequence ?
+		if (itMatchSequence != m_deviceConfigs.end()) // match device type and sequence ?
 		{
-			qDebug("Preset::findBestSourceConfig: sequence matched: id: %s ser: %s seq: %d",
+			qDebug("Preset::findBestDeviceConfig: sequence matched: id: %s ser: %s seq: %d",
 				qPrintable(itMatchSequence->m_deviceId), qPrintable(itMatchSequence->m_deviceSerial), itMatchSequence->m_deviceSequence);
 			return &(itMatchSequence->m_config);
 		}
-		else if (itFirstOfKind != m_deviceConfigs.end()) // match source type ?
+		else if (itFirstOfKind != m_deviceConfigs.end()) // match just device type ?
 		{
-			qDebug("Preset::findBestSourceConfig: first of kind matched: id: %s ser: %s seq: %d",
+			qDebug("Preset::findBestDeviceConfig: first of kind matched: id: %s ser: %s seq: %d",
 				qPrintable(itFirstOfKind->m_deviceId), qPrintable(itFirstOfKind->m_deviceSerial), itFirstOfKind->m_deviceSequence);
 			return &(itFirstOfKind->m_config);
 		}
 		else // definitely not found !
 		{
-			qDebug("Preset::findBestSourceConfig: no match");
-			return 0;
+			qDebug("Preset::findBestDeviceConfig: no match");
+			return nullptr;
 		}
 	}
 	else // exact match
 	{
-		qDebug("Preset::findBestSourceConfig: serial matched (exact): id: %s ser: %s",
+		qDebug("Preset::findBestDeviceConfig: serial matched (exact): id: %s ser: %s",
 			qPrintable(it->m_deviceId), qPrintable(it->m_deviceSerial));
 		return &(it->m_config);
 	}
@@ -278,8 +371,8 @@ const QByteArray* Preset::findBestDeviceConfigSoapy(const QString& sourceId, con
 		return 0; // unable to process
 	}
 
-	DeviceeConfigs::const_iterator it = m_deviceConfigs.begin();
-	DeviceeConfigs::const_iterator itFirstOfKind = m_deviceConfigs.end();
+	DeviceConfigs::const_iterator it = m_deviceConfigs.begin();
+	DeviceConfigs::const_iterator itFirstOfKind = m_deviceConfigs.end();
 
 	for (; it != m_deviceConfigs.end(); ++it)
 	{
@@ -319,7 +412,7 @@ const QByteArray* Preset::findBestDeviceConfigSoapy(const QString& sourceId, con
 		}
 		else
 		{
-			qDebug("Preset::findBestSourceConfig: first of kind matched: id: %s ser: %s seq: %d",
+			qDebug("Preset::findBestDeviceConfigSoapy: first of kind matched: id: %s ser: %s seq: %d",
 				qPrintable(itFirstOfKind->m_deviceId), qPrintable(itFirstOfKind->m_deviceSerial), itFirstOfKind->m_deviceSequence);
 			return &(itFirstOfKind->m_config);
 		}
@@ -330,4 +423,17 @@ const QByteArray* Preset::findBestDeviceConfigSoapy(const QString& sourceId, con
 			qPrintable(it->m_deviceId), qPrintable(it->m_deviceSerial), it->m_deviceSequence);
 		return &(it->m_config);
 	}
+}
+
+QString Preset::getPresetTypeChar(PresetType presetType)
+{
+    if (presetType == PresetSource) {
+        return "R";
+    } else if (presetType == PresetSink) {
+        return "T";
+    } else if (presetType == PresetMIMO) {
+        return "M";
+    } else {
+        return "X";
+    }
 }

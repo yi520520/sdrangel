@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -15,6 +18,7 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
+#include <QDebug>
 #include "util/simpleserializer.h"
 
 #include "fileinputsettings.h"
@@ -28,9 +32,7 @@ FileInputSettings::FileInputSettings()
 
 void FileInputSettings::resetToDefaults()
 {
-    m_centerFrequency = 435000000;
-    m_sampleRate = 48000;
-    m_fileName = "./test.sdriq";
+    m_fileName = "";
     m_accelerationFactor = 1;
     m_loop = true;
     m_useReverseAPI = false;
@@ -66,7 +68,7 @@ bool FileInputSettings::deserialize(const QByteArray& data)
     {
         uint32_t uintval;
 
-        d.readString(1, &m_fileName, "./test.sdriq");
+        d.readString(1, &m_fileName, "");
         d.readU32(2, &m_accelerationFactor, 1);
         d.readBool(3, &m_loop, true);
         d.readBool(4, &m_useReverseAPI, false);
@@ -144,7 +146,56 @@ int FileInputSettings::getAccelerationValue(int accelerationIndex)
     return x * m;
 }
 
+void FileInputSettings::applySettings(const QStringList& settingsKeys, const FileInputSettings& settings)
+{
+    if (settingsKeys.contains("fileName")) {
+        m_fileName = settings.m_fileName;
+    }
+    if (settingsKeys.contains("accelerationFactor")) {
+        m_accelerationFactor = settings.m_accelerationFactor;
+    }
+    if (settingsKeys.contains("loop")) {
+        m_loop = settings.m_loop;
+    }
+    if (settingsKeys.contains("useReverseAPI")) {
+        m_useReverseAPI = settings.m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress")) {
+        m_reverseAPIAddress = settings.m_reverseAPIAddress;
+    }
+    if (settingsKeys.contains("reverseAPIPort")) {
+        m_reverseAPIPort = settings.m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex")) {
+        m_reverseAPIDeviceIndex = settings.m_reverseAPIDeviceIndex;
+    }
+}
 
+QString FileInputSettings::getDebugString(const QStringList& settingsKeys, bool force) const
+{
+    std::ostringstream ostr;
 
+    if (settingsKeys.contains("m_fileName") || force) {
+        ostr << " m_fileName: " << m_fileName.toStdString();
+    }
+    if (settingsKeys.contains("accelerationFactor") || force) {
+        ostr << " m_accelerationFactor: " << m_accelerationFactor;
+    }
+    if (settingsKeys.contains("loop") || force) {
+        ostr << " m_loop: " << m_loop;
+    }
+    if (settingsKeys.contains("useReverseAPI") || force) {
+        ostr << " m_useReverseAPI: " << m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress") || force) {
+        ostr << " m_reverseAPIAddress: " << m_reverseAPIAddress.toStdString();
+    }
+    if (settingsKeys.contains("reverseAPIPort") || force) {
+        ostr << " m_reverseAPIPort: " << m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex") || force) {
+        ostr << " m_reverseAPIDeviceIndex: " << m_reverseAPIDeviceIndex;
+    }
 
-
+    return QString(ostr.str().c_str());
+}

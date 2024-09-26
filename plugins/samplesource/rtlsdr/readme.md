@@ -12,6 +12,8 @@ If you want to benefit from the direct sampling you will have to compile and ins
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![RTLSDR input plugin GUI](../../../doc/img/RTLSDR_plugin.png)
 
 <h3>1: Common stream parameters</h3>
@@ -30,15 +32,11 @@ Device start / stop button.
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon, plug back in and start again.
 
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
-
 <h4>1.4: Device or Baseband sample rate</h4>
 
 In device sample rate input mode (7) this is the baseband I/Q sample rate in kS/s. This is the device sample rate (8) divided by the decimation factor (9).
 
-In baseband sample rate input mode (7) this is the device I/Q sample rate in kS/s. This is the baseband sample rate (8) multiplied bu the decimation factor (9)
+In baseband sample rate input mode (7) this is the device I/Q sample rate in kS/s. This is the baseband sample rate (8) multiplied by the decimation factor (9)
 
 <h3>2: Local Oscillator correction</h3>
 
@@ -51,7 +49,11 @@ These buttons control the local DSP auto correction options:
   - **DC**: auto remove DC component
   - **IQ**: auto make I/Q balance. The DC correction must be enabled for this to be effective.
 
-<h3>4: Decimated bandpass center frequency position relative the RTL-SDR center frequency</h3>
+<h3>3a: Antenna bias tee</h3>
+
+Activates or de-activates the antenna bias tee. Works with v3 dongles only it will be simply ignored by others. It actually activates or de-activates GPIO pin 0 that commands bias tee on v3 dongles.
+
+<h3>4: Decimated bandpass center frequency position relative to the RTL-SDR center frequency</h3>
 
   - **Cen**: the decimation operation takes place around the RTL-SDR center frequency Fs
   - **Inf**: the decimation operation takes place around Fs - Fc.
@@ -64,33 +66,7 @@ With SR as the sample rate before decimation Fc is calculated as:
 
 <h3>5: Transverter mode open dialog</h3>
 
-This button opens a dialog to set the transverter mode frequency translation options:
-
-![RTLSDR source input stream transverter dialog](../../../doc/img/RTLSDR_plugin_xvrt.png)
-
-Note that if you mouse over the button a tooltip appears that displays the translating frequency and if translation is enabled or disabled. When the frequency translation is enabled the button is lit.
-
-<h4>5.1: Translating frequency</h4>
-
-You can set the translating frequency in Hz with this dial. Use the wheels to adjust the sample rate. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
-
-The frequency set in the device is the frequency on the main dial (1) minus this frequency. Thus it is positive for down converters and negative for up converters.
-
-For example with the DX Patrol that has a mixer at 120 MHz for HF operation you would set the value to -120,000,000 Hz so that if the main dial frequency is set at 7,130 kHz the RTLSDR of the DX Patrol will be set to 127.130 MHz.
-
-If you use a down converter to receive the 6 cm band narrowband center frequency of 5670 MHz at 432 MHz you would set the translating frequency to 5760 - 432 = 5328 MHz thus dial +5,328,000,000 Hz.
-
-For bands even higher in the frequency spectrum the GHz digits are not really significant so you can have them set at 1 GHz. Thus to receive the 10368 MHz frequency at 432 MHz you would set the translating frequency to 1368 - 432 = 936 MHz. Note that in this case the frequency of the LO used in the mixer of the transverter is set at 9936 MHz.
-
-The Hz precision allows a fine tuning of the transverter LO offset
-
-<h4>5.2: Translating frequency enable/disable</h4>
-
-Use this toggle button to activate or deactivate the frequency translation
-
-<h4>5.3: Confirmation buttons</h4>
-
-Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes.
+This button opens a dialog to set the transverter mode frequency translation options. The details about this dialog can be found [here](../../../sdrgui/gui/transverterdialog.md)
 
 <h3>6: Toggle low/high sample rate range</h3>
 
@@ -122,13 +98,13 @@ Use this checkbox to activate the special RTLSDR direct sampling. This can be us
 
 <h3>11: Offset tuning</h3>
 
-This controls the offset tuning. Some RF frontends like the obsolete E4000 implement this feature and it can seriously reduce the central DC peak without digital correction. This does not work for the R820T and R820T2 that are very popular on which it will produce no effect. However these RF frontends exhibit a central DC peak much smaller than on the E4000 and can be easly corrected digitally via control (3).
+This controls the offset tuning. Some RF frontends like the obsolete E4000 implement this feature and it can seriously reduce the central DC peak without digital correction. This does not work for the R820T and R820T2 that are very popular on which it will produce no effect. However these RF frontends exhibit a central DC peak much smaller than on the E4000 and can be easily corrected digitally via control (3).
 
 <h3>12: RF bandwidth</h3>
 
 This controls the tuner filter bandwidth and can be varied from 350 kHz to 8 MHz. In practice depending on the value this appears to be larger and the filter center is slightly offset above the center frequency. This can still be very useful to eliminate or attenuate large signals outside the device to host I/Q stream passband.
 
-<h3>13: RF gain</h2>
+<h3>13: RF gain</h3>
 
 The slider sets RF gain in dB. The values are defined in the RTLSDR device and generally are: 0.0, 0.9, 1.4, 2.7, 3.7, 7.7, 8.7, 12.5, 14.4, 15.7, 16.6, 19.7, 20.7, 22.9, 25.4, 28.0, 29.7, 32.8, 33.8, 36.4, 37.2, 38.6, 40.2, 42.1, 43.4, 43.9, 44.5, 48.0, 49.6
 

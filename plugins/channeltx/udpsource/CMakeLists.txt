@@ -1,19 +1,25 @@
 project(udpsource)
 
 set(udpsource_SOURCES
-	udpsource.cpp
+    udpsource.cpp
+    udpsourcebaseband.cpp
+    udpsourcesource.cpp
 	udpsourceplugin.cpp
 	udpsourceudphandler.cpp
 	udpsourcemsg.cpp
-	udpsourcesettings.cpp
+    udpsourcesettings.cpp
+    udpsourcewebapiadapter.cpp
 )
 
 set(udpsource_HEADERS
 	udpsource.h
+    udpsourcebaseband.h
+    udpsourcesource.h
 	udpsourceplugin.h
 	udpsourceudphandler.h
 	udpsourcemsg.h
-	udpsourcesettings.h
+    udpsourcesettings.h
+    udpsourcewebapiadapter.h
 )
 
 include_directories(
@@ -32,28 +38,39 @@ if(NOT SERVER_MODE)
         udpsourcegui.h
     )
 
-    set(TARGET_NAME udpsource)
-    set(TARGET_LIB "Qt5::Widgets")
+    set(TARGET_NAME ${PLUGINS_PREFIX}udpsource)
+    set(TARGET_LIB "Qt::Widgets")
     set(TARGET_LIB_GUI "sdrgui")
     set(INSTALL_FOLDER ${INSTALL_PLUGINS_DIR})
 else()
-    set(TARGET_NAME udpsourcesrv)
+    set(TARGET_NAME ${PLUGINSSRV_PREFIX}udpsourcesrv)
     set(TARGET_LIB "")
     set(TARGET_LIB_GUI "")
     set(INSTALL_FOLDER ${INSTALL_PLUGINSSRV_DIR})
 endif()
 
-add_library(${TARGET_NAME} SHARED
-	${udpsource_SOURCES}
-)
+if(NOT Qt6_FOUND)
+    add_library(${TARGET_NAME} ${udpsource_SOURCES})
+else()
+    qt_add_plugin(${TARGET_NAME} CLASS_NAME UDPSourcePlugin ${udpsource_SOURCES})
+endif()
 
-target_link_libraries(${TARGET_NAME}
-        Qt5::Core
+if(NOT BUILD_SHARED_LIBS)
+    set_property(GLOBAL APPEND PROPERTY STATIC_PLUGINS_PROPERTY ${TARGET_NAME})
+endif()
+
+target_link_libraries(${TARGET_NAME} PRIVATE
+        Qt::Core
         ${TARGET_LIB}
-        Qt5::Network
+        Qt::Network
 	sdrbase
 	${TARGET_LIB_GUI}
         swagger
 )
 
 install(TARGETS ${TARGET_NAME} DESTINATION ${INSTALL_FOLDER})
+
+# Install debug symbols
+if (WIN32)
+    install(FILES $<TARGET_PDB_FILE:${TARGET_NAME}> CONFIGURATIONS Debug RelWithDebInfo DESTINATION ${INSTALL_FOLDER} )
+endif()

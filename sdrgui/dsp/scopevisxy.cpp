@@ -1,6 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2018-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,6 +19,7 @@
 #include <thread>
 
 #include "scopevisxy.h"
+#include "util/message.h"
 #include "gui/tvscreen.h"
 
 ScopeVisXY::ScopeVisXY(TVScreen *tvScreen) :
@@ -100,6 +100,18 @@ void ScopeVisXY::start()
 
 void ScopeVisXY::stop()
 {
+}
+
+void ScopeVisXY::handleInputMessages()
+{
+	Message* message;
+
+	while ((message = m_inputMessageQueue.pop()) != 0)
+	{
+		if (handleMessage(*message)) {
+			delete message;
+		}
+	}
 }
 
 bool ScopeVisXY::handleMessage(const Message& message)

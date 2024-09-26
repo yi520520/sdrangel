@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -36,15 +40,14 @@ public:
 	const PluginDescriptor& getPluginDescriptor() const;
 	void initPlugin(PluginAPI* pluginAPI);
 
-	virtual SamplingDevices enumSampleSources();
-	virtual PluginInstanceGUI* createSampleSourcePluginInstanceGUI(
+	virtual void enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices);
+	virtual SamplingDevices enumSampleSources(const OriginDevices& originDevices);
+	virtual DeviceGUI* createSampleSourcePluginInstanceGUI(
 	        const QString& sourceId,
 	        QWidget **widget,
 	        DeviceUISet *deviceUISet);
 	virtual DeviceSampleSource* createSampleSourcePluginInstance(const QString& sourceId, DeviceAPI *deviceAPI);
-
-	static const QString m_hardwareID;
-    static const QString m_deviceTypeID;
+    virtual DeviceWebAPIAdapter* createDeviceWebAPIAdapter() const;
 
 private:
 	static const PluginDescriptor m_pluginDescriptor;

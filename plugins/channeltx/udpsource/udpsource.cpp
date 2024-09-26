@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,335 +21,124 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QBuffer>
+#include <QThread>
 
 #include "SWGChannelSettings.h"
+#include "SWGWorkspaceInfo.h"
 #include "SWGChannelReport.h"
 #include "SWGUDPSourceReport.h"
 
 #include "device/deviceapi.h"
-#include "dsp/upchannelizer.h"
-#include "dsp/threadedbasebandsamplesource.h"
 #include "dsp/dspcommands.h"
 #include "util/db.h"
+#include "maincore.h"
 
+#include "udpsourcebaseband.h"
 #include "udpsource.h"
-#include "udpsourcemsg.h"
 
 MESSAGE_CLASS_DEFINITION(UDPSource::MsgConfigureUDPSource, Message)
 MESSAGE_CLASS_DEFINITION(UDPSource::MsgConfigureChannelizer, Message)
-MESSAGE_CLASS_DEFINITION(UDPSource::MsgUDPSourceSpectrum, Message)
-MESSAGE_CLASS_DEFINITION(UDPSource::MsgResetReadIndex, Message)
 
-const QString UDPSource::m_channelIdURI = "sdrangel.channeltx.udpsource";
-const QString UDPSource::m_channelId = "UDPSource";
+const char* const UDPSource::m_channelIdURI = "sdrangel.channeltx.udpsource";
+const char* const UDPSource::m_channelId = "UDPSource";
 
 UDPSource::UDPSource(DeviceAPI *deviceAPI) :
     ChannelAPI(m_channelIdURI, ChannelAPI::StreamSingleSource),
     m_deviceAPI(deviceAPI),
-    m_basebandSampleRate(48000),
-    m_outputSampleRate(48000),
-    m_inputFrequencyOffset(0),
-    m_squelch(1e-6),
-    m_spectrum(0),
-    m_spectrumEnabled(false),
-    m_spectrumChunkSize(2160),
-    m_spectrumChunkCounter(0),
-    m_magsq(1e-10),
-    m_movingAverage(16, 1e-10),
-    m_inMovingAverage(480, 1e-10),
-    m_sampleRateSum(0),
-    m_sampleRateAvgCounter(0),
-    m_levelCalcCount(0),
-    m_peakLevel(0.0f),
-    m_levelSum(0.0f),
-    m_levelNbSamples(480),
-    m_squelchOpen(false),
-    m_squelchOpenCount(0),
-    m_squelchCloseCount(0),
-    m_squelchThreshold(4800),
-    m_modPhasor(0.0f),
-    m_SSBFilterBufferIndex(0),
-    m_settingsMutex(QMutex::Recursive)
+    m_spectrumVis(SDR_TX_SCALEF)
 {
     setObjectName(m_channelId);
 
-    m_udpHandler.setFeedbackMessageQueue(&m_inputMessageQueue);
-    m_SSBFilter = new fftfilt(m_settings.m_lowCutoff / m_settings.m_inputSampleRate, m_settings.m_rfBandwidth / m_settings.m_inputSampleRate, m_ssbFftLen);
-    m_SSBFilterBuffer = new Complex[m_ssbFftLen>>1]; // filter returns data exactly half of its size
+    m_thread = new QThread(this);
+    m_basebandSource = new UDPSourceBaseband();
+    m_basebandSource->setSpectrumSink(&m_spectrumVis);
+    m_basebandSource->moveToThread(m_thread);
 
-    applyChannelSettings(m_basebandSampleRate, m_outputSampleRate, m_inputFrequencyOffset, true);
     applySettings(m_settings, true);
 
-    m_channelizer = new UpChannelizer(this);
-    m_threadedChannelizer = new ThreadedBasebandSampleSource(m_channelizer, this);
-    m_deviceAPI->addChannelSource(m_threadedChannelizer);
+    m_deviceAPI->addChannelSource(this);
     m_deviceAPI->addChannelSourceAPI(this);
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &UDPSource::networkManagerFinished
+    );
 }
 
 UDPSource::~UDPSource()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &UDPSource::networkManagerFinished
+    );
     delete m_networkManager;
     m_deviceAPI->removeChannelSourceAPI(this);
-    m_deviceAPI->removeChannelSource(m_threadedChannelizer);
-    delete m_threadedChannelizer;
-    delete m_channelizer;
-    delete m_SSBFilter;
-    delete[] m_SSBFilterBuffer;
+    m_deviceAPI->removeChannelSource(this);
+    delete m_basebandSource;
+    delete m_thread;
+}
+
+void UDPSource::setDeviceAPI(DeviceAPI *deviceAPI)
+{
+    if (deviceAPI != m_deviceAPI)
+    {
+        m_deviceAPI->removeChannelSourceAPI(this);
+        m_deviceAPI->removeChannelSource(this);
+        m_deviceAPI = deviceAPI;
+        m_deviceAPI->addChannelSource(this);
+        m_deviceAPI->addChannelSinkAPI(this);
+    }
 }
 
 void UDPSource::start()
 {
-    m_udpHandler.start();
-    applyChannelSettings(m_basebandSampleRate, m_outputSampleRate, m_inputFrequencyOffset, true);
+	qDebug("UDPSource::start");
+    m_basebandSource->reset();
+    m_thread->start();
 }
 
 void UDPSource::stop()
 {
-    m_udpHandler.stop();
+    qDebug("UDPSource::stop");
+	m_thread->exit();
+	m_thread->wait();
 }
 
-void UDPSource::pull(Sample& sample)
+void UDPSource::pull(SampleVector::iterator& begin, unsigned int nbSamples)
 {
-    if (m_settings.m_channelMute)
-    {
-        sample.m_real = 0.0f;
-        sample.m_imag = 0.0f;
-        initSquelch(false);
-        return;
-    }
-
-    Complex ci;
-
-    m_settingsMutex.lock();
-
-    if (m_interpolatorDistance > 1.0f) // decimate
-    {
-        modulateSample();
-
-        while (!m_interpolator.decimate(&m_interpolatorDistanceRemain, m_modSample, &ci))
-        {
-            modulateSample();
-        }
-    }
-    else
-    {
-        if (m_interpolator.interpolate(&m_interpolatorDistanceRemain, m_modSample, &ci))
-        {
-            modulateSample();
-        }
-    }
-
-    m_interpolatorDistanceRemain += m_interpolatorDistance;
-
-    ci *= m_carrierNco.nextIQ(); // shift to carrier frequency
-
-    m_settingsMutex.unlock();
-
-    double magsq = ci.real() * ci.real() + ci.imag() * ci.imag();
-    magsq /= (SDR_TX_SCALED*SDR_TX_SCALED);
-    m_movingAverage.feed(magsq);
-    m_magsq = m_movingAverage.average();
-
-    sample.m_real = (FixReal) ci.real();
-    sample.m_imag = (FixReal) ci.imag();
+    m_basebandSource->pull(begin, nbSamples);
 }
 
-void UDPSource::modulateSample()
+void UDPSource::setCenterFrequency(qint64 frequency)
 {
-    if (m_settings.m_sampleFormat == UDPSourceSettings::FormatSnLE) // Linear I/Q transponding
+    UDPSourceSettings settings = m_settings;
+    settings.m_inputFrequencyOffset = frequency;
+    applySettings(settings, false);
+
+    if (m_guiMessageQueue) // forward to GUI if any
     {
-        Sample s;
-
-        m_udpHandler.readSample(s);
-
-        uint64_t magsq = s.m_real * s.m_real + s.m_imag * s.m_imag;
-        m_inMovingAverage.feed(magsq/(SDR_TX_SCALED*SDR_TX_SCALED));
-        m_inMagsq = m_inMovingAverage.average();
-
-        calculateSquelch(m_inMagsq);
-
-        if (m_squelchOpen)
-        {
-            m_modSample.real(s.m_real * m_settings.m_gainOut);
-            m_modSample.imag(s.m_imag * m_settings.m_gainOut);
-            calculateLevel(m_modSample);
-        }
-        else
-        {
-            m_modSample.real(0.0f);
-            m_modSample.imag(0.0f);
-        }
-    }
-    else if (m_settings.m_sampleFormat == UDPSourceSettings::FormatNFM)
-    {
-        qint16 t;
-        readMonoSample(t);
-
-        m_inMovingAverage.feed((t*t)/1073741824.0);
-        m_inMagsq = m_inMovingAverage.average();
-
-        calculateSquelch(m_inMagsq);
-
-        if (m_squelchOpen)
-        {
-            m_modPhasor += (m_settings.m_fmDeviation / m_settings.m_inputSampleRate) * (t / SDR_TX_SCALEF) * M_PI * 2.0f;
-            m_modSample.real(cos(m_modPhasor) * 0.3162292f * SDR_TX_SCALEF * m_settings.m_gainOut);
-            m_modSample.imag(sin(m_modPhasor) * 0.3162292f * SDR_TX_SCALEF * m_settings.m_gainOut);
-            calculateLevel(m_modSample);
-        }
-        else
-        {
-            m_modSample.real(0.0f);
-            m_modSample.imag(0.0f);
-        }
-    }
-    else if (m_settings.m_sampleFormat == UDPSourceSettings::FormatAM)
-    {
-        qint16 t;
-        readMonoSample(t);
-        m_inMovingAverage.feed((t*t)/(SDR_TX_SCALED*SDR_TX_SCALED));
-        m_inMagsq = m_inMovingAverage.average();
-
-        calculateSquelch(m_inMagsq);
-
-        if (m_squelchOpen)
-        {
-            m_modSample.real(((t / SDR_TX_SCALEF)*m_settings.m_amModFactor*m_settings.m_gainOut + 1.0f) * (SDR_TX_SCALEF/2)); // modulate and scale zero frequency carrier
-            m_modSample.imag(0.0f);
-            calculateLevel(m_modSample);
-        }
-        else
-        {
-            m_modSample.real(0.0f);
-            m_modSample.imag(0.0f);
-        }
-    }
-    else if ((m_settings.m_sampleFormat == UDPSourceSettings::FormatLSB) || (m_settings.m_sampleFormat == UDPSourceSettings::FormatUSB))
-    {
-        qint16 t;
-        Complex c, ci;
-        fftfilt::cmplx *filtered;
-        int n_out = 0;
-
-        readMonoSample(t);
-        m_inMovingAverage.feed((t*t)/(SDR_TX_SCALED*SDR_TX_SCALED));
-        m_inMagsq = m_inMovingAverage.average();
-
-        calculateSquelch(m_inMagsq);
-
-        if (m_squelchOpen)
-        {
-            ci.real((t / SDR_TX_SCALEF) * m_settings.m_gainOut);
-            ci.imag(0.0f);
-
-            n_out = m_SSBFilter->runSSB(ci, &filtered, (m_settings.m_sampleFormat == UDPSourceSettings::FormatUSB));
-
-            if (n_out > 0)
-            {
-                memcpy((void *) m_SSBFilterBuffer, (const void *) filtered, n_out*sizeof(Complex));
-                m_SSBFilterBufferIndex = 0;
-            }
-
-            c = m_SSBFilterBuffer[m_SSBFilterBufferIndex];
-            m_modSample.real(m_SSBFilterBuffer[m_SSBFilterBufferIndex].real() * SDR_TX_SCALEF);
-            m_modSample.imag(m_SSBFilterBuffer[m_SSBFilterBufferIndex].imag() * SDR_TX_SCALEF);
-            m_SSBFilterBufferIndex++;
-
-            calculateLevel(m_modSample);
-        }
-        else
-        {
-            m_modSample.real(0.0f);
-            m_modSample.imag(0.0f);
-        }
-    }
-    else
-    {
-        m_modSample.real(0.0f);
-        m_modSample.imag(0.0f);
-        initSquelch(false);
-    }
-
-    if (m_spectrum && m_spectrumEnabled && (m_spectrumChunkCounter < m_spectrumChunkSize - 1))
-    {
-        Sample s;
-        s.m_real = (FixReal) m_modSample.real();
-        s.m_imag = (FixReal) m_modSample.imag();
-        m_sampleBuffer.push_back(s);
-        m_spectrumChunkCounter++;
-    }
-    else if (m_spectrum)
-    {
-        m_spectrum->feed(m_sampleBuffer.begin(), m_sampleBuffer.end(), false);
-        m_sampleBuffer.clear();
-        m_spectrumChunkCounter = 0;
-    }
-}
-
-void UDPSource::calculateLevel(Real sample)
-{
-    if (m_levelCalcCount < m_levelNbSamples)
-    {
-        m_peakLevel = std::max(std::fabs(m_peakLevel), sample);
-        m_levelSum += sample * sample;
-        m_levelCalcCount++;
-    }
-    else
-    {
-        qreal rmsLevel = m_levelSum > 0.0 ? sqrt(m_levelSum / m_levelNbSamples) : 0.0;
-        //qDebug("NFMMod::calculateLevel: %f %f", rmsLevel, m_peakLevel);
-        emit levelChanged(rmsLevel, m_peakLevel, m_levelNbSamples);
-        m_peakLevel = 0.0f;
-        m_levelSum = 0.0f;
-        m_levelCalcCount = 0;
-    }
-}
-
-void UDPSource::calculateLevel(Complex sample)
-{
-    Real t = std::abs(sample);
-
-    if (m_levelCalcCount < m_levelNbSamples)
-    {
-        m_peakLevel = std::max(std::fabs(m_peakLevel), t);
-        m_levelSum += (t * t);
-        m_levelCalcCount++;
-    }
-    else
-    {
-        qreal rmsLevel = m_levelSum > 0.0 ? sqrt((m_levelSum/(SDR_TX_SCALED*SDR_TX_SCALED)) / m_levelNbSamples) : 0.0;
-        emit levelChanged(rmsLevel, m_peakLevel / SDR_TX_SCALEF, m_levelNbSamples);
-        m_peakLevel = 0.0f;
-        m_levelSum = 0.0f;
-        m_levelCalcCount = 0;
+        MsgConfigureUDPSource *msgToGUI = MsgConfigureUDPSource::create(settings, false);
+        m_guiMessageQueue->push(msgToGUI);
     }
 }
 
 bool UDPSource::handleMessage(const Message& cmd)
 {
-    if (UpChannelizer::MsgChannelizerNotification::match(cmd))
-    {
-        UpChannelizer::MsgChannelizerNotification& notif = (UpChannelizer::MsgChannelizerNotification&) cmd;
-        qDebug() << "UDPSource::handleMessage: MsgChannelizerNotification";
-
-        applyChannelSettings(notif.getBasebandSampleRate(), notif.getSampleRate(), notif.getFrequencyOffset());
-
-        return true;
-    }
-    else if (MsgConfigureChannelizer::match(cmd))
+    if (MsgConfigureChannelizer::match(cmd))
     {
         MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
-        qDebug() << "UDPSource::handleMessage: MsgConfigureChannelizer:"
-                << " sampleRate: " << cfg.getSampleRate()
-                << " centerFrequency: " << cfg.getCenterFrequency();
+        qDebug() << "AMMod::handleMessage: MsgConfigureChannelizer:"
+                << " getSourceSampleRate: " << cfg.getSourceSampleRate()
+                << " getSourceCenterFrequency: " << cfg.getSourceCenterFrequency();
 
-        m_channelizer->configure(m_channelizer->getInputMessageQueue(),
-            cfg.getSampleRate(),
-            cfg.getCenterFrequency());
+        UDPSourceBaseband::MsgConfigureChannelizer *msg
+            = UDPSourceBaseband::MsgConfigureChannelizer::create(cfg.getSourceSampleRate(), cfg.getSourceCenterFrequency());
+        m_basebandSource->getInputMessageQueue()->push(msg);
 
         return true;
     }
@@ -360,133 +151,36 @@ bool UDPSource::handleMessage(const Message& cmd)
 
         return true;
     }
-    else if (UDPSourceMessages::MsgSampleRateCorrection::match(cmd))
-    {
-        UDPSourceMessages::MsgSampleRateCorrection& cfg = (UDPSourceMessages::MsgSampleRateCorrection&) cmd;
-        Real newSampleRate = m_actualInputSampleRate + cfg.getCorrectionFactor() * m_actualInputSampleRate;
-
-        // exclude values too way out nominal sample rate (20%)
-        if ((newSampleRate < m_settings.m_inputSampleRate * 1.2) && (newSampleRate >  m_settings.m_inputSampleRate * 0.8))
-        {
-            m_actualInputSampleRate = newSampleRate;
-
-            if ((cfg.getRawDeltaRatio() > -0.05) && (cfg.getRawDeltaRatio() < 0.05))
-            {
-                if (m_sampleRateAvgCounter < m_sampleRateAverageItems)
-                {
-                    m_sampleRateSum += m_actualInputSampleRate;
-                    m_sampleRateAvgCounter++;
-                }
-            }
-            else
-            {
-                m_sampleRateSum = 0.0;
-                m_sampleRateAvgCounter = 0;
-            }
-
-            if (m_sampleRateAvgCounter == m_sampleRateAverageItems)
-            {
-                float avgRate = m_sampleRateSum / m_sampleRateAverageItems;
-                qDebug("UDPSource::handleMessage: MsgSampleRateCorrection: corr: %+.6f new rate: %.0f: avg rate: %.0f",
-                        cfg.getCorrectionFactor(),
-                        m_actualInputSampleRate,
-                        avgRate);
-                m_actualInputSampleRate = avgRate;
-                m_sampleRateSum = 0.0;
-                m_sampleRateAvgCounter = 0;
-            }
-//            else
-//            {
-//                qDebug("UDPSource::handleMessage: MsgSampleRateCorrection: corr: %+.6f new rate: %.0f",
-//                        cfg.getCorrectionFactor(),
-//                        m_actualInputSampleRate);
-//            }
-
-            m_settingsMutex.lock();
-            m_interpolatorDistanceRemain = 0;
-            m_interpolatorConsumed = false;
-            m_interpolatorDistance = (Real) m_actualInputSampleRate / (Real) m_outputSampleRate;
-            //m_interpolator.create(48, m_actualInputSampleRate, m_settings.m_rfBandwidth / 2.2, 3.0); // causes clicking: leaving at standard frequency
-            m_settingsMutex.unlock();
-        }
-
-        return true;
-    }
-    else if (MsgUDPSourceSpectrum::match(cmd))
-    {
-        MsgUDPSourceSpectrum& spc = (MsgUDPSourceSpectrum&) cmd;
-        m_spectrumEnabled = spc.getEnabled();
-        qDebug() << "UDPSource::handleMessage: MsgUDPSourceSpectrum: m_spectrumEnabled: " << m_spectrumEnabled;
-
-        return true;
-    }
-    else if (MsgResetReadIndex::match(cmd))
-    {
-        m_settingsMutex.lock();
-        m_udpHandler.resetReadIndex();
-        m_settingsMutex.unlock();
-
-        qDebug() << "UDPSource::handleMessage: MsgResetReadIndex";
-
-        return true;
-    }
     else if (DSPSignalNotification::match(cmd))
     {
+        // Forward to the source
+        DSPSignalNotification& notif = (DSPSignalNotification&) cmd;
+        DSPSignalNotification* rep = new DSPSignalNotification(notif); // make a copy
+        qDebug() << "UDPSource::handleMessage: DSPSignalNotification";
+        m_basebandSource->getInputMessageQueue()->push(rep);
+        // Forward to GUI if any
+        if (getMessageQueueToGUI()) {
+            getMessageQueueToGUI()->push(new DSPSignalNotification(notif));
+        }
+
         return true;
     }
     else
     {
-        if(m_spectrum != 0)
-        {
-           return m_spectrum->handleMessage(cmd);
-        }
-        else
-        {
-            return false;
-        }
+        return false;
     }
 }
 
 void UDPSource::setSpectrum(bool enabled)
 {
-    Message* cmd = MsgUDPSourceSpectrum::create(enabled);
-    getInputMessageQueue()->push(cmd);
+    Message* cmd = UDPSourceBaseband::MsgUDPSourceSpectrum::create(enabled);
+    m_basebandSource->getInputMessageQueue()->push(cmd);
 }
 
 void UDPSource::resetReadIndex()
 {
-    Message* cmd = MsgResetReadIndex::create();
-    getInputMessageQueue()->push(cmd);
-}
-
-void UDPSource::applyChannelSettings(int basebandSampleRate, int outputSampleRate, int inputFrequencyOffset, bool force)
-{
-    qDebug() << "UDPSource::applyChannelSettings:"
-            << " basebandSampleRate: " << basebandSampleRate
-            << " outputSampleRate: " << outputSampleRate
-            << " inputFrequencyOffset: " << inputFrequencyOffset;
-
-    if ((inputFrequencyOffset != m_inputFrequencyOffset) ||
-        (outputSampleRate != m_outputSampleRate) || force)
-    {
-        m_settingsMutex.lock();
-        m_carrierNco.setFreq(inputFrequencyOffset, outputSampleRate);
-        m_settingsMutex.unlock();
-    }
-
-    if (((outputSampleRate != m_outputSampleRate) && (!m_settings.m_autoRWBalance)) || force)
-    {
-        m_settingsMutex.lock();
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) m_settings.m_inputSampleRate / (Real) outputSampleRate;
-        m_interpolator.create(48, m_settings.m_inputSampleRate, m_settings.m_rfBandwidth / 2.2, 3.0);
-        m_settingsMutex.unlock();
-    }
-
-    m_basebandSampleRate = basebandSampleRate;
-    m_outputSampleRate = outputSampleRate;
-    m_inputFrequencyOffset = inputFrequencyOffset;
+    Message* cmd = UDPSourceBaseband::MsgResetReadIndex::create();
+    m_basebandSource->getInputMessageQueue()->push(cmd);
 }
 
 void UDPSource::applySettings(const UDPSourceSettings& settings, bool force)
@@ -501,6 +195,8 @@ void UDPSource::applySettings(const UDPSourceSettings& settings, bool force)
             << " m_amModFactor: " << settings.m_amModFactor
             << " m_udpAddressStr: " << settings.m_udpAddress
             << " m_udpPort: " << settings.m_udpPort
+            << " m_multicastAddress: " << settings.m_multicastAddress
+            << " m_multicastJoin: " << settings.m_multicastJoin
             << " m_channelMute: " << settings.m_channelMute
             << " m_gainIn: " << settings.m_gainIn
             << " m_gainOut: " << settings.m_gainOut
@@ -519,9 +215,14 @@ void UDPSource::applySettings(const UDPSourceSettings& settings, bool force)
     if ((settings.m_sampleFormat != m_settings.m_sampleFormat) || force) {
         reverseAPIKeys.append("sampleFormat");
     }
-    if ((settings.m_inputSampleRate != m_settings.m_inputSampleRate) || force) {
+
+    if ((settings.m_inputSampleRate != m_settings.m_inputSampleRate) || force)
+    {
         reverseAPIKeys.append("inputSampleRate");
+        DSPSignalNotification *msg = new DSPSignalNotification(settings.m_inputSampleRate, 0);
+        m_spectrumVis.getInputMessageQueue()->push(msg);
     }
+
     if ((settings.m_rfBandwidth != m_settings.m_rfBandwidth) || force) {
         reverseAPIKeys.append("rfBandwidth");
     }
@@ -539,6 +240,12 @@ void UDPSource::applySettings(const UDPSourceSettings& settings, bool force)
     }
     if ((settings.m_udpPort != m_settings.m_udpPort) || force) {
         reverseAPIKeys.append("udpPort");
+    }
+    if ((settings.m_multicastAddress != m_settings.m_multicastAddress) || force) {
+        reverseAPIKeys.append("multicastAddress");
+    }
+    if ((settings.m_multicastJoin != m_settings.m_multicastJoin) || force) {
+        reverseAPIKeys.append("multicastJoin");
     }
     if ((settings.m_channelMute != m_settings.m_channelMute) || force) {
         reverseAPIKeys.append("channelMute");
@@ -565,76 +272,23 @@ void UDPSource::applySettings(const UDPSourceSettings& settings, bool force)
         reverseAPIKeys.append("stereoInput");
     }
 
-    if((settings.m_rfBandwidth != m_settings.m_rfBandwidth) ||
-       (settings.m_lowCutoff != m_settings.m_lowCutoff) ||
-       (settings.m_inputSampleRate != m_settings.m_inputSampleRate) || force)
+    if (m_settings.m_streamIndex != settings.m_streamIndex)
     {
-        m_settingsMutex.lock();
-        m_interpolatorDistanceRemain = 0;
-        m_interpolatorConsumed = false;
-        m_interpolatorDistance = (Real) settings.m_inputSampleRate / (Real) m_outputSampleRate;
-        m_interpolator.create(48, settings.m_inputSampleRate, settings.m_rfBandwidth / 2.2, 3.0);
-        m_actualInputSampleRate = settings.m_inputSampleRate;
-        m_udpHandler.resetReadIndex();
-        m_sampleRateSum = 0.0;
-        m_sampleRateAvgCounter = 0;
-        m_spectrumChunkSize = settings.m_inputSampleRate * 0.05; // 50 ms chunk
-        m_spectrumChunkCounter = 0;
-        m_levelNbSamples = settings.m_inputSampleRate * 0.01; // every 10 ms
-        m_levelCalcCount = 0;
-        m_peakLevel = 0.0f;
-        m_levelSum = 0.0f;
-        m_udpHandler.resizeBuffer(settings.m_inputSampleRate);
-        m_inMovingAverage.resize(settings.m_inputSampleRate * 0.01, 1e-10); // 10 ms
-        m_squelchThreshold = settings.m_inputSampleRate * settings.m_squelchGate;
-        initSquelch(m_squelchOpen);
-        m_SSBFilter->create_filter(settings.m_lowCutoff / settings.m_inputSampleRate, settings.m_rfBandwidth / settings.m_inputSampleRate);
-        m_settingsMutex.unlock();
-    }
-
-    if ((settings.m_squelch != m_settings.m_squelch) || force)
-    {
-        m_squelch = CalcDb::powerFromdB(settings.m_squelch);
-    }
-
-    if ((settings.m_squelchGate != m_settings.m_squelchGate) || force)
-    {
-        m_squelchThreshold = m_outputSampleRate * settings.m_squelchGate;
-        initSquelch(m_squelchOpen);
-    }
-
-    if ((settings.m_udpAddress != m_settings.m_udpAddress) ||
-        (settings.m_udpPort != m_settings.m_udpPort) || force)
-    {
-        m_settingsMutex.lock();
-        m_udpHandler.configureUDPLink(settings.m_udpAddress, settings.m_udpPort);
-        m_settingsMutex.unlock();
-    }
-
-    if ((settings.m_channelMute != m_settings.m_channelMute) || force)
-    {
-        if (!settings.m_channelMute) {
-            m_udpHandler.resetReadIndex();
-        }
-    }
-
-    if ((settings.m_autoRWBalance != m_settings.m_autoRWBalance) || force)
-    {
-        m_settingsMutex.lock();
-        m_udpHandler.setAutoRWBalance(settings.m_autoRWBalance);
-
-        if (!settings.m_autoRWBalance)
+        if (m_deviceAPI->getSampleMIMO()) // change of stream is possible for MIMO devices only
         {
-            m_interpolatorDistanceRemain = 0;
-            m_interpolatorConsumed = false;
-            m_interpolatorDistance = (Real) settings.m_inputSampleRate / (Real) m_outputSampleRate;
-            m_interpolator.create(48, settings.m_inputSampleRate, settings.m_rfBandwidth / 2.2, 3.0);
-            m_actualInputSampleRate = settings.m_inputSampleRate;
-            m_udpHandler.resetReadIndex();
+            m_deviceAPI->removeChannelSourceAPI(this);
+            m_deviceAPI->removeChannelSource(this, m_settings.m_streamIndex);
+            m_deviceAPI->addChannelSource(this, settings.m_streamIndex);
+            m_deviceAPI->addChannelSourceAPI(this);
+            m_settings.m_streamIndex = settings.m_streamIndex; // make sure ChannelAPI::getStreamIndex() is consistent
+            emit streamIndexChanged(settings.m_streamIndex);
         }
 
-        m_settingsMutex.unlock();
+        reverseAPIKeys.append("streamIndex");
     }
+
+    UDPSourceBaseband::MsgConfigureUDPSourceBaseband *msg = UDPSourceBaseband::MsgConfigureUDPSourceBaseband::create(settings, force);
+    m_basebandSource->getInputMessageQueue()->push(msg);
 
     if (settings.m_useReverseAPI)
     {
@@ -644,6 +298,13 @@ void UDPSource::applySettings(const UDPSourceSettings& settings, bool force)
                 (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex) ||
                 (m_settings.m_reverseAPIChannelIndex != settings.m_reverseAPIChannelIndex);
         webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+    }
+
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "settings", pipes);
+
+    if (pipes.size() > 0) {
+        sendChannelSettings(pipes, reverseAPIKeys, settings, force);
     }
 
     m_settings = settings;
@@ -682,6 +343,15 @@ int UDPSource::webapiSettingsGet(
     return 200;
 }
 
+int UDPSource::webapiWorkspaceGet(
+        SWGSDRangel::SWGWorkspaceInfo& response,
+        QString& errorMessage)
+{
+    (void) errorMessage;
+    response.setIndex(m_settings.m_workspaceIndex);
+    return 200;
+}
+
 int UDPSource::webapiSettingsPutPatch(
                 bool force,
                 const QStringList& channelSettingsKeys,
@@ -690,18 +360,43 @@ int UDPSource::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     UDPSourceSettings settings = m_settings;
-    bool frequencyOffsetChanged = false;
+    webapiUpdateChannelSettings(settings, channelSettingsKeys, response);
 
+    if (m_settings.m_inputFrequencyOffset != settings.m_inputFrequencyOffset)
+    {
+        UDPSource::MsgConfigureChannelizer *msgChan = UDPSource::MsgConfigureChannelizer::create(
+                settings.m_inputSampleRate,
+                settings.m_inputFrequencyOffset);
+        m_inputMessageQueue.push(msgChan);
+    }
+
+    MsgConfigureUDPSource *msg = MsgConfigureUDPSource::create(settings, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureUDPSource *msgToGUI = MsgConfigureUDPSource::create(settings, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatChannelSettings(response, settings);
+
+    return 200;
+}
+
+void UDPSource::webapiUpdateChannelSettings(
+        UDPSourceSettings& settings,
+        const QStringList& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings& response)
+{
     if (channelSettingsKeys.contains("sampleFormat")) {
         settings.m_sampleFormat = (UDPSourceSettings::SampleFormat) response.getUdpSourceSettings()->getSampleFormat();
     }
     if (channelSettingsKeys.contains("inputSampleRate")) {
         settings.m_inputSampleRate = response.getUdpSourceSettings()->getInputSampleRate();
     }
-    if (channelSettingsKeys.contains("inputFrequencyOffset"))
-    {
+    if (channelSettingsKeys.contains("inputFrequencyOffset")) {
         settings.m_inputFrequencyOffset = response.getUdpSourceSettings()->getInputFrequencyOffset();
-        frequencyOffsetChanged = true;
     }
     if (channelSettingsKeys.contains("rfBandwidth")) {
         settings.m_rfBandwidth = response.getUdpSourceSettings()->getRfBandwidth();
@@ -748,8 +443,17 @@ int UDPSource::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("udpPort")) {
         settings.m_udpPort = response.getUdpSourceSettings()->getUdpPort();
     }
+    if (channelSettingsKeys.contains("multicastAddress")) {
+        settings.m_multicastAddress = *response.getUdpSourceSettings()->getMulticastAddress();
+    }
+    if (channelSettingsKeys.contains("multicastJoin")) {
+        settings.m_multicastJoin = response.getUdpSourceSettings()->getMulticastJoin() != 0;
+    }
     if (channelSettingsKeys.contains("title")) {
         settings.m_title = *response.getUdpSourceSettings()->getTitle();
+    }
+    if (channelSettingsKeys.contains("streamIndex")) {
+        settings.m_streamIndex = response.getUdpSourceSettings()->getStreamIndex();
     }
     if (channelSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getUdpSourceSettings()->getUseReverseApi() != 0;
@@ -766,27 +470,15 @@ int UDPSource::webapiSettingsPutPatch(
     if (channelSettingsKeys.contains("reverseAPIChannelIndex")) {
         settings.m_reverseAPIChannelIndex = response.getUdpSourceSettings()->getReverseApiChannelIndex();
     }
-
-    if (frequencyOffsetChanged)
-    {
-        UDPSource::MsgConfigureChannelizer *msgChan = UDPSource::MsgConfigureChannelizer::create(
-                settings.m_inputSampleRate,
-                settings.m_inputFrequencyOffset);
-        m_inputMessageQueue.push(msgChan);
+    if (settings.m_spectrumGUI && channelSettingsKeys.contains("spectrumConfig")) {
+        settings.m_spectrumGUI->updateFrom(channelSettingsKeys, response.getUdpSourceSettings()->getSpectrumConfig());
     }
-
-    MsgConfigureUDPSource *msg = MsgConfigureUDPSource::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureUDPSource *msgToGUI = MsgConfigureUDPSource::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
+    if (settings.m_channelMarker && channelSettingsKeys.contains("channelMarker")) {
+        settings.m_channelMarker->updateFrom(channelSettingsKeys, response.getUdpSourceSettings()->getChannelMarker());
     }
-
-    webapiFormatChannelSettings(response, settings);
-
-    return 200;
+    if (settings.m_rollupState && channelSettingsKeys.contains("rollupState")) {
+        settings.m_rollupState->updateFrom(channelSettingsKeys, response.getUdpSourceSettings()->getRollupState());
+    }
 }
 
 int UDPSource::webapiReportGet(
@@ -827,6 +519,14 @@ void UDPSource::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& res
 
     response.getUdpSourceSettings()->setUdpPort(settings.m_udpPort);
 
+    if (response.getUdpSourceSettings()->getMulticastAddress()) {
+        *response.getUdpSourceSettings()->getMulticastAddress() = settings.m_multicastAddress;
+    } else {
+        response.getUdpSourceSettings()->setMulticastAddress(new QString(settings.m_multicastAddress));
+    }
+
+    response.getUdpSourceSettings()->setMulticastJoin(settings.m_multicastJoin ? 1 : 0);
+
     if (response.getUdpSourceSettings()->getTitle()) {
         *response.getUdpSourceSettings()->getTitle() = settings.m_title;
     } else {
@@ -844,24 +544,120 @@ void UDPSource::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& res
     response.getUdpSourceSettings()->setReverseApiPort(settings.m_reverseAPIPort);
     response.getUdpSourceSettings()->setReverseApiDeviceIndex(settings.m_reverseAPIDeviceIndex);
     response.getUdpSourceSettings()->setReverseApiChannelIndex(settings.m_reverseAPIChannelIndex);
+
+    if (settings.m_spectrumGUI)
+    {
+        if (response.getUdpSourceSettings()->getSpectrumConfig())
+        {
+            settings.m_spectrumGUI->formatTo(response.getUdpSourceSettings()->getSpectrumConfig());
+        }
+        else
+        {
+            SWGSDRangel::SWGGLSpectrum *swgGLSpectrum = new SWGSDRangel::SWGGLSpectrum();
+            settings.m_spectrumGUI->formatTo(swgGLSpectrum);
+            response.getUdpSourceSettings()->setSpectrumConfig(swgGLSpectrum);
+        }
+    }
+
+    if (settings.m_channelMarker)
+    {
+        if (response.getUdpSourceSettings()->getChannelMarker())
+        {
+            settings.m_channelMarker->formatTo(response.getUdpSourceSettings()->getChannelMarker());
+        }
+        else
+        {
+            SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+            settings.m_channelMarker->formatTo(swgChannelMarker);
+            response.getUdpSourceSettings()->setChannelMarker(swgChannelMarker);
+        }
+    }
+
+    if (settings.m_rollupState)
+    {
+        if (response.getUdpSourceSettings()->getRollupState())
+        {
+            settings.m_rollupState->formatTo(response.getUdpSourceSettings()->getRollupState());
+        }
+        else
+        {
+            SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+            settings.m_rollupState->formatTo(swgRollupState);
+            response.getUdpSourceSettings()->setRollupState(swgRollupState);
+        }
+    }
 }
 
 void UDPSource::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response)
 {
     response.getUdpSourceReport()->setInputPowerDb(CalcDb::dbPower(getInMagSq()));
     response.getUdpSourceReport()->setChannelPowerDb(CalcDb::dbPower(getMagSq()));
-    response.getUdpSourceReport()->setSquelch(m_squelchOpen ? 1 : 0);
+    response.getUdpSourceReport()->setSquelch(m_basebandSource->isSquelchOpen() ? 1 : 0);
     response.getUdpSourceReport()->setBufferGauge(getBufferGauge());
-    response.getUdpSourceReport()->setChannelSampleRate(m_outputSampleRate);
+    response.getUdpSourceReport()->setChannelSampleRate(m_basebandSource->getChannelSampleRate());
 }
 
 void UDPSource::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const UDPSourceSettings& settings, bool force)
 {
     SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+    webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+
+    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
+            .arg(settings.m_reverseAPIAddress)
+            .arg(settings.m_reverseAPIPort)
+            .arg(settings.m_reverseAPIDeviceIndex)
+            .arg(settings.m_reverseAPIChannelIndex);
+    m_networkRequest.setUrl(QUrl(channelSettingsURL));
+    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QBuffer *buffer = new QBuffer();
+    buffer->open((QBuffer::ReadWrite));
+    buffer->write(swgChannelSettings->asJson().toUtf8());
+    buffer->seek(0);
+
+    // Always use PATCH to avoid passing reverse API settings
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
+
+    delete swgChannelSettings;
+}
+
+void UDPSource::sendChannelSettings(
+    const QList<ObjectPipe*>& pipes,
+    QList<QString>& channelSettingsKeys,
+    const UDPSourceSettings& settings,
+    bool force)
+{
+    for (const auto& pipe : pipes)
+    {
+        MessageQueue *messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+
+        if (messageQueue)
+        {
+            SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+            webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+            MainCore::MsgChannelSettings *msg = MainCore::MsgChannelSettings::create(
+                this,
+                channelSettingsKeys,
+                swgChannelSettings,
+                force
+            );
+            messageQueue->push(msg);
+        }
+    }
+}
+
+void UDPSource::webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const UDPSourceSettings& settings,
+        bool force
+)
+{
     swgChannelSettings->setDirection(1); // single source (Tx)
     swgChannelSettings->setOriginatorChannelIndex(getIndexInDeviceSet());
     swgChannelSettings->setOriginatorDeviceSetIndex(getDeviceSetIndex());
-    swgChannelSettings->setChannelType(new QString("UDPSource"));
+    swgChannelSettings->setChannelType(new QString(m_channelId));
     swgChannelSettings->setUdpSourceSettings(new SWGSDRangel::SWGUDPSourceSettings());
     SWGSDRangel::SWGUDPSourceSettings *swgUDPSourceSettings = swgChannelSettings->getUdpSourceSettings();
 
@@ -921,27 +717,39 @@ void UDPSource::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, c
     if (channelSettingsKeys.contains("udpPort") || force) {
         swgUDPSourceSettings->setUdpPort(settings.m_udpPort);
     }
+    if (channelSettingsKeys.contains("multicastAddress") || force) {
+        swgUDPSourceSettings->setMulticastAddress(new QString(settings.m_multicastAddress));
+    }
+    if (channelSettingsKeys.contains("multicastJoin") || force) {
+        swgUDPSourceSettings->setMulticastJoin(settings.m_multicastJoin ? 1 : 0);
+    }
     if (channelSettingsKeys.contains("title") || force) {
         swgUDPSourceSettings->setTitle(new QString(settings.m_title));
     }
+    if (channelSettingsKeys.contains("streamIndex") || force) {
+        swgUDPSourceSettings->setStreamIndex(settings.m_streamIndex);
+    }
 
-    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
-            .arg(settings.m_reverseAPIAddress)
-            .arg(settings.m_reverseAPIPort)
-            .arg(settings.m_reverseAPIDeviceIndex)
-            .arg(settings.m_reverseAPIChannelIndex);
-    m_networkRequest.setUrl(QUrl(channelSettingsURL));
-    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    if (settings.m_spectrumGUI && (channelSettingsKeys.contains("spectrunConfig") || force))
+    {
+        SWGSDRangel::SWGGLSpectrum *swgGLSpectrum = new SWGSDRangel::SWGGLSpectrum();
+        settings.m_spectrumGUI->formatTo(swgGLSpectrum);
+        swgUDPSourceSettings->setSpectrumConfig(swgGLSpectrum);
+    }
 
-    QBuffer *buffer=new QBuffer();
-    buffer->open((QBuffer::ReadWrite));
-    buffer->write(swgChannelSettings->asJson().toUtf8());
-    buffer->seek(0);
+    if (settings.m_channelMarker && (channelSettingsKeys.contains("channelMarker") || force))
+    {
+        SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+        settings.m_channelMarker->formatTo(swgChannelMarker);
+        swgUDPSourceSettings->setChannelMarker(swgChannelMarker);
+    }
 
-    // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
-
-    delete swgChannelSettings;
+    if (settings.m_rollupState && (channelSettingsKeys.contains("rollupState") || force))
+    {
+        SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+        settings.m_rollupState->formatTo(swgRollupState);
+        swgUDPSourceSettings->setRollupState(swgRollupState);
+    }
 }
 
 void UDPSource::networkManagerFinished(QNetworkReply *reply)
@@ -954,10 +762,42 @@ void UDPSource::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("UDPSource::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("UDPSource::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
+}
+
+void UDPSource::setLevelMeter(QObject *levelMeter)
+{
+    connect(m_basebandSource, SIGNAL(levelChanged(qreal, qreal, int)), levelMeter, SLOT(levelChanged(qreal, qreal, int)));
+}
+
+double UDPSource::getMagSq() const
+{
+    return m_basebandSource->getMagSq();
+}
+double UDPSource::getInMagSq() const
+{
+    return m_basebandSource->getInMagSq();
+}
+
+int32_t UDPSource::getBufferGauge() const
+{
+    return m_basebandSource->getBufferGauge();
+}
+
+bool UDPSource::getSquelchOpen() const
+{
+    return m_basebandSource->getSquelchOpen();
+}
+
+uint32_t UDPSource::getNumberOfDeviceStreams() const
+{
+    return m_deviceAPI->getNbSinkStreams();
 }

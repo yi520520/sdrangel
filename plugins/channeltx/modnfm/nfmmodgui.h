@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,11 +19,13 @@
 #ifndef PLUGINS_CHANNELTX_MODNFM_NFMMODGUI_H_
 #define PLUGINS_CHANNELTX_MODNFM_NFMMODGUI_H_
 
-#include <plugin/plugininstancegui.h>
-#include "gui/rollupwidget.h"
+#include <QRegularExpressionValidator>
+
+#include "channel/channelgui.h"
 #include "dsp/channelmarker.h"
 #include "util/movingaverage.h"
 #include "util/messagequeue.h"
+#include "settings/rollupstate.h"
 
 #include "nfmmod.h"
 #include "nfmmodsettings.h"
@@ -35,23 +38,28 @@ namespace Ui {
     class NFMModGUI;
 }
 
-class NFMModGUI : public RollupWidget, public PluginInstanceGUI {
+class NFMModGUI : public ChannelGUI {
     Q_OBJECT
 
 public:
     static NFMModGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx);
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
-
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
+    virtual void setWorkspaceIndex(int index) { m_settings.m_workspaceIndex = index; };
+    virtual int getWorkspaceIndex() const { return m_settings.m_workspaceIndex; };
+    virtual void setGeometryBytes(const QByteArray& blob) { m_settings.m_geometryBytes = blob; };
+    virtual QByteArray getGeometryBytes() const { return m_settings.m_geometryBytes; };
+    virtual QString getTitle() const { return m_settings.m_title; };
+    virtual QColor getTitleColor() const  { return m_settings.m_rgbColor; };
+    virtual void zetHidden(bool hidden) { m_settings.m_hidden = hidden; }
+    virtual bool getHidden() const { return m_settings.m_hidden; }
+    virtual ChannelMarker& getChannelMarker() { return m_channelMarker; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
+    virtual void setStreamIndex(int streamIndex) { m_settings.m_streamIndex = streamIndex; }
 
 public slots:
     void channelMarkerChangedByCursor();
@@ -61,7 +69,10 @@ private:
     PluginAPI* m_pluginAPI;
     DeviceUISet* m_deviceUISet;
     ChannelMarker m_channelMarker;
+    RollupState m_rollupState;
     NFMModSettings m_settings;
+    qint64 m_deviceCenterFrequency;
+    int m_basebandSampleRate;
     bool m_doApplySettings;
 
     NFMMod* m_nfmMod;
@@ -71,10 +82,13 @@ private:
     quint32 m_recordLength;
     int m_recordSampleRate;
     int m_samplesCount;
+    int m_audioSampleRate;
+    int m_feedbackAudioSampleRate;
     std::size_t m_tickCount;
     bool m_enableNavTime;
     NFMModSettings::NFMModInputAF m_modAFInput;
     MessageQueue m_inputMessageQueue;
+    QRegularExpressionValidator m_dcsCodeValidator;
 
     explicit NFMModGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSource *channelTx, QWidget* parent = 0);
     virtual ~NFMModGUI();
@@ -84,16 +98,21 @@ private:
     void displaySettings();
     void updateWithStreamData();
     void updateWithStreamTime();
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
+    void updateAbsoluteCenterFrequency();
 
     void leaveEvent(QEvent*);
-    void enterEvent(QEvent*);
+    void enterEvent(EnterEventType*);
 
 private slots:
     void handleSourceMessages();
 
     void on_deltaFrequency_changed(qint64 value);
-    void on_rfBW_currentIndexChanged(int index);
+    void on_channelSpacingApply_clicked();
+    void on_rfBW_valueChanged(int value);
     void on_afBW_valueChanged(int value);
+    void on_preEmphasis_toggled(bool checked);
     void on_fmDev_valueChanged(int value);
     void on_toneFrequency_valueChanged(int value);
     void on_volume_valueChanged(int value);
@@ -101,6 +120,7 @@ private slots:
     void on_tone_toggled(bool checked);
     void on_morseKeyer_toggled(bool checked);
     void on_mic_toggled(bool checked);
+    void on_compressor_toggled(bool checked);
     void on_play_toggled(bool checked);
 
     void on_playLoop_toggled(bool checked);
@@ -109,6 +129,10 @@ private slots:
 
     void on_ctcss_currentIndexChanged(int index);
     void on_ctcssOn_toggled(bool checked);
+    void on_dcsOn_toggled(bool checked);
+    void on_dcsCode_editingFinished();
+    void on_dcsPositive_toggled(bool checked);
+    void on_bpf_toggled(bool checked);
 
     void on_feedbackEnable_toggled(bool checked);
     void on_feedbackVolume_valueChanged(int value);
@@ -117,8 +141,8 @@ private slots:
     void onMenuDialogCalled(const QPoint& p);
 
     void configureFileName();
-    void audioSelect();
-    void audioFeedbackSelect();
+    void audioSelect(const QPoint& p);
+    void audioFeedbackSelect(const QPoint& p);
     void tick();
 };
 

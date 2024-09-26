@@ -1,25 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>DSDDemodGUI</class>
- <widget class="RollupWidget" name="DSDDemodGUI">
+ <widget class="RollupContents" name="DSDDemodGUI">
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>613</width>
+    <width>650</width>
     <height>392</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+   <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
   </property>
   <property name="minimumSize">
    <size>
-    <width>610</width>
-    <height>0</height>
+    <width>500</width>
+    <height>392</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>750</width>
+    <height>392</height>
    </size>
   </property>
   <property name="font">
@@ -31,15 +37,12 @@
   <property name="windowTitle">
    <string>DSD Demodulator</string>
   </property>
-  <property name="statusTip">
-   <string>DSD Demodulator</string>
-  </property>
   <widget class="QWidget" name="settingsContainer" native="true">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>608</width>
+     <width>648</width>
      <height>172</height>
     </rect>
    </property>
@@ -51,7 +54,7 @@
    </property>
    <property name="minimumSize">
     <size>
-     <width>608</width>
+     <width>500</width>
      <height>0</height>
     </size>
    </property>
@@ -530,7 +533,7 @@
        <widget class="QLabel" name="formatStatusText">
         <property name="minimumSize">
          <size>
-          <width>595</width>
+          <width>480</width>
           <height>0</height>
          </size>
         </property>
@@ -557,19 +560,6 @@
         </property>
        </widget>
       </item>
-      <item>
-       <spacer name="formatStatusSpacer">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
      </layout>
     </item>
    </layout>
@@ -579,13 +569,13 @@
     <rect>
      <x>10</x>
      <y>180</y>
-     <width>600</width>
+     <width>480</width>
      <height>210</height>
     </rect>
    </property>
    <property name="minimumSize">
     <size>
-     <width>600</width>
+     <width>480</width>
      <height>210</height>
     </size>
    </property>
@@ -1241,6 +1231,29 @@
         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
        </property>
       </widget>
+      <widget class="QCheckBox" name="ambeSupport">
+       <property name="geometry">
+        <rect>
+         <x>10</x>
+         <y>170</y>
+         <width>71</width>
+         <height>23</height>
+        </rect>
+       </property>
+       <property name="text">
+        <string>AMBE</string>
+       </property>
+      </widget>
+      <widget class="QComboBox" name="ambeFeatures">
+       <property name="geometry">
+        <rect>
+         <x>80</x>
+         <y>170</y>
+         <width>50</width>
+         <height>20</height>
+        </rect>
+       </property>
+      </widget>
      </widget>
     </item>
    </layout>
@@ -1248,26 +1261,26 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>RollupWidget</class>
-   <extends>QWidget</extends>
-   <header>gui/rollupwidget.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
    <class>ButtonSwitch</class>
    <extends>QToolButton</extends>
    <header>gui/buttonswitch.h</header>
   </customwidget>
   <customwidget>
-   <class>LevelMeterSignalDB</class>
+   <class>RollupContents</class>
    <extends>QWidget</extends>
-   <header>gui/levelmeter.h</header>
+   <header>gui/rollupcontents.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>
    <class>ValueDialZ</class>
    <extends>QWidget</extends>
    <header>gui/valuedialz.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>LevelMeterSignalDB</class>
+   <extends>QWidget</extends>
+   <header>gui/levelmeter.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>

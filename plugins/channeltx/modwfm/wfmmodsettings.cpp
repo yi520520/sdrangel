@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -30,8 +33,9 @@ const int WFMModSettings::m_rfBW[] = {
 const int WFMModSettings::m_nbRfBW = 14;
 
 WFMModSettings::WFMModSettings() :
-    m_channelMarker(0),
-    m_cwKeyerGUI(0)
+    m_channelMarker(nullptr),
+    m_cwKeyerGUI(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -50,11 +54,17 @@ void WFMModSettings::resetToDefaults()
     m_title = "WFM Modulator";
     m_modAFInput = WFMModInputNone;
     m_audioDeviceName = AudioDeviceManager::m_defaultDeviceName;
+    m_feedbackAudioDeviceName = AudioDeviceManager::m_defaultDeviceName;
+    m_feedbackVolumeFactor = 0.5f;
+    m_feedbackAudioEnable = false;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray WFMModSettings::serialize() const
@@ -71,6 +81,8 @@ QByteArray WFMModSettings::serialize() const
 
     if (m_cwKeyerGUI) {
         s.writeBlob(8, m_cwKeyerGUI->serialize());
+    } else { // standalone operation with presets
+        s.writeBlob(6, m_cwKeyerSettings.serialize());
     }
 
     if (m_channelMarker) {
@@ -85,6 +97,18 @@ QByteArray WFMModSettings::serialize() const
     s.writeU32(15, m_reverseAPIPort);
     s.writeU32(16, m_reverseAPIDeviceIndex);
     s.writeU32(17, m_reverseAPIChannelIndex);
+    s.writeS32(18, m_streamIndex);
+    s.writeString(19, m_feedbackAudioDeviceName);
+    s.writeReal(20, m_feedbackVolumeFactor);
+    s.writeBool(21, m_feedbackAudioEnable);
+
+    if (m_rollupState) {
+        s.writeBlob(22, m_rollupState->serialize());
+    }
+
+    s.writeS32(23, m_workspaceIndex);
+    s.writeBlob(24, m_geometryBytes);
+    s.writeBool(25, m_hidden);
 
     return s.final();
 }
@@ -113,13 +137,16 @@ bool WFMModSettings::deserialize(const QByteArray& data)
         d.readU32(5, &m_rgbColor);
         d.readReal(6, &m_toneFrequency, 1000.0);
         d.readReal(7, &m_volumeFactor, 1.0);
+        d.readBlob(8, &bytetmp);
 
         if (m_cwKeyerGUI) {
-            d.readBlob(8, &bytetmp);
             m_cwKeyerGUI->deserialize(bytetmp);
+        } else { // standalone operation with presets
+            m_cwKeyerSettings.deserialize(bytetmp);
         }
 
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
             d.readBlob(9, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
@@ -148,6 +175,20 @@ bool WFMModSettings::deserialize(const QByteArray& data)
         m_reverseAPIDeviceIndex = utmp > 99 ? 99 : utmp;
         d.readU32(17, &utmp, 0);
         m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
+        d.readS32(18, &m_streamIndex, 0);
+        d.readString(19, &m_feedbackAudioDeviceName, AudioDeviceManager::m_defaultDeviceName);
+        d.readReal(20, &m_feedbackVolumeFactor, 1.0);
+        d.readBool(21, &m_feedbackAudioEnable, false);
+
+        if (m_rollupState)
+        {
+            d.readBlob(22, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(23, &m_workspaceIndex, 0);
+        d.readBlob(24, &m_geometryBytes);
+        d.readBool(25, &m_hidden, false);
 
         return true;
     }

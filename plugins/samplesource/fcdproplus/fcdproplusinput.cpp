@@ -1,5 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016-2018 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron>                                      //
+// Copyright (C) 2015-2020, 2022-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -27,7 +32,6 @@
 
 #include "dsp/dspcommands.h"
 #include "dsp/dspengine.h"
-#include "dsp/filerecord.h"
 #include "device/deviceapi.h"
 
 #include "fcdproplusinput.h"
@@ -37,36 +41,41 @@
 
 MESSAGE_CLASS_DEFINITION(FCDProPlusInput::MsgConfigureFCDProPlus, Message)
 MESSAGE_CLASS_DEFINITION(FCDProPlusInput::MsgStartStop, Message)
-MESSAGE_CLASS_DEFINITION(FCDProPlusInput::MsgFileRecord, Message)
 
 FCDProPlusInput::FCDProPlusInput(DeviceAPI *deviceAPI) :
     m_deviceAPI(deviceAPI),
-	m_dev(0),
+	m_dev(nullptr),
 	m_settings(),
-	m_FCDThread(0),
+	m_FCDThread(nullptr),
 	m_deviceDescription(fcd_traits<ProPlus>::displayedName),
 	m_running(false)
 {
+    m_sampleFifo.setLabel(m_deviceDescription);
     m_fcdFIFO.setSize(20*fcd_traits<ProPlus>::convBufSize);
     openDevice();
-    m_fileSink = new FileRecord(QString("test_%1.sdriq").arg(m_deviceAPI->getDeviceUID()));
     m_deviceAPI->setNbSourceStreams(1);
-    m_deviceAPI->addAncillarySink(m_fileSink);
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &FCDProPlusInput::networkManagerFinished
+    );
 }
 
 FCDProPlusInput::~FCDProPlusInput()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &FCDProPlusInput::networkManagerFinished
+    );
     delete m_networkManager;
 
     if (m_running) {
         stop();
     }
-
-    m_deviceAPI->removeAncillarySink(m_fileSink);
-    delete m_fileSink;
 
     closeDevice();
 }
@@ -107,19 +116,19 @@ bool FCDProPlusInput::openDevice()
 
 void FCDProPlusInput::init()
 {
-    applySettings(m_settings, true);
+    applySettings(m_settings, QList<QString>(), true);
 }
 
 bool FCDProPlusInput::start()
 {
-//	QMutexLocker mutexLocker(&m_mutex);
+	QMutexLocker mutexLocker(&m_mutex);
 
     if (!m_dev) {
         return false;
     }
 
     if (m_running) {
-        stop();
+        return true;
     }
 
     qDebug() << "FCDProPlusInput::start";
@@ -138,13 +147,16 @@ bool FCDProPlusInput::start()
 	}
 
 	m_FCDThread = new FCDProPlusThread(&m_sampleFifo, &m_fcdFIFO);
+    m_FCDThread->setLog2Decimation(m_settings.m_log2Decim);
+    m_FCDThread->setFcPos(m_settings.m_fcPos);
+    m_FCDThread->setIQOrder(m_settings.m_iqOrder);
 	m_FCDThread->startWork();
+	m_running = true;
 
-//	mutexLocker.unlock();
-	applySettings(m_settings, true);
+	mutexLocker.unlock();
+	applySettings(m_settings, QList<QString>(), true);
 
 	qDebug("FCDProPlusInput::started");
-	m_running = true;
 
 	return true;
 }
@@ -158,24 +170,26 @@ void FCDProPlusInput::closeDevice()
     fcdClose(m_dev);
     m_dev = 0;
 
-   	closeFCDAudio();
+    closeFCDAudio();
 }
 
 bool FCDProPlusInput::openFCDAudio(const char* cardname)
 {
     AudioDeviceManager *audioDeviceManager = DSPEngine::instance()->getAudioDeviceManager();
-    const QList<QAudioDeviceInfo>& audioList = audioDeviceManager->getInputDevices();
+    const QList<AudioDeviceInfo>& audioList = AudioDeviceInfo::availableInputDevices();
 
     for (const auto &itAudio : audioList)
     {
         if (itAudio.deviceName().contains(QString(cardname)))
         {
             int fcdDeviceIndex = audioDeviceManager->getInputDeviceIndex(itAudio.deviceName());
-            m_fcdAudioInput.start(fcdDeviceIndex, fcd_traits<ProPlus>::sampleRate);
-            int fcdSampleRate = m_fcdAudioInput.getRate();
-            qDebug("FCDProPlusInput::openFCDAudio: %s index %d at %d S/s",
-                    itAudio.deviceName().toStdString().c_str(), fcdDeviceIndex, fcdSampleRate);
-            m_fcdAudioInput.addFifo(&m_fcdFIFO);
+            AudioDeviceManager::InputDeviceInfo fcdDeviceInfo;
+            audioDeviceManager->getInputDeviceInfo(itAudio.deviceName(), fcdDeviceInfo);
+            fcdDeviceInfo.sampleRate = fcd_traits<ProPlus>::sampleRate;
+            audioDeviceManager->setInputDeviceInfo(fcdDeviceIndex, fcdDeviceInfo);
+            audioDeviceManager->addAudioSource(&m_fcdFIFO, getInputMessageQueue(), fcdDeviceIndex);
+            qDebug("FCDProPlusInput::openFCDAudio: %s index %d",
+                itAudio.deviceName().toStdString().c_str(), fcdDeviceIndex);
             return true;
         }
     }
@@ -186,13 +200,19 @@ bool FCDProPlusInput::openFCDAudio(const char* cardname)
 
 void FCDProPlusInput::closeFCDAudio()
 {
-    m_fcdAudioInput.removeFifo(&m_fcdFIFO);
-    m_fcdAudioInput.stop();
+    AudioDeviceManager *audioDeviceManager = DSPEngine::instance()->getAudioDeviceManager();
+    audioDeviceManager->removeAudioSource(&m_fcdFIFO);
 }
 
 void FCDProPlusInput::stop()
 {
 	QMutexLocker mutexLocker(&m_mutex);
+
+    if (!m_running) {
+        return;
+    }
+
+	m_running = false;
 
 	if (m_FCDThread)
 	{
@@ -201,8 +221,6 @@ void FCDProPlusInput::stop()
 		delete m_FCDThread;
 		m_FCDThread = nullptr;
 	}
-
-	m_running = false;
 }
 
 QByteArray FCDProPlusInput::serialize() const
@@ -220,12 +238,12 @@ bool FCDProPlusInput::deserialize(const QByteArray& data)
         success = false;
     }
 
-    MsgConfigureFCDProPlus* message = MsgConfigureFCDProPlus::create(m_settings, true);
+    MsgConfigureFCDProPlus* message = MsgConfigureFCDProPlus::create(m_settings, QList<QString>(), true);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureFCDProPlus* messageToGUI = MsgConfigureFCDProPlus::create(m_settings, true);
+        MsgConfigureFCDProPlus* messageToGUI = MsgConfigureFCDProPlus::create(m_settings, QList<QString>(), true);
         m_guiMessageQueue->push(messageToGUI);
     }
 
@@ -252,12 +270,12 @@ void FCDProPlusInput::setCenterFrequency(qint64 centerFrequency)
     FCDProPlusSettings settings = m_settings;
     settings.m_centerFrequency = centerFrequency;
 
-    MsgConfigureFCDProPlus* message = MsgConfigureFCDProPlus::create(settings, false);
+    MsgConfigureFCDProPlus* message = MsgConfigureFCDProPlus::create(settings, QList<QString>{"centerFrequency"}, false);
     m_inputMessageQueue.push(message);
 
     if (m_guiMessageQueue)
     {
-        MsgConfigureFCDProPlus* messageToGUI = MsgConfigureFCDProPlus::create(settings, false);
+        MsgConfigureFCDProPlus* messageToGUI = MsgConfigureFCDProPlus::create(settings, QList<QString>{"centerFrequency"}, false);
         m_guiMessageQueue->push(messageToGUI);
     }
 }
@@ -268,7 +286,7 @@ bool FCDProPlusInput::handleMessage(const Message& message)
 	{
 		qDebug() << "FCDProPlusInput::handleMessage: MsgConfigureFCD";
 		MsgConfigureFCDProPlus& conf = (MsgConfigureFCDProPlus&) message;
-		applySettings(conf.getSettings(), conf.getForce());
+		applySettings(conf.getSettings(), conf.getSettingsKeys(), conf.getForce());
 		return true;
 	}
     else if (MsgStartStop::match(message))
@@ -278,8 +296,7 @@ bool FCDProPlusInput::handleMessage(const Message& message)
 
         if (cmd.getStartStop())
         {
-            if (m_deviceAPI->initDeviceEngine())
-            {
+            if (m_deviceAPI->initDeviceEngine()) {
                 m_deviceAPI->startDeviceEngine();
             }
         }
@@ -294,58 +311,23 @@ bool FCDProPlusInput::handleMessage(const Message& message)
 
         return true;
     }
-    else if (MsgFileRecord::match(message))
-    {
-        MsgFileRecord& conf = (MsgFileRecord&) message;
-        qDebug() << "FCDProPlusInput::handleMessage: MsgFileRecord: " << conf.getStartStop();
-
-        if (conf.getStartStop())
-        {
-            if (m_settings.m_fileRecordName.size() != 0) {
-                m_fileSink->setFileName(m_settings.m_fileRecordName);
-            } else {
-                m_fileSink->genUniqueFileName(m_deviceAPI->getDeviceUID());
-            }
-
-            m_fileSink->startRecording();
-        }
-        else
-        {
-            m_fileSink->stopRecording();
-        }
-
-        return true;
-    }
 	else
 	{
 		return false;
 	}
 }
 
-void FCDProPlusInput::applySettings(const FCDProPlusSettings& settings, bool force)
+void FCDProPlusInput::applySettings(const FCDProPlusSettings& settings, const QList<QString>& settingsKeys, bool force)
 {
+    qDebug() << "FCDProPlusInput::applySettings: force: " << force << settings.getDebugString(settingsKeys, force);
 	bool forwardChange = false;
-    QList<QString> reverseAPIKeys;
 
-    if (force || (m_settings.m_centerFrequency != settings.m_centerFrequency)) {
-        reverseAPIKeys.append("centerFrequency");
-    }
-    if (force || (m_settings.m_transverterMode != settings.m_transverterMode)) {
-        reverseAPIKeys.append("transverterMode");
-    }
-    if (force || (m_settings.m_transverterDeltaFrequency != settings.m_transverterDeltaFrequency)) {
-        reverseAPIKeys.append("transverterDeltaFrequency");
-    }
-	if ((m_settings.m_LOppmTenths != settings.m_LOppmTenths) || force) {
-		reverseAPIKeys.append("LOppmTenths");
-    }
-
-	if (force || (m_settings.m_centerFrequency != settings.m_centerFrequency)
-        || (m_settings.m_LOppmTenths != settings.m_LOppmTenths)
-        || (m_settings.m_fcPos != settings.m_fcPos)
-        || (m_settings.m_log2Decim != settings.m_log2Decim)
-        || (m_settings.m_transverterMode != settings.m_transverterMode)
-        || (m_settings.m_transverterDeltaFrequency != settings.m_transverterDeltaFrequency))
+	if (force || settingsKeys.contains("centerFrequency")
+        || settingsKeys.contains("LOppmTenths")
+        || settingsKeys.contains("fcPos")
+        || settingsKeys.contains("log2Decim")
+        || settingsKeys.contains("transverterMode")
+        || settingsKeys.contains("transverterDeltaFrequency"))
 	{
         qint64 deviceCenterFrequency = DeviceSampleSource::calculateDeviceCenterFrequency(
                 settings.m_centerFrequency,
@@ -368,110 +350,105 @@ void FCDProPlusInput::applySettings(const FCDProPlusSettings& settings, bool for
         m_settings.m_centerFrequency = settings.m_centerFrequency;
 	}
 
-	if ((m_settings.m_log2Decim != settings.m_log2Decim) || force)
+	if (settingsKeys.contains("log2Decim") || force)
 	{
-        reverseAPIKeys.append("log2Decim");
 		forwardChange = true;
 
-		if (m_FCDThread != 0)
+		if (m_FCDThread)
 		{
 		    m_FCDThread->setLog2Decimation(settings.m_log2Decim);
 			qDebug() << "FCDProPlusInput::applySettings: set decimation to " << (1<<settings.m_log2Decim);
 		}
 	}
 
-    if ((m_settings.m_fcPos != settings.m_fcPos) || force)
+    if (settingsKeys.contains("fcPos") || force)
     {
-        reverseAPIKeys.append("fcPos");
-
-        if (m_FCDThread != 0) {
+        if (m_FCDThread) {
             m_FCDThread->setFcPos((int) settings.m_fcPos);
         }
 
         qDebug() << "FCDProPlusInput::applySettings: set fc pos (enum) to " << (int) settings.m_fcPos;
     }
 
-	if ((m_settings.m_lnaGain != settings.m_lnaGain) || force)
-	{
-        reverseAPIKeys.append("lnaGain");
+    if (settingsKeys.contains("iqOrder") || force)
+    {
+        if (m_FCDThread) {
+            m_FCDThread->setIQOrder((int) settings.m_iqOrder);
+        }
 
+        qDebug() << "FCDProPlusInput::applySettings: set IQ order to %s" << (settings.m_iqOrder ? "IQ" : "QI");
+    }
+
+	if (settingsKeys.contains("lnaGain") || force)
+	{
 		if (m_dev != 0) {
 			set_lna_gain(settings.m_lnaGain);
 		}
 	}
 
-	if ((m_settings.m_biasT != settings.m_biasT) || force)
+	if (settingsKeys.contains("biasT") || force)
 	{
-        reverseAPIKeys.append("biasT");
-
 		if (m_dev != 0) {
 			set_bias_t(settings.m_biasT);
 		}
 	}
 
-	if ((m_settings.m_mixGain != settings.m_mixGain) || force)
+	if (settingsKeys.contains("mixGain") || force)
 	{
-        reverseAPIKeys.append("mixGain");
-
 		if (m_dev != 0) {
 			set_mixer_gain(settings.m_mixGain);
 		}
 	}
 
-	if ((m_settings.m_ifGain != settings.m_ifGain) || force)
+	if (settingsKeys.contains("ifGain") || force)
 	{
-        reverseAPIKeys.append("ifGain");
-
 		if (m_dev != 0) {
 			set_if_gain(settings.m_ifGain);
 		}
 	}
 
-	if ((m_settings.m_ifFilterIndex != settings.m_ifFilterIndex) || force)
+	if (settingsKeys.contains("ifFilterIndex") || force)
 	{
-        reverseAPIKeys.append("ifFilterIndex");
-
 		if (m_dev != 0) {
 			set_if_filter(settings.m_ifFilterIndex);
 		}
 	}
 
-	if ((m_settings.m_rfFilterIndex != settings.m_rfFilterIndex) || force)
+	if (settingsKeys.contains("rfFilterIndex") || force)
 	{
-        reverseAPIKeys.append("rfFilterIndex");
-
 		if (m_dev != 0) {
 			set_rf_filter(settings.m_rfFilterIndex);
 		}
 	}
 
-	if ((m_settings.m_dcBlock != settings.m_dcBlock) || force)
+	if (settingsKeys.contains("dcBlock") || force)
 	{
-        reverseAPIKeys.append("dcBlock");
 		m_deviceAPI->configureCorrections(settings.m_dcBlock, settings.m_iqImbalance);
 	}
 
-	if ((m_settings.m_iqImbalance != settings.m_iqImbalance) || force)
+	if (settingsKeys.contains("iqImbalance") || force)
 	{
-        reverseAPIKeys.append("iqImbalance");
 		m_deviceAPI->configureCorrections(settings.m_dcBlock, settings.m_iqImbalance);
 	}
 
     if (settings.m_useReverseAPI)
     {
-        bool fullUpdate = ((m_settings.m_useReverseAPI != settings.m_useReverseAPI) && settings.m_useReverseAPI) ||
-                (m_settings.m_reverseAPIAddress != settings.m_reverseAPIAddress) ||
-                (m_settings.m_reverseAPIPort != settings.m_reverseAPIPort) ||
-                (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex);
-        webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+        bool fullUpdate = (settingsKeys.contains("useReverseAPI") && settings.m_useReverseAPI) ||
+            settingsKeys.contains("reverseAPIAddress") ||
+            settingsKeys.contains("reverseAPIPort") ||
+            settingsKeys.contains("reverseAPIDeviceIndex");
+        webapiReverseSendSettings(settingsKeys, settings, fullUpdate || force);
     }
 
-    m_settings = settings;
+    if (force) {
+        m_settings = settings;
+    } else {
+        m_settings.applySettings(settingsKeys, settings);
+    }
 
 	if (forwardChange)
     {
 		DSPSignalNotification *notif = new DSPSignalNotification(fcd_traits<ProPlus>::sampleRate/(1<<settings.m_log2Decim), m_settings.m_centerFrequency);
-        m_fileSink->handleMessage(*notif); // forward to file sink
         m_deviceAPI->getDeviceEngineInputMessageQueue()->push(notif);
     }
 }
@@ -482,7 +459,7 @@ void FCDProPlusInput::set_center_freq(double freq)
 
 	if (fcdAppSetFreq(m_dev, freq) == FCD_MODE_NONE)
 	{
-		qDebug("No FCD HID found for frquency change");
+		qDebug("No FCD HID found for frequency change");
 	}
 }
 
@@ -509,30 +486,26 @@ void FCDProPlusInput::set_mixer_gain(bool on)
 
 void FCDProPlusInput::set_if_gain(int gain)
 {
-	if (gain < 0)
-	{
+	if (gain < 0) {
 		return;
 	}
 
 	quint8 cmd_value = gain;
 
-	if (fcdAppSetParam(m_dev, FCDPROPLUS_HID_CMD_SET_IF_GAIN, &cmd_value, 1) != FCD_MODE_APP)
-	{
+	if (fcdAppSetParam(m_dev, FCDPROPLUS_HID_CMD_SET_IF_GAIN, &cmd_value, 1) != FCD_MODE_APP) {
 		qWarning() << "FCDProPlusInput::set_if_gain: failed to set at " << cmd_value;
 	}
 }
 
 void FCDProPlusInput::set_if_filter(int filterIndex)
 {
-	if ((filterIndex < 0) || (filterIndex >= FCDProPlusConstants::fcdproplus_if_filter_nb_values()))
-	{
+	if ((filterIndex < 0) || (filterIndex >= FCDProPlusConstants::fcdproplus_if_filter_nb_values())) {
 		return;
 	}
 
 	quint8 cmd_value = FCDProPlusConstants::if_filters[filterIndex].value;
 
-	if (fcdAppSetParam(m_dev, FCDPROPLUS_HID_CMD_SET_IF_FILTER, &cmd_value, 1) != FCD_MODE_APP)
-	{
+	if (fcdAppSetParam(m_dev, FCDPROPLUS_HID_CMD_SET_IF_FILTER, &cmd_value, 1) != FCD_MODE_APP) {
 		qWarning() << "FCDProPlusInput::set_if_filter: failed to set at " << cmd_value;
 	}
 }
@@ -540,15 +513,13 @@ void FCDProPlusInput::set_if_filter(int filterIndex)
 
 void FCDProPlusInput::set_rf_filter(int filterIndex)
 {
-	if ((filterIndex < 0) || (filterIndex >= FCDProPlusConstants::fcdproplus_rf_filter_nb_values()))
-	{
+	if ((filterIndex < 0) || (filterIndex >= FCDProPlusConstants::fcdproplus_rf_filter_nb_values())) {
 		return;
 	}
 
 	quint8 cmd_value = FCDProPlusConstants::rf_filters[filterIndex].value;
 
-	if (fcdAppSetParam(m_dev, FCDPROPLUS_HID_CMD_SET_RF_FILTER, &cmd_value, 1) != FCD_MODE_APP)
-	{
+	if (fcdAppSetParam(m_dev, FCDPROPLUS_HID_CMD_SET_RF_FILTER, &cmd_value, 1) != FCD_MODE_APP) {
 		qWarning() << "FCDProPlusInput::set_rf_filter: failed to set at " << cmd_value;
 	}
 }
@@ -600,12 +571,34 @@ int FCDProPlusInput::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     FCDProPlusSettings settings = m_settings;
+    webapiUpdateDeviceSettings(settings, deviceSettingsKeys, response);
 
+    MsgConfigureFCDProPlus *msg = MsgConfigureFCDProPlus::create(settings, deviceSettingsKeys, force);
+    m_inputMessageQueue.push(msg);
+
+    if (m_guiMessageQueue) // forward to GUI if any
+    {
+        MsgConfigureFCDProPlus *msgToGUI = MsgConfigureFCDProPlus::create(settings, deviceSettingsKeys, force);
+        m_guiMessageQueue->push(msgToGUI);
+    }
+
+    webapiFormatDeviceSettings(response, settings);
+    return 200;
+}
+
+void FCDProPlusInput::webapiUpdateDeviceSettings(
+        FCDProPlusSettings& settings,
+        const QStringList& deviceSettingsKeys,
+        SWGSDRangel::SWGDeviceSettings& response)
+{
     if (deviceSettingsKeys.contains("centerFrequency")) {
         settings.m_centerFrequency = response.getFcdProPlusSettings()->getCenterFrequency();
     }
     if (deviceSettingsKeys.contains("log2Decim")) {
         settings.m_log2Decim = response.getFcdProPlusSettings()->getLog2Decim();
+    }
+    if (deviceSettingsKeys.contains("iqOrder")) {
+        settings.m_iqOrder = response.getFcdProPlusSettings()->getIqOrder() != 0;
     }
     if (deviceSettingsKeys.contains("fcPos")) {
         settings.m_fcPos = (FCDProPlusSettings::fcPos_t) response.getFcdProPlusSettings()->getFcPos();
@@ -646,9 +639,6 @@ int FCDProPlusInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("transverterMode")) {
         settings.m_transverterMode = response.getFcdProPlusSettings()->getTransverterMode() != 0;
     }
-    if (deviceSettingsKeys.contains("fileRecordName")) {
-        settings.m_fileRecordName = *response.getFcdProPlusSettings()->getFileRecordName();
-    }
     if (deviceSettingsKeys.contains("useReverseAPI")) {
         settings.m_useReverseAPI = response.getFcdProPlusSettings()->getUseReverseApi() != 0;
     }
@@ -661,24 +651,13 @@ int FCDProPlusInput::webapiSettingsPutPatch(
     if (deviceSettingsKeys.contains("reverseAPIDeviceIndex")) {
         settings.m_reverseAPIDeviceIndex = response.getFcdProPlusSettings()->getReverseApiDeviceIndex();
     }
-
-    MsgConfigureFCDProPlus *msg = MsgConfigureFCDProPlus::create(settings, force);
-    m_inputMessageQueue.push(msg);
-
-    if (m_guiMessageQueue) // forward to GUI if any
-    {
-        MsgConfigureFCDProPlus *msgToGUI = MsgConfigureFCDProPlus::create(settings, force);
-        m_guiMessageQueue->push(msgToGUI);
-    }
-
-    webapiFormatDeviceSettings(response, settings);
-    return 200;
 }
 
 void FCDProPlusInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const FCDProPlusSettings& settings)
 {
     response.getFcdProPlusSettings()->setCenterFrequency(settings.m_centerFrequency);
     response.getFcdProPlusSettings()->setLog2Decim(settings.m_log2Decim);
+    response.getFcdProPlusSettings()->setIqOrder(settings.m_iqOrder ? 1 : 0);
     response.getFcdProPlusSettings()->setFcPos((int) settings.m_fcPos);
     response.getFcdProPlusSettings()->setRangeLow(settings.m_rangeLow ? 1 : 0);
     response.getFcdProPlusSettings()->setLnaGain(settings.m_lnaGain ? 1 : 0);
@@ -693,12 +672,6 @@ void FCDProPlusInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings&
     response.getFcdProPlusSettings()->setTransverterDeltaFrequency(settings.m_transverterDeltaFrequency);
     response.getFcdProPlusSettings()->setTransverterMode(settings.m_transverterMode ? 1 : 0);
 
-    if (response.getFcdProPlusSettings()->getFileRecordName()) {
-        *response.getFcdProPlusSettings()->getFileRecordName() = settings.m_fileRecordName;
-    } else {
-        response.getFcdProPlusSettings()->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
-
     response.getFcdProPlusSettings()->setUseReverseApi(settings.m_useReverseAPI ? 1 : 0);
 
     if (response.getFcdProPlusSettings()->getReverseApiAddress()) {
@@ -711,7 +684,7 @@ void FCDProPlusInput::webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings&
     response.getFcdProPlusSettings()->setReverseApiDeviceIndex(settings.m_reverseAPIDeviceIndex);
 }
 
-void FCDProPlusInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const FCDProPlusSettings& settings, bool force)
+void FCDProPlusInput::webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const FCDProPlusSettings& settings, bool force)
 {
     SWGSDRangel::SWGDeviceSettings *swgDeviceSettings = new SWGSDRangel::SWGDeviceSettings();
     swgDeviceSettings->setDirection(0); // single Rx
@@ -727,6 +700,9 @@ void FCDProPlusInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKe
     }
     if (deviceSettingsKeys.contains("log2Decim") || force) {
         swgFCDProPlusSettings->setLog2Decim(settings.m_log2Decim);
+    }
+    if (deviceSettingsKeys.contains("iqOrder") || force) {
+        swgFCDProPlusSettings->setIqOrder(settings.m_iqOrder ? 1 : 0);
     }
     if (deviceSettingsKeys.contains("fcPos") || force) {
         swgFCDProPlusSettings->setFcPos((int) settings.m_fcPos);
@@ -767,9 +743,6 @@ void FCDProPlusInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKe
     if (deviceSettingsKeys.contains("transverterMode") || force) {
         swgFCDProPlusSettings->setTransverterMode(settings.m_transverterMode ? 1 : 0);
     }
-    if (deviceSettingsKeys.contains("fileRecordName") || force) {
-        swgFCDProPlusSettings->setFileRecordName(new QString(settings.m_fileRecordName));
-    }
 
     QString deviceSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/device/settings")
             .arg(settings.m_reverseAPIAddress)
@@ -778,13 +751,14 @@ void FCDProPlusInput::webapiReverseSendSettings(QList<QString>& deviceSettingsKe
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
 
     // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
 
     delete swgDeviceSettings;
 }
@@ -803,17 +777,19 @@ void FCDProPlusInput::webapiReverseSendStartStop(bool start)
     m_networkRequest.setUrl(QUrl(deviceSettingsURL));
     m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
 
-    QBuffer *buffer=new QBuffer();
+    QBuffer *buffer = new QBuffer();
     buffer->open((QBuffer::ReadWrite));
     buffer->write(swgDeviceSettings->asJson().toUtf8());
     buffer->seek(0);
+    QNetworkReply *reply;
 
     if (start) {
-        m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "POST", buffer);
     } else {
-        m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
+        reply = m_networkManager->sendCustomRequest(m_networkRequest, "DELETE", buffer);
     }
 
+    buffer->setParent(reply);
     delete swgDeviceSettings;
 }
 
@@ -827,10 +803,13 @@ void FCDProPlusInput::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("FCDProPlusInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("FCDProPlusInput::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
 }

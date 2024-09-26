@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,7 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 
@@ -29,7 +31,8 @@ const int WFMDemodSettings::m_rfBWMax = 300000;
 const int WFMDemodSettings::m_rfBWDigits = 6;
 
 WFMDemodSettings::WFMDemodSettings() :
-    m_channelMarker(0)
+    m_channelMarker(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -45,11 +48,14 @@ void WFMDemodSettings::resetToDefaults()
     m_rgbColor = QColor(0, 0, 255).rgb();
     m_title = "WFM Demodulator";
     m_audioDeviceName = AudioDeviceManager::m_defaultDeviceName;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray WFMDemodSettings::serialize() const
@@ -73,6 +79,15 @@ QByteArray WFMDemodSettings::serialize() const
     s.writeU32(14, m_reverseAPIPort);
     s.writeU32(15, m_reverseAPIDeviceIndex);
     s.writeU32(16, m_reverseAPIChannelIndex);
+    s.writeS32(17, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(18, m_rollupState->serialize());
+    }
+
+    s.writeS32(19, m_workspaceIndex);
+    s.writeBlob(20, m_geometryBytes);
+    s.writeBool(21, m_hidden);
 
     return s.final();
 }
@@ -108,9 +123,9 @@ bool WFMDemodSettings::deserialize(const QByteArray& data)
         d.readString(8, &m_title, "WFM Demodulator");
         d.readString(9, &m_audioDeviceName, AudioDeviceManager::m_defaultDeviceName);
 
-        d.readBlob(11, &bytetmp);
-
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
+            d.readBlob(11, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
 
@@ -128,6 +143,17 @@ bool WFMDemodSettings::deserialize(const QByteArray& data)
         m_reverseAPIDeviceIndex = utmp > 99 ? 99 : utmp;
         d.readU32(16, &utmp, 0);
         m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
+        d.readS32(17, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(18, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(19, &m_workspaceIndex, 0);
+        d.readBlob(20, &m_geometryBytes);
+        d.readBool(21, &m_hidden, false);
 
         return true;
     }

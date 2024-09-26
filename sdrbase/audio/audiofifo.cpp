@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
 // written by Christian Daniel                                                   //
+// Copyright (C) 2015, 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,12 +21,11 @@
 #include <QTime>
 #include "dsp/dsptypes.h"
 #include "audio/audiofifo.h"
-#include "audio/audionetsink.h"
 
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 
 AudioFifo::AudioFifo() :
-	m_fifo(0),
+	m_fifo(nullptr),
 	m_sampleSize(sizeof(AudioSample))
 {
 	m_size = 0;
@@ -35,7 +35,7 @@ AudioFifo::AudioFifo() :
 }
 
 AudioFifo::AudioFifo(uint32_t numSamples) :
-	m_fifo(0),
+	m_fifo(nullptr),
     m_sampleSize(sizeof(AudioSample))
 {
 	QMutexLocker mutexLocker(&m_mutex);
@@ -47,10 +47,10 @@ AudioFifo::~AudioFifo()
 {
 	QMutexLocker mutexLocker(&m_mutex);
 
-	if (m_fifo != 0)
+	if (m_fifo)
 	{
 		delete[] m_fifo;
-		m_fifo = 0;
+		m_fifo = nullptr;
 	}
 
 	m_size = 0;
@@ -63,13 +63,20 @@ bool AudioFifo::setSize(uint32_t numSamples)
 	return create(numSamples);
 }
 
-uint AudioFifo::write(const quint8* data, uint32_t numSamples)
+bool AudioFifo::setSampleSize(uint32_t sampleSize, uint32_t numSamples)
+{
+	QMutexLocker mutexLocker(&m_mutex);
+    m_sampleSize = sampleSize;
+	return create(numSamples);
+}
+
+uint32_t AudioFifo::write(const quint8* data, uint32_t numSamples)
 {
 	uint32_t total;
 	uint32_t remaining;
 	uint32_t copyLen;
 
-	if (m_fifo == 0) {
+	if (!m_fifo) {
 		return 0;
 	}
 
@@ -83,6 +90,11 @@ uint AudioFifo::write(const quint8* data, uint32_t numSamples)
 		if (isFull())
 		{
 			m_mutex.unlock();
+
+			if (total - remaining > 0) {
+				emit dataReady();
+			}
+
 			return total - remaining; // written so far
 		}
 
@@ -97,16 +109,26 @@ uint AudioFifo::write(const quint8* data, uint32_t numSamples)
 	}
 
 	m_mutex.unlock();
+
+	emit dataReady();
+
+	if (total < numSamples)
+	{
+		qCritical("AudioFifo::write: (%s) overflow %u samples",
+			qPrintable(m_label), numSamples - total);
+		emit overflow(numSamples - total);
+	}
+
 	return total;
 }
 
-uint AudioFifo::read(quint8* data, uint32_t numSamples)
+uint32_t AudioFifo::read(quint8* data, uint32_t numSamples)
 {
 	uint32_t total;
 	uint32_t remaining;
 	uint32_t copyLen;
 
-	if (m_fifo == 0) {
+	if (!m_fifo) {
 		return 0;
 	}
 
@@ -138,6 +160,44 @@ uint AudioFifo::read(quint8* data, uint32_t numSamples)
 	return total;
 }
 
+bool AudioFifo::readOne(quint8* data)
+{
+	if ((!m_fifo) || isEmpty()) {
+		return false;
+	}
+
+    memcpy(data, m_fifo + (m_head * m_sampleSize), m_sampleSize);
+    m_head += 1;
+    m_head %= m_size;
+    m_fill -= 1;
+    return true;
+}
+
+uint32_t AudioFifo::writeOne(const quint8* data)
+{
+	if (!m_fifo) {
+		return 0;
+	}
+
+    if (isFull())
+    {
+        emit overflow(1);
+        return 0;
+    }
+
+	m_mutex.lock();
+
+    memcpy(m_fifo + (m_tail * m_sampleSize), data, m_sampleSize);
+    m_tail += 1;
+    m_tail %= m_size;
+    m_fill += 1;
+
+	m_mutex.unlock();
+
+	emit dataReady();
+	return 1;
+}
+
 uint AudioFifo::drain(uint32_t numSamples)
 {
 	QMutexLocker mutexLocker(&m_mutex);
@@ -164,10 +224,10 @@ void AudioFifo::clear()
 
 bool AudioFifo::create(uint32_t numSamples)
 {
-	if(m_fifo != 0)
+	if (m_fifo)
 	{
 		delete[] m_fifo;
-		m_fifo = 0;
+		m_fifo = nullptr;
 	}
 
 	m_fill = 0;

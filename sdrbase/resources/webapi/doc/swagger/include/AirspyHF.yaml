@@ -15,10 +15,14 @@ AirspyHFSettings:
     transverterDeltaFrequency:
       type: integer
       format: int64
+    iqOrder:
+      type: integer
+      description: >
+        IQ samples order
+          * 0 - Q then I (swapped)
+          * 1 - I then Q (straight)
     bandIndex:
       type: integer
-    fileRecordName:
-      type: string
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer

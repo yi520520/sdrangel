@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
 // Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
 // written by Christian Daniel                                                   //
+// Copyright (C) 2016-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,13 +19,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <QtGlobal>
-#include <stdio.h>
-#define _USE_MATH_DEFINES
-#include <math.h>
+#include <cstdio>
+#include <cmath>
 #include "dsp/nco.h"
 
-#undef M_PI
-#define M_PI		3.14159265358979323846
 
 Real NCO::m_table[NCO::TableSize];
 bool NCO::m_tableInitialized = false;

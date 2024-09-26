@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2019-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,6 @@
 #include <stdint.h>
 #include <sstream>
 #include <iostream>
-#include <cassert>
 
 #include <QDebug>
 #include <QMessageBox>
@@ -31,23 +31,18 @@
 #include <QJsonObject>
 
 #include "ui_localoutputgui.h"
-#include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
-#include "mainwindow.h"
-#include "util/simpleserializer.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 #include "localoutputgui.h"
 
 
 LocalOutputGui::LocalOutputGui(DeviceUISet *deviceUISet, QWidget* parent) :
-	QWidget(parent),
+	DeviceGUI(parent),
 	ui(new Ui::LocalOutputGui),
-	m_deviceUISet(deviceUISet),
 	m_settings(),
 	m_sampleSink(0),
 	m_acquisition(false),
@@ -59,19 +54,17 @@ LocalOutputGui::LocalOutputGui(DeviceUISet *deviceUISet, QWidget* parent) :
     m_doApplySettings(true),
     m_forceSettings(true)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_paletteGreenText.setColor(QPalette::WindowText, Qt::green);
     m_paletteWhiteText.setColor(QPalette::WindowText, Qt::white);
 
-	ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#LocalOutputGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesink/localoutput/readme.md";
 
-	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequency->setValueRange(7, 0, 9999999U);
-
-	ui->centerFrequencyHz->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequencyHz->setValueRange(3, 0, 999U);
-
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
 	displaySettings();
 
@@ -84,17 +77,16 @@ LocalOutputGui::LocalOutputGui(DeviceUISet *deviceUISet, QWidget* parent) :
 	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
 	m_sampleSink->setMessageQueueToGUI(&m_inputMessageQueue);
 
-    m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
-
     m_forceSettings = true;
     sendSettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 }
 
 LocalOutputGui::~LocalOutputGui()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
-    delete m_networkManager;
+    m_statusTimer.stop();
+    m_updateTimer.stop();
 	delete ui;
 }
 
@@ -106,16 +98,6 @@ void LocalOutputGui::blockApplySettings(bool block)
 void LocalOutputGui::destroy()
 {
 	delete this;
-}
-
-void LocalOutputGui::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString LocalOutputGui::getName() const
-{
-	return objectName();
 }
 
 void LocalOutputGui::resetToDefaults()
@@ -149,22 +131,18 @@ bool LocalOutputGui::deserialize(const QByteArray& data)
     }
 }
 
-qint64 LocalOutputGui::getCenterFrequency() const
-{
-    return m_streamCenterFrequency;
-}
-
-void LocalOutputGui::setCenterFrequency(qint64 centerFrequency)
-{
-    (void) centerFrequency;
-}
-
 bool LocalOutputGui::handleMessage(const Message& message)
 {
     if (LocalOutput::MsgConfigureLocalOutput::match(message))
     {
         const LocalOutput::MsgConfigureLocalOutput& cfg = (LocalOutput::MsgConfigureLocalOutput&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         blockApplySettings(true);
         displaySettings();
         blockApplySettings(false);
@@ -222,8 +200,7 @@ void LocalOutputGui::handleInputMessages()
         }
         else
         {
-            if (handleMessage(*message))
-            {
+            if (handleMessage(*message)) {
                 delete message;
             }
         }
@@ -236,8 +213,7 @@ void LocalOutputGui::updateSampleRateAndFrequency()
     m_deviceUISet->getSpectrum()->setCenterFrequency(m_streamCenterFrequency);
     ui->deviceRateText->setText(tr("%1k").arg((float)m_streamSampleRate / 1000));
     blockApplySettings(true);
-    ui->centerFrequency->setValue(m_streamCenterFrequency / 1000);
-    ui->centerFrequencyHz->setValue(m_streamCenterFrequency % 1000);
+    ui->centerFrequency->setText(QString("%L1").arg(m_streamCenterFrequency / 1000));
     blockApplySettings(false);
 }
 
@@ -245,8 +221,7 @@ void LocalOutputGui::displaySettings()
 {
     blockApplySettings(true);
 
-    ui->centerFrequency->setValue(m_streamCenterFrequency / 1000);
-    ui->centerFrequencyHz->setValue(m_streamCenterFrequency % 1000);
+    ui->centerFrequency->setText(QString("%L1").arg(m_streamCenterFrequency / 1000));
     ui->deviceRateText->setText(tr("%1k").arg(m_streamSampleRate / 1000.0));
 
 	blockApplySettings(false);
@@ -254,8 +229,9 @@ void LocalOutputGui::displaySettings()
 
 void LocalOutputGui::sendSettings()
 {
-    if(!m_updateTimer.isActive())
+    if (!m_updateTimer.isActive()) {
         m_updateTimer.start(100);
+    }
 }
 
 void LocalOutputGui::on_startStop_toggled(bool checked)
@@ -273,9 +249,10 @@ void LocalOutputGui::updateHardware()
     {
         qDebug() << "LocalOutputGui::updateHardware";
         LocalOutput::MsgConfigureLocalOutput* message =
-                LocalOutput::MsgConfigureLocalOutput::create(m_settings, m_forceSettings);
+                LocalOutput::MsgConfigureLocalOutput::create(m_settings, m_settingsKeys, m_forceSettings);
         m_sampleSink->getInputMessageQueue()->push(message);
         m_forceSettings = false;
+        m_settingsKeys.clear();
         m_updateTimer.stop();
     }
 }
@@ -311,19 +288,34 @@ void LocalOutputGui::updateStatus()
 
 void LocalOutputGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settingsKeys.append("useReverseAPI");
+        m_settingsKeys.append("reverseAPIAddress");
+        m_settingsKeys.append("reverseAPIPort");
+        m_settingsKeys.append("reverseAPIDeviceIndex");
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void LocalOutputGui::makeUIConnections()
+{
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &LocalOutputGui::on_startStop_toggled);
 }

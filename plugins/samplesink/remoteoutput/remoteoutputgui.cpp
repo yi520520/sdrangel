@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,78 +22,60 @@
 #include <QDateTime>
 #include <QString>
 #include <QMessageBox>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
-#include <QJsonParseError>
 
 #include <boost/algorithm/string.hpp>
 #include <boost/lexical_cast.hpp>
 
 #include "ui_remoteoutputgui.h"
-#include "plugin/pluginapi.h"
-#include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialpopup.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
-
-#include "mainwindow.h"
 
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 #include "remoteoutputgui.h"
 
-#include "channel/remotedatablock.h"
-
-#include "udpsinkfec.h"
-
 RemoteOutputSinkGui::RemoteOutputSinkGui(DeviceUISet *deviceUISet, QWidget* parent) :
-	QWidget(parent),
+	DeviceGUI(parent),
 	ui(new Ui::RemoteOutputGui),
-	m_deviceUISet(deviceUISet),
 	m_settings(),
-	m_deviceSampleSink(0),
+	m_remoteOutput(0),
 	m_deviceCenterFrequency(0),
 	m_samplesCount(0),
 	m_tickCount(0),
 	m_nbSinceLastFlowCheck(0),
 	m_lastEngineState(DeviceAPI::StNotStarted),
 	m_doApplySettings(true),
-	m_forceSettings(true)
+	m_forceSettings(true),
+    m_remoteAPIConnected(false)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_countUnrecoverable = 0;
     m_countRecovered = 0;
     m_lastCountUnrecoverable = 0;
     m_lastCountRecovered = 0;
     m_lastSampleCount = 0;
-    m_resetCounts = true;
 
     m_paletteGreenText.setColor(QPalette::WindowText, Qt::green);
     m_paletteRedText.setColor(QPalette::WindowText, Qt::red);
     m_paletteWhiteText.setColor(QPalette::WindowText, Qt::white);
 
-    ui->setupUi(this);
-
-	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequency->setValueRange(7, 0, pow(10,7));
-
-    ui->sampleRate->setColorMapper(ColorMapper(ColorMapper::GrayGreenYellow));
-    ui->sampleRate->setValueRange(7, 32000U, 9000000U);
-
-    ui->apiAddressLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#RemoteOutputGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesink/remoteoutput/readme.md";
 
 	connect(&(m_deviceUISet->m_deviceAPI->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
 	connect(&m_updateTimer, SIGNAL(timeout()), this, SLOT(updateHardware()));
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
 
-	m_deviceSampleSink = (RemoteOutput*) m_deviceUISet->m_deviceAPI->getSampleSink();
+	m_remoteOutput = (RemoteOutput*) m_deviceUISet->m_deviceAPI->getSampleSink();
 
 	connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
-
-	m_networkManager = new QNetworkAccessManager();
-	connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
 
 	m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
 
@@ -99,17 +83,19 @@ RemoteOutputSinkGui::RemoteOutputSinkGui(DeviceUISet *deviceUISet, QWidget* pare
     displayEventCounts();
     displayEventTimer();
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
     displaySettings();
     sendSettings();
+    makeUIConnections();
+    DialPopup::addPopupsToChildDials(this);
+    m_resizer.enableChildMouseTracking();
 }
 
 RemoteOutputSinkGui::~RemoteOutputSinkGui()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
-    delete m_networkManager;
+    m_statusTimer.stop();
+    m_updateTimer.stop();
 	delete ui;
 }
 
@@ -123,22 +109,13 @@ void RemoteOutputSinkGui::destroy()
 	delete this;
 }
 
-void RemoteOutputSinkGui::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString RemoteOutputSinkGui::getName() const
-{
-	return objectName();
-}
-
 void RemoteOutputSinkGui::resetToDefaults()
 {
     blockApplySettings(true);
 	m_settings.resetToDefaults();
 	displaySettings();
 	blockApplySettings(false);
+    m_forceSettings = true;
 	sendSettings();
 }
 
@@ -171,7 +148,13 @@ bool RemoteOutputSinkGui::handleMessage(const Message& message)
     if (RemoteOutput::MsgConfigureRemoteOutput::match(message))
     {
         const RemoteOutput::MsgConfigureRemoteOutput& cfg = (RemoteOutput::MsgConfigureRemoteOutput&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         blockApplySettings(true);
         displaySettings();
         blockApplySettings(false);
@@ -183,6 +166,18 @@ bool RemoteOutputSinkGui::handleMessage(const Message& message)
         blockApplySettings(true);
         ui->startStop->setChecked(notif.getStartStop());
         blockApplySettings(false);
+        return true;
+    }
+    else if (RemoteOutput::MsgReportRemoteData::match(message))
+    {
+        const RemoteOutput::MsgReportRemoteData& report = (const RemoteOutput::MsgReportRemoteData&) message;
+        displayRemoteData(report.getData());
+        return true;
+    }
+    else if (RemoteOutput::MsgReportRemoteFixedData::match(message))
+    {
+        const RemoteOutput::MsgReportRemoteFixedData& report = (const RemoteOutput::MsgReportRemoteFixedData&) message;
+        displayRemoteFixedData(report.getData());
         return true;
     }
 	else
@@ -221,21 +216,12 @@ void RemoteOutputSinkGui::updateSampleRate()
     ui->deviceRateText->setText(tr("%1k").arg((float)(m_sampleRate) / 1000));
 }
 
-void RemoteOutputSinkGui::updateTxDelayTooltip()
-{
-    int samplesPerBlock = RemoteNbBytesPerBlock / (SDR_RX_SAMP_SZ <= 16 ? 4 : 8);
-    double delay = ((127*samplesPerBlock*m_settings.m_txDelay) / m_settings.m_sampleRate)/(128 + m_settings.m_nbFECBlocks);
-    ui->txDelayText->setToolTip(tr("%1 us").arg(QString::number(delay*1e6, 'f', 0)));
-}
-
 void RemoteOutputSinkGui::displaySettings()
 {
     blockApplySettings(true);
-    ui->centerFrequency->setValue(m_deviceCenterFrequency / 1000);
-    ui->sampleRate->setValue(m_settings.m_sampleRate);
-    ui->txDelay->setValue(m_settings.m_txDelay*100);
-    ui->txDelayText->setText(tr("%1").arg(m_settings.m_txDelay*100));
+    ui->centerFrequency->setText(QString("%L1").arg(m_deviceCenterFrequency));
     ui->nbFECBlocks->setValue(m_settings.m_nbFECBlocks);
+    ui->nbTxBytes->setCurrentIndex(log2(m_settings.m_nbTxBytes));
 
     QString s0 = QString::number(128 + m_settings.m_nbFECBlocks, 'f', 0);
     QString s1 = QString::number(m_settings.m_nbFECBlocks, 'f', 0);
@@ -252,17 +238,19 @@ void RemoteOutputSinkGui::displaySettings()
 
 void RemoteOutputSinkGui::sendSettings()
 {
-    if(!m_updateTimer.isActive())
+    if (!m_updateTimer.isActive()) {
         m_updateTimer.start(100);
+    }
 }
 
 
 void RemoteOutputSinkGui::updateHardware()
 {
     qDebug() << "RemoteOutputSinkGui::updateHardware";
-    RemoteOutput::MsgConfigureRemoteOutput* message = RemoteOutput::MsgConfigureRemoteOutput::create(m_settings, m_forceSettings);
-    m_deviceSampleSink->getInputMessageQueue()->push(message);
+    RemoteOutput::MsgConfigureRemoteOutput* message = RemoteOutput::MsgConfigureRemoteOutput::create(m_settings, m_settingsKeys, m_forceSettings);
+    m_remoteOutput->getInputMessageQueue()->push(message);
     m_forceSettings = false;
+    m_settingsKeys.clear();
     m_updateTimer.stop();
 }
 
@@ -295,21 +283,6 @@ void RemoteOutputSinkGui::updateStatus()
     }
 }
 
-void RemoteOutputSinkGui::on_sampleRate_changed(quint64 value)
-{
-    m_settings.m_sampleRate = value;
-    updateTxDelayTooltip();
-    sendSettings();
-}
-
-void RemoteOutputSinkGui::on_txDelay_valueChanged(int value)
-{
-    m_settings.m_txDelay = value / 100.0;
-    ui->txDelayText->setText(tr("%1").arg(value));
-    updateTxDelayTooltip();
-    sendSettings();
-}
-
 void RemoteOutputSinkGui::on_nbFECBlocks_valueChanged(int value)
 {
     m_settings.m_nbFECBlocks = value;
@@ -318,7 +291,7 @@ void RemoteOutputSinkGui::on_nbFECBlocks_valueChanged(int value)
     QString s = QString::number(nbOriginalBlocks + nbFECBlocks, 'f', 0);
     QString s1 = QString::number(nbFECBlocks, 'f', 0);
     ui->nominalNbBlocksText->setText(tr("%1/%2").arg(s).arg(s1));
-    updateTxDelayTooltip();
+    m_settingsKeys.append("nbFECBlocks");
     sendSettings();
 }
 
@@ -333,6 +306,7 @@ void RemoteOutputSinkGui::on_deviceIndex_returnPressed()
         m_settings.m_deviceIndex = deviceIndex;
     }
 
+    m_settingsKeys.append("deviceIndex");
     sendSettings();
 }
 
@@ -347,17 +321,25 @@ void RemoteOutputSinkGui::on_channelIndex_returnPressed()
         m_settings.m_channelIndex = channelIndex;
     }
 
+    m_settingsKeys.append("channelIndex");
+    sendSettings();
+}
+
+void RemoteOutputSinkGui::on_nbTxBytes_currentIndexChanged(int index)
+{
+    m_settings.m_nbTxBytes = 1 << index;
+    m_settingsKeys.append("nbTxBytes");
     sendSettings();
 }
 
 void RemoteOutputSinkGui::on_apiAddress_returnPressed()
 {
     m_settings.m_apiAddress = ui->apiAddress->text();
+    m_settingsKeys.append("apiAddress");
     sendSettings();
 
-    QString infoURL = QString("http://%1:%2/sdrangel").arg(m_settings.m_apiAddress).arg(m_settings.m_apiPort);
-    m_networkRequest.setUrl(QUrl(infoURL));
-    m_networkManager->get(m_networkRequest);
+    RemoteOutput::MsgRequestFixedData *msg = RemoteOutput::MsgRequestFixedData::create();
+    m_remoteOutput->getInputMessageQueue()->push(msg);
 }
 
 void RemoteOutputSinkGui::on_apiPort_returnPressed()
@@ -371,16 +353,17 @@ void RemoteOutputSinkGui::on_apiPort_returnPressed()
         m_settings.m_apiPort = apiPort;
     }
 
+    m_settingsKeys.append("apiPort");
     sendSettings();
 
-    QString infoURL = QString("http://%1:%2/sdrangel").arg(m_settings.m_apiAddress).arg(m_settings.m_apiPort);
-    m_networkRequest.setUrl(QUrl(infoURL));
-    m_networkManager->get(m_networkRequest);
+    RemoteOutput::MsgRequestFixedData *msg = RemoteOutput::MsgRequestFixedData::create();
+    m_remoteOutput->getInputMessageQueue()->push(msg);
 }
 
 void RemoteOutputSinkGui::on_dataAddress_returnPressed()
 {
     m_settings.m_dataAddress = ui->dataAddress->text();
+    m_settingsKeys.append("dataAddress");
     sendSettings();
 }
 
@@ -395,6 +378,7 @@ void RemoteOutputSinkGui::on_dataPort_returnPressed()
         m_settings.m_dataPort = dataPort;
     }
 
+    m_settingsKeys.append("dataPort");
     sendSettings();
 }
 
@@ -402,6 +386,7 @@ void RemoteOutputSinkGui::on_apiApplyButton_clicked(bool checked)
 {
     (void) checked;
     m_settings.m_apiAddress = ui->apiAddress->text();
+    m_settingsKeys.append("apiAddress");
 
     bool apiOk;
     int apiPort = ui->apiPort->text().toInt(&apiOk);
@@ -409,19 +394,20 @@ void RemoteOutputSinkGui::on_apiApplyButton_clicked(bool checked)
     if((apiOk) && (apiPort >= 1024) && (apiPort < 65535))
     {
         m_settings.m_apiPort = apiPort;
+        m_settingsKeys.append("apiPort");
     }
 
     sendSettings();
 
-    QString infoURL = QString("http://%1:%2/sdrangel").arg(m_settings.m_apiAddress).arg(m_settings.m_apiPort);
-    m_networkRequest.setUrl(QUrl(infoURL));
-    m_networkManager->get(m_networkRequest);
+    RemoteOutput::MsgRequestFixedData *msg = RemoteOutput::MsgRequestFixedData::create();
+    m_remoteOutput->getInputMessageQueue()->push(msg);
 }
 
 void RemoteOutputSinkGui::on_dataApplyButton_clicked(bool checked)
 {
     (void) checked;
     m_settings.m_dataAddress = ui->dataAddress->text();
+    m_settingsKeys.append("dataAddress");
 
     bool dataOk;
     int udpDataPort = ui->dataPort->text().toInt(&dataOk);
@@ -429,6 +415,7 @@ void RemoteOutputSinkGui::on_dataApplyButton_clicked(bool checked)
     if((dataOk) && (udpDataPort >= 1024) && (udpDataPort < 65535))
     {
         m_settings.m_dataPort = udpDataPort;
+        m_settingsKeys.append("dataPort");
     }
 
     sendSettings();
@@ -439,7 +426,7 @@ void RemoteOutputSinkGui::on_startStop_toggled(bool checked)
     if (m_doApplySettings)
     {
         RemoteOutput::MsgStartStop *message = RemoteOutput::MsgStartStop::create(checked);
-        m_deviceSampleSink->getInputMessageQueue()->push(message);
+        m_remoteOutput->getInputMessageQueue()->push(message);
     }
 }
 
@@ -489,143 +476,71 @@ void RemoteOutputSinkGui::displayEventTimer()
 
 void RemoteOutputSinkGui::tick()
 {
-    if (++m_tickCount == 20) // once per second
-	{
-        QString reportURL;
-
-        reportURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/report")
-                .arg(m_settings.m_apiAddress)
-                .arg(m_settings.m_apiPort)
-                .arg(m_settings.m_deviceIndex)
-                .arg(m_settings.m_channelIndex);
-	    m_networkRequest.setUrl(QUrl(reportURL));
-	    m_networkManager->get(m_networkRequest);
-
-        displayEventTimer();
-
-        m_tickCount = 0;
-	}
-}
-
-void RemoteOutputSinkGui::networkManagerFinished(QNetworkReply *reply)
-{
-    if (reply->error())
+    if (++m_tickCount == 20)
     {
-        ui->apiAddressLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
-        ui->statusText->setText(reply->errorString());
-        return;
-    }
-
-    QString answer = reply->readAll();
-
-    try
-    {
-        QByteArray jsonBytes(answer.toStdString().c_str());
-        QJsonParseError error;
-        QJsonDocument doc = QJsonDocument::fromJson(jsonBytes, &error);
-
-        if (error.error == QJsonParseError::NoError)
-        {
-            ui->apiAddressLabel->setStyleSheet("QLabel { background-color : green; }");
-            ui->statusText->setText(QString("API OK"));
-            analyzeApiReply(doc.object());
-        }
-        else
-        {
-            ui->apiAddressLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
-            QString errorMsg = QString("Reply JSON error: ") + error.errorString() + QString(" at offset ") + QString::number(error.offset);
-            ui->statusText->setText(QString("JSON error. See log"));
-            qInfo().noquote() << "RemoteOutputSinkGui::networkManagerFinished" << errorMsg;
-        }
-    }
-    catch (const std::exception& ex)
-    {
-        ui->apiAddressLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
-        QString errorMsg = QString("Error parsing request: ") + ex.what();
-        ui->statusText->setText("Error parsing request. See log for details");
-        qInfo().noquote() << "RemoteOutputSinkGui::networkManagerFinished" << errorMsg;
-    }
-}
-
-void RemoteOutputSinkGui::analyzeApiReply(const QJsonObject& jsonObject)
-{
-    QString infoLine;
-
-    if (jsonObject.contains("RemoteSourceReport"))
-    {
-        QJsonObject report = jsonObject["RemoteSourceReport"].toObject();
-        m_deviceCenterFrequency = report["deviceCenterFreq"].toInt() * 1000;
-        m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
-        ui->centerFrequency->setValue(m_deviceCenterFrequency/1000);
-        int remoteRate = report["deviceSampleRate"].toInt();
-        ui->remoteRateText->setText(tr("%1k").arg((float)(remoteRate) / 1000));
-        int queueSize = report["queueSize"].toInt();
-        queueSize = queueSize == 0 ? 10 : queueSize;
-        int queueLength = report["queueLength"].toInt();
-        QString queueLengthText = QString("%1/%2").arg(queueLength).arg(queueSize);
-        ui->queueLengthText->setText(queueLengthText);
-        int queueLengthPercent = (queueLength*100)/queueSize;
-        ui->queueLengthGauge->setValue(queueLengthPercent);
-        int unrecoverableCount = report["uncorrectableErrorsCount"].toInt();
-        int recoverableCount = report["correctableErrorsCount"].toInt();
-        uint64_t timestampUs = report["tvSec"].toInt()*1000000ULL + report["tvUSec"].toInt();
-
-        if (!m_resetCounts)
-        {
-            int recoverableCountDelta = recoverableCount - m_lastCountRecovered;
-            int unrecoverableCountDelta = unrecoverableCount - m_lastCountUnrecoverable;
-            displayEventStatus(recoverableCountDelta, unrecoverableCountDelta);
-            m_countRecovered += recoverableCountDelta;
-            m_countUnrecoverable += unrecoverableCountDelta;
-            displayEventCounts();
-        }
-
-        uint32_t sampleCountDelta, sampleCount;
-        sampleCount = report["samplesCount"].toInt();
-
-        if (sampleCount < m_lastSampleCount) {
-            sampleCountDelta = (0xFFFFFFFFU - m_lastSampleCount) + sampleCount + 1;
+        if (m_remoteAPIConnected) {
+            ui->apiAddressLabel->setStyleSheet("QLabel { background-color: green; }");
         } else {
-            sampleCountDelta = sampleCount - m_lastSampleCount;
+            ui->apiAddressLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
         }
 
-        if (sampleCountDelta == 0)
-        {
-            ui->allFramesDecoded->setStyleSheet("QToolButton { background-color : blue; }");
-        }
+        m_remoteAPIConnected = false;
+        m_tickCount = 0;
+    }
+}
 
-        double remoteStreamRate = sampleCountDelta*1e6 / (double) (timestampUs - m_lastTimestampUs);
+void RemoteOutputSinkGui::displayRemoteData(const RemoteOutput::MsgReportRemoteData::RemoteData& remoteData)
+{
+    m_deviceCenterFrequency = remoteData.m_centerFrequency;
+    m_deviceUISet->getSpectrum()->setCenterFrequency(m_deviceCenterFrequency);
+    ui->centerFrequency->setText(QString("%L1").arg(m_deviceCenterFrequency));
+    ui->remoteRateText->setText(tr("%1k").arg((float)(remoteData.m_sampleRate) / 1000));
+    QString queueLengthText = QString("%1/%2").arg(remoteData.m_queueLength).arg(remoteData.m_queueSize);
+    ui->queueLengthText->setText(queueLengthText);
+    int queueLengthPercent = (remoteData.m_queueLength*100)/remoteData.m_queueSize;
+    ui->queueLengthGauge->setValue(queueLengthPercent);
+    int recoverableCountDelta = remoteData.m_recoverableCount - m_lastCountRecovered;
+    int unrecoverableCountDelta = remoteData.m_unrecoverableCount - m_lastCountUnrecoverable;
+    displayEventStatus(recoverableCountDelta, unrecoverableCountDelta);
+    m_countRecovered += recoverableCountDelta;
+    m_countUnrecoverable += unrecoverableCountDelta;
+    displayEventCounts();
+    displayEventTimer();
+    m_remoteAPIConnected = true;
 
-        if (remoteStreamRate != 0) {
-            ui->remoteStreamRateText->setText(QString("%1").arg(remoteStreamRate, 0, 'f', 0));
-        }
+    uint32_t sampleCountDelta;
 
-        m_resetCounts = false;
-        m_lastCountRecovered = recoverableCount;
-        m_lastCountUnrecoverable = unrecoverableCount;
-        m_lastSampleCount = sampleCount;
-        m_lastTimestampUs = timestampUs;
+    if (remoteData.m_sampleCount < m_lastSampleCount) {
+        sampleCountDelta = (0xFFFFFFFFU - m_lastSampleCount) + remoteData.m_sampleCount + 1;
+    } else {
+        sampleCountDelta = remoteData.m_sampleCount - m_lastSampleCount;
     }
 
-    if (jsonObject.contains("version")) {
-        infoLine = "v" + jsonObject["version"].toString();
+    if (sampleCountDelta == 0)
+    {
+        ui->allFramesDecoded->setStyleSheet("QToolButton { background-color : blue; }");
     }
 
-    if (jsonObject.contains("qtVersion")) {
-        infoLine += " Qt" + jsonObject["qtVersion"].toString();
+    double remoteStreamRate = sampleCountDelta*1e6 / (double) (remoteData.m_timestampUs - m_lastTimestampUs);
+
+    if (remoteStreamRate != 0) {
+        ui->remoteStreamRateText->setText(QString("%1").arg(remoteStreamRate, 0, 'f', 0));
     }
 
-    if (jsonObject.contains("architecture")) {
-        infoLine += " " + jsonObject["architecture"].toString();
-    }
+    m_lastCountRecovered = remoteData.m_recoverableCount;
+    m_lastCountUnrecoverable = remoteData.m_unrecoverableCount;
+    m_lastSampleCount = remoteData.m_sampleCount;
+    m_lastTimestampUs = remoteData.m_timestampUs;
+}
 
-    if (jsonObject.contains("os")) {
-        infoLine += " " + jsonObject["os"].toString();
-    }
-
-    if (jsonObject.contains("dspRxBits") && jsonObject.contains("dspTxBits")) {
-        infoLine +=  QString(" %1/%2b").arg(jsonObject["dspRxBits"].toInt()).arg(jsonObject["dspTxBits"].toInt());
-    }
+void RemoteOutputSinkGui::displayRemoteFixedData(const RemoteOutput::MsgReportRemoteFixedData::RemoteData& remoteData)
+{
+    QString infoLine = "v" + remoteData.m_version;
+    infoLine += " Qt" + remoteData.m_qtVersion;
+    infoLine += " " + remoteData.m_architecture;
+    infoLine += " " + remoteData.m_os;
+    infoLine +=  QString(" %1/%2b").arg(remoteData.m_rxBits).arg(remoteData.m_txBits);
+    m_remoteAPIConnected = true;
 
     if (infoLine.size() > 0) {
         ui->infoText->setText(infoLine);
@@ -634,19 +549,45 @@ void RemoteOutputSinkGui::analyzeApiReply(const QJsonObject& jsonObject)
 
 void RemoteOutputSinkGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settingsKeys.append("useReverseAPI");
+        m_settingsKeys.append("reverseAPIAddress");
+        m_settingsKeys.append("reverseAPIPort");
+        m_settingsKeys.append("reverseAPIDeviceIndex");
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void RemoteOutputSinkGui::makeUIConnections()
+{
+    QObject::connect(ui->nbFECBlocks, &QDial::valueChanged, this, &RemoteOutputSinkGui::on_nbFECBlocks_valueChanged);
+    QObject::connect(ui->deviceIndex, &QLineEdit::returnPressed, this, &RemoteOutputSinkGui::on_deviceIndex_returnPressed);
+    QObject::connect(ui->channelIndex, &QLineEdit::returnPressed, this, &RemoteOutputSinkGui::on_channelIndex_returnPressed);
+    QObject::connect(ui->nbTxBytes, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &RemoteOutputSinkGui::on_nbTxBytes_currentIndexChanged);
+    QObject::connect(ui->apiAddress, &QLineEdit::returnPressed, this, &RemoteOutputSinkGui::on_apiAddress_returnPressed);
+    QObject::connect(ui->apiPort, &QLineEdit::returnPressed, this, &RemoteOutputSinkGui::on_apiPort_returnPressed);
+    QObject::connect(ui->dataAddress, &QLineEdit::returnPressed, this, &RemoteOutputSinkGui::on_dataAddress_returnPressed);
+    QObject::connect(ui->dataPort, &QLineEdit::returnPressed, this, &RemoteOutputSinkGui::on_dataPort_returnPressed);
+    QObject::connect(ui->apiApplyButton, &QPushButton::clicked, this, &RemoteOutputSinkGui::on_apiApplyButton_clicked);
+    QObject::connect(ui->dataApplyButton, &QPushButton::clicked, this, &RemoteOutputSinkGui::on_dataApplyButton_clicked);
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &RemoteOutputSinkGui::on_startStop_toggled);
+    QObject::connect(ui->eventCountsReset, &QPushButton::clicked, this, &RemoteOutputSinkGui::on_eventCountsReset_clicked);
 }

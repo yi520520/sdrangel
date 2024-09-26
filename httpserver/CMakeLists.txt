@@ -35,13 +35,13 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/exports
 )
 
-add_library(httpserver SHARED
+add_library(httpserver
 	${httpserver_SOURCES}
 )
 
 target_link_libraries(httpserver
-    Qt5::Core
-    Qt5::Network
+    Qt::Core
+    Qt::Network
 )
 
 install(TARGETS httpserver DESTINATION ${INSTALL_LIB_DIR})

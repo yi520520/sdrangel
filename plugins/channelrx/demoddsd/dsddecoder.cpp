@@ -1,6 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2016, 2018-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,8 +18,6 @@
 #include "dsddecoder.h"
 
 #include <QtGlobal>
-#include "audio/audiofifo.h"
-
 
 DSDDecoder::DSDDecoder()
 {
@@ -35,11 +32,6 @@ DSDDecoder::DSDDecoder()
 
 DSDDecoder::~DSDDecoder()
 {
-}
-
-void DSDDecoder::set48k(bool to48k)
-{
-    m_decoder.setUpsampling(to48k ? 6 : 0);
 }
 
 void DSDDecoder::setUpsampling(int upsampling)

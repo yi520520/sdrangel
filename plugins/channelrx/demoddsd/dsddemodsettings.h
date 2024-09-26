@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,9 +24,20 @@
 #include <QByteArray>
 
 class Serializable;
+class Feature;
 
 struct DSDDemodSettings
 {
+    struct AvailableAMBEFeature
+    {
+        int m_featureIndex;
+        Feature *m_feature;
+
+        AvailableAMBEFeature() = default;
+        AvailableAMBEFeature(const AvailableAMBEFeature&) = default;
+        AvailableAMBEFeature& operator=(const AvailableAMBEFeature&) = default;
+    };
+
     qint64 m_inputFrequencyOffset;
     Real  m_rfBandwidth;
     Real  m_fmDeviation;
@@ -46,19 +60,25 @@ struct DSDDemodSettings
     int m_traceStroke; // [0..255]
     int m_traceDecay; // [0..255]
     QString m_audioDeviceName;
+    int m_streamIndex; //!< MIMO channel. Not relevant when connected to SI (single Rx).
     bool m_useReverseAPI;
     QString m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
     uint16_t m_reverseAPIDeviceIndex;
     uint16_t m_reverseAPIChannelIndex;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
+    int m_ambeFeatureIndex;
+    bool m_connectAMBE;
 
     Serializable *m_channelMarker;
-    Serializable *m_scopeGUI;
+    Serializable *m_rollupState;
 
     DSDDemodSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
-    void setScopeGUI(Serializable *scopeGUI) { m_scopeGUI = scopeGUI; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
 };

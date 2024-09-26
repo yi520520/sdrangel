@@ -6,6 +6,8 @@ This input sample source plugin gets its samples from a [PlutoSDR device](https:
 
 &#9758; PlutoSDR is physically implemented as a 1x1 SISO device although the AD9363 chip does have a second Rx and a second Tx channel. Revision C of the board claims to have pads to allow hackers connecting the second ports externally however for now only the first Rx channel is supported by this plugin.
 
+&#9758; When running the Pluto on Ethernet interface you have to create a non discoverable device reference in the [user arguments dialog](https://github.com/f4exb/sdrangel/blob/master/sdrgui/deviceuserargs.md) from the main window Preferences &gt; Devices menu. You must use the `PlutoSDR` hardware ID then specify the device address with a `uri` parameter in the user arguments for example: `uri=ip:192.168.1.10`. Note that this will become effective once SDRangel is restarted.
+
 <h2>Build</h2>
 
 The plugin will be built only if libiio is installed in your system. To build and install libiio from source do:
@@ -24,6 +26,8 @@ Then add the following defines on `cmake` command line when compiling SDRangel:
 `-DIIO_DIR=/opt/install/libiio`
 
 <h2>Interface</h2>
+
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
 
 ![PlutoSDR input plugin GUI](../../../doc/img/PlutoSDRInput_plugin.png)
 
@@ -45,10 +49,6 @@ Device start / stop button.
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon to stop, plug back in, check the source on the sampling devices control panel and start again.
 
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
-
 <h4>1.4: ADC sample rate</h4>
 
 This is the sample rate at which the ADC runs in kS/s (k) or MS/s (M) before hardware decimation. Hardware decimation is only partially controlled by the user using the FIR decimation factor (12). The value here is the value returned by the device interface therefore it is always exact.
@@ -65,33 +65,7 @@ Use this slider to adjust LO correction in ppm. It can be varied from -20.0 to 2
 
 <h3>3: Transverter mode open dialog</h3>
 
-This button opens a dialog to set the transverter mode frequency translation options:
-
-![PlutoSDR source input stream transverter dialog](../../../doc/img/RTLSDR_plugin_xvrt.png)
-
-Note that if you mouse over the button a tooltip appears that displays the translating frequency and if translation is enabled or disabled. When the frequency translation is enabled the button is lit.
-
-<h4>3.1: Translating frequency</h4>
-
-You can set the translating frequency in Hz with this dial. Use the wheels to adjust the sample rate. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
-
-The frequency set in the device is the frequency on the main dial (1) minus this frequency. Thus it is positive for down converters and negative for up converters.
-
-For example a mixer at 120 MHz for HF operation you would set the value to -120,000,000 Hz so that if the main dial frequency is set at 7,130 kHz the PlutoSDR will be set to 127.130 MHz.
-
-If you use a down converter to receive the 6 cm band narrowband center frequency of 5670 MHz at 432 MHz you would set the translating frequency to 5760 - 432 = 5328 MHz thus dial +5,328,000,000 Hz.
-
-For bands even higher in the frequency spectrum the GHz digits are not really significant so you can have them set at 1 GHz. Thus to receive the 10368 MHz frequency at 432 MHz you would set the translating frequency to 1368 - 432 = 936 MHz. Note that in this case the frequency of the LO used in the mixer of the transverter is set at 9936 MHz.
-
-The Hz precision allows a fine tuning of the transverter LO offset
-
-<h4>3.2: Translating frequency enable/disable</h4>
-
-Use this toggle button to activate or deactivate the frequency translation
-
-<h4>3.3: Confirmation buttons</h4>
-
-Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes.
+This button opens a dialog to set the transverter mode frequency translation options. The details about this dialog can be found [here](../../../sdrgui/gui/transverterdialog.md)
 
 <h3>4: Auto correction options</h3>
 
@@ -110,7 +84,7 @@ Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes.
 
 The I/Q stream from the PlutoSDR is downsampled by a power of two by software inside the plugin before being sent to the passband. Possible values are increasing powers of two: 1 (no decimation), 2, 4, 8, 16, 32, 64.
 
-<h3>6: Decimated bandpass center frequency position relative the the PlutoSDR Rx center frequency</h3>
+<h3>6: Decimated bandpass center frequency position relative to the PlutoSDR Rx center frequency</h3>
 
   - **Cen**: the decimation operation takes place around the PlutoSDR Rx center frequency Fs
   - **Inf**: the decimation operation takes place around Fs - Fc.

@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>               //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -222,56 +222,40 @@ void XTRXOutputThread::run()
     m_running = false;
 }
 
-void XTRXOutputThread::callback(qint16* buf, qint32 len)
+void XTRXOutputThread::callbackPart(qint16* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd)
 {
-    if (m_channels[m_uniqueChannelIndex].m_sampleFifo)
+    SampleVector::iterator beginRead = data.begin() + iBegin;
+    int len = 2*(iEnd - iBegin)*(1<<m_channels[m_uniqueChannelIndex].m_log2Interp);
+
+    if (m_channels[m_uniqueChannelIndex].m_log2Interp == 0)
     {
-        float bal = m_channels[m_uniqueChannelIndex].m_sampleFifo->getRWBalance();
-
-        if (bal < -0.25) {
-            qDebug("XTRXOutputThread::callbackSO: read lags: %f", bal);
-        } else if (bal > 0.25) {
-            qDebug("XTRXOutputThread::callbackSO: read leads: %f", bal);
-        }
-
-        SampleVector::iterator beginRead;
-        m_channels[m_uniqueChannelIndex].m_sampleFifo->readAdvance(beginRead, len/(1<<m_channels[m_uniqueChannelIndex].m_log2Interp));
-        beginRead -= len;
-
-        if (m_channels[m_uniqueChannelIndex].m_log2Interp == 0)
-        {
-            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate1(&beginRead, buf, len*2);
-        }
-        else
-        {
-            switch (m_channels[m_uniqueChannelIndex].m_log2Interp)
-            {
-            case 1:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate2_cen(&beginRead, buf, len*2);
-                break;
-            case 2:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate4_cen(&beginRead, buf, len*2);
-                break;
-            case 3:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate8_cen(&beginRead, buf, len*2);
-                break;
-            case 4:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate16_cen(&beginRead, buf, len*2);
-                break;
-            case 5:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate32_cen(&beginRead, buf, len*2);
-                break;
-            case 6:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate64_cen(&beginRead, buf, len*2);
-                break;
-            default:
-                break;
-            }
-        }
+        m_channels[m_uniqueChannelIndex].m_interpolators.interpolate1(&beginRead, buf, len*2);
     }
     else
     {
-        std::fill(buf, buf+2*len, 0);
+        switch (m_channels[m_uniqueChannelIndex].m_log2Interp)
+        {
+        case 1:
+            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate2_cen(&beginRead, buf, len*2);
+            break;
+        case 2:
+            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate4_cen(&beginRead, buf, len*2);
+            break;
+        case 3:
+            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate8_cen(&beginRead, buf, len*2);
+            break;
+        case 4:
+            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate16_cen(&beginRead, buf, len*2);
+            break;
+        case 5:
+            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate32_cen(&beginRead, buf, len*2);
+            break;
+        case 6:
+            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate64_cen(&beginRead, buf, len*2);
+            break;
+        default:
+            break;
+        }
     }
 }
 
@@ -279,47 +263,18 @@ void XTRXOutputThread::callbackSO(qint16* buf, qint32 len)
 {
     if (m_channels[m_uniqueChannelIndex].m_sampleFifo)
     {
-        float bal = m_channels[m_uniqueChannelIndex].m_sampleFifo->getRWBalance();
+        SampleVector& data = m_channels[m_uniqueChannelIndex].m_sampleFifo->getData();
+        unsigned int iPart1Begin, iPart1End, iPart2Begin, iPart2End;
+        m_channels[m_uniqueChannelIndex].m_sampleFifo->read(len/(1<<m_channels[m_uniqueChannelIndex].m_log2Interp), iPart1Begin, iPart1End, iPart2Begin, iPart2End);
 
-        if (bal < -0.25) {
-            qDebug("XTRXOutputThread::callbackSO: read lags: %f", bal);
-        } else if (bal > 0.25) {
-            qDebug("XTRXOutputThread::callbackSO: read leads: %f", bal);
+        if (iPart1Begin != iPart1End) {
+            callbackPart(buf, data, iPart1Begin, iPart1End);
         }
 
-        SampleVector::iterator beginRead;
-        m_channels[m_uniqueChannelIndex].m_sampleFifo->readAdvance(beginRead, len/(1<<m_channels[m_uniqueChannelIndex].m_log2Interp));
-        beginRead -= len;
+        unsigned int shift = (iPart1End - iPart1Begin)*(1<<m_channels[m_uniqueChannelIndex].m_log2Interp);
 
-        if (m_channels[m_uniqueChannelIndex].m_log2Interp == 0)
-        {
-            m_channels[m_uniqueChannelIndex].m_interpolators.interpolate1(&beginRead, buf, len*2);
-        }
-        else
-        {
-            switch (m_channels[m_uniqueChannelIndex].m_log2Interp)
-            {
-            case 1:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate2_cen(&beginRead, buf, len*2);
-                break;
-            case 2:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate4_cen(&beginRead, buf, len*2);
-                break;
-            case 3:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate8_cen(&beginRead, buf, len*2);
-                break;
-            case 4:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate16_cen(&beginRead, buf, len*2);
-                break;
-            case 5:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate32_cen(&beginRead, buf, len*2);
-                break;
-            case 6:
-                m_channels[m_uniqueChannelIndex].m_interpolators.interpolate64_cen(&beginRead, buf, len*2);
-                break;
-            default:
-                break;
-            }
+        if (iPart2Begin != iPart2End) {
+            callbackPart(buf + 2*shift, data, iPart2Begin, iPart2End);
         }
     }
     else

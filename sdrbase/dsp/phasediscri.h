@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2017, 2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2023 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,21 +22,31 @@
 #ifndef INCLUDE_DSP_PHASEDISCRI_H_
 #define INCLUDE_DSP_PHASEDISCRI_H_
 
+#include <cmath>
 #include "dsp/dsptypes.h"
-
-#undef M_PI
-#define M_PI 3.14159265358979323846
 
 class PhaseDiscriminators
 {
 public:
-	/**
+
+    PhaseDiscriminators() :
+        m_fmScaling(1.0f)
+    {
+        reset();
+    }
+
+    /**
 	 * Reset stored values
 	 */
 	void reset()
 	{
 		m_m1Sample = 0;
 		m_m2Sample = 0;
+        m_fltPreviousI = 0.0f;
+        m_fltPreviousQ = 0.0f;
+        m_fltPreviousI2 = 0.0f;
+        m_fltPreviousQ2 = 0.0f;
+        m_prevArg = 0.0f;
 	}
 
 	/**
@@ -79,7 +92,7 @@ public:
     }
 
 	/**
-	 * Alternative without atan at the expense of a slight distorsion on very wideband signals
+	 * Alternative without atan at the expense of a slight distortion on very wideband signals
 	 * http://www.embedded.com/design/configurable-systems/4212086/DSP-Tricks--Frequency-demodulation-algorithms-
 	 * in addition it needs scaling by instantaneous magnitude squared and volume (0..10) adjustment factor
 	 */
@@ -167,8 +180,8 @@ private:
 
     }
 
-    #define PI_FLOAT     3.14159265f
-    #define PIBY2_FLOAT  1.5707963f
+    #define PI_FLOAT     float(M_PI)
+    #define PIBY2_FLOAT  float(M_PI_2)
     // |error| < 0.005
     float atan2_approximation2( float y, float x )
     {

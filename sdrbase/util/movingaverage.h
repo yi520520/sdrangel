@@ -1,8 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2016-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>              //
+// Copyright (C) 2020 Vort <vvort@yandex.ru>                                         //
+// Copyright (C) 2023 Jon Beniston, M7RCE <jon@beniston.com>                         //
 //                                                                                   //
 // http://stackoverflow.com/questions/10990618/calculate-rolling-moving-average-in-c //
 //                                                                                   //
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                       //
 //                                                                                   //
 // This program is free software; you can redistribute it and/or modify              //
 // it under the terms of the GNU General Public License as published by              //
@@ -75,7 +77,9 @@ class MovingAverageUtilVar
       : m_num_samples(0), m_index(0), m_total(0)
     {
         m_samples.resize(size);
-    }
+		m_samplesSizeInvF = 1.0f / size;
+		m_samplesSizeInvD = 1.0 / size;
+	}
 
     void reset()
     {
@@ -88,7 +92,9 @@ class MovingAverageUtilVar
     {
         reset();
         m_samples.resize(size);
-    }
+		m_samplesSizeInvF = 1.0f / size;
+		m_samplesSizeInvD = 1.0 / size;
+	}
 
     unsigned int size() const
     {
@@ -107,19 +113,24 @@ class MovingAverageUtilVar
             T& oldest = m_samples[m_index];
             m_total += sample - oldest;
             oldest = sample;
-            m_index = (m_index + 1) % m_samples.size();
+            m_index++;
+            if (m_index == m_samples.size())
+                m_index = 0;
         }
     }
 
-    double asDouble() const { return ((double)m_total) / m_samples.size(); }
-    float asFloat() const { return ((float)m_total) / m_samples.size(); }
+    double asDouble() const { return m_total * m_samplesSizeInvD; }
+    float asFloat() const { return m_total * m_samplesSizeInvF; }
     operator T() const { return  m_total / m_samples.size(); }
+    T instantAverage() const { return m_total / (m_num_samples == 0 ? 1 : m_num_samples); }
 
   private:
     std::vector<T> m_samples;
     unsigned int m_num_samples;
     unsigned int m_index;
     Total m_total;
+	float m_samplesSizeInvF;
+	double m_samplesSizeInvD;
 };
 
 

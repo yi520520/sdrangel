@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2017-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,41 +25,32 @@
 #include "glscopegui.h"
 #include "glscope.h"
 #include "ui_glscopegui.h"
-#include "util/simpleserializer.h"
-
-const double GLScopeGUI::amps[27] = {
-        2e-1, 1e-1, 5e-2,
-        2e-2, 1e-2, 5e-3,
-        2e-3, 1e-3, 5e-4,
-        2e-4, 1e-4, 5e-5,
-        2e-5, 1e-5, 5e-6,
-        2e-6, 1e-6, 5e-7,
-        2e-7, 1e-7, 5e-8,
-        2e-8, 1e-8, 5e-9,
-        2e-9, 1e-9, 5e-10,
-};
+#include "gui/dialpopup.h"
+#include "util/db.h"
 
 GLScopeGUI::GLScopeGUI(QWidget* parent) :
     QWidget(parent),
     ui(new Ui::GLScopeGUI),
-    m_messageQueue(0),
-    m_scopeVis(0),
-    m_glScope(0),
+    m_messageQueue(nullptr),
+    m_scopeVis(nullptr),
+    m_glScope(nullptr),
     m_sampleRate(0),
     m_timeBase(1),
     m_timeOffset(0),
-    m_traceLenMult(1)
+    m_ctlTraceIndex(0),
+    m_ctlTriggerIndex(0)
 {
     qDebug("GLScopeGUI::GLScopeGUI");
     setEnabled(false);
     ui->setupUi(this);
-    ui->trigDelayFine->setMaximum(ScopeVis::m_traceChunkSize / 10.0);
+    ui->trigDelayFine->setMaximum(GLScopeSettings::m_traceChunkDefaultSize / 10.0);
     ui->traceColor->setStyleSheet("QLabel { background-color : rgb(255,255,64); }");
     m_focusedTraceColor.setRgb(255,255,64);
     ui->trigColor->setStyleSheet("QLabel { background-color : rgb(0,255,0); }");
     m_focusedTriggerColor.setRgb(0,255,0);
     ui->traceText->setText("X");
-    ui->mem->setMaximum(ScopeVis::m_nbTraceMemories - 1);
+    ui->mem->setMaximum(GLScopeSettings::m_nbTraceMemories - 1);
+    DialPopup::addPopupsToChildDials(this);
 }
 
 GLScopeGUI::~GLScopeGUI()
@@ -74,11 +67,6 @@ void GLScopeGUI::setBuddies(MessageQueue* messageQueue, ScopeVis* scopeVis, GLSc
     m_glScope = glScope;
 
     // initialize display combo
-    ui->onlyX->setChecked(true);
-    ui->onlyY->setChecked(false);
-    ui->horizontalXY->setChecked(false);
-    ui->verticalXY->setChecked(false);
-    ui->polar->setChecked(false);
     ui->onlyY->setEnabled(false);
     ui->horizontalXY->setEnabled(false);
     ui->verticalXY->setEnabled(false);
@@ -94,19 +82,23 @@ void GLScopeGUI::setBuddies(MessageQueue* messageQueue, ScopeVis* scopeVis, GLSc
     ui->freerun->setChecked(true);
 
     // Add a trigger
-    ScopeVis::TriggerData triggerData;
+    GLScopeSettings::TriggerData triggerData;
     fillTriggerData(triggerData);
-    m_scopeVis->addTrigger(triggerData);
+    ScopeVis::MsgScopeVisAddTrigger *msgAddTrigger = ScopeVis::MsgScopeVisAddTrigger::create(triggerData);
+    m_scopeVis->getInputMessageQueue()->push(msgAddTrigger);
+    settingsTriggerAdd(triggerData);
 
     // Add a trace
-    ScopeVis::TraceData traceData;
+    GLScopeSettings::TraceData traceData;
     fillTraceData(traceData);
-    m_scopeVis->addTrace(traceData);
+    ScopeVis::MsgScopeVisAddTrace *msgAddTrace = ScopeVis::MsgScopeVisAddTrace::create(traceData);
+    m_scopeVis->getInputMessageQueue()->push(msgAddTrace);
+    settingsTraceAdd(traceData);
 
     setEnabled(true);
-    connect(m_glScope, SIGNAL(sampleRateChanged(int)), this, SLOT(on_scope_sampleRateChanged(int)));
-    connect(m_glScope, SIGNAL(traceSizeChanged(uint32_t)), this, SLOT(on_scope_traceSizeChanged(uint32_t)));
-    connect(m_glScope, SIGNAL(preTriggerChanged(uint32_t)), this, SLOT(on_scope_preTriggerChanged(uint32_t)));
+    connect(m_glScope, SIGNAL(sampleRateChanged(int)), this, SLOT(onScopeSampleRateChanged(int)));
+    connect(m_glScope, SIGNAL(traceSizeChanged(uint32_t)), this, SLOT(onScopeTraceSizeChanged(uint32_t)));
+    connect(m_glScope, SIGNAL(preTriggerChanged(uint32_t)), this, SLOT(onScopePreTriggerChanged(uint32_t)));
 
     ui->traceMode->clear();
     fillProjectionCombo(ui->traceMode);
@@ -114,17 +106,21 @@ void GLScopeGUI::setBuddies(MessageQueue* messageQueue, ScopeVis* scopeVis, GLSc
     ui->trigMode->clear();
     fillProjectionCombo(ui->trigMode);
 
-    m_scopeVis->configure(2*m_traceLenMult*ScopeVis::m_traceChunkSize,
-            m_timeBase,
-            m_timeOffset*10,
-            (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
-            ui->freerun->isChecked());
+    m_scopeVis->configure(
+        2*m_settings.m_traceLenMult*m_scopeVis->getTraceChunkSize(),
+        m_timeBase,
+        m_timeOffset*10,
+        (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
+        ui->freerun->isChecked()
+    );
 
-    m_scopeVis->configure(m_traceLenMult*ScopeVis::m_traceChunkSize,
-            m_timeBase,
-            m_timeOffset*10,
-            (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
-            ui->freerun->isChecked());
+    m_scopeVis->configure(
+        m_settings.m_traceLenMult*m_scopeVis->getTraceChunkSize(),
+        m_timeBase,
+        m_timeOffset*10,
+        (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
+        ui->freerun->isChecked()
+    );
 
     setTraceLenDisplay();
     setTimeScaleDisplay();
@@ -136,10 +132,10 @@ void GLScopeGUI::setBuddies(MessageQueue* messageQueue, ScopeVis* scopeVis, GLSc
 
 void GLScopeGUI::setSampleRate(int sampleRate)
 {
-    m_sampleRate = sampleRate;
+    onScopeSampleRateChanged(sampleRate);
 }
 
-void GLScopeGUI::on_scope_sampleRateChanged(int sampleRate)
+void GLScopeGUI::onScopeSampleRateChanged(int sampleRate)
 {
     //m_sampleRate = m_glScope->getSampleRate();
     m_sampleRate = sampleRate;
@@ -152,315 +148,204 @@ void GLScopeGUI::on_scope_sampleRateChanged(int sampleRate)
     setTrigDelayDisplay();
 }
 
-void GLScopeGUI::on_scope_traceSizeChanged(uint32_t traceNbSamples)
+void GLScopeGUI::onScopeTraceSizeChanged(uint32_t traceNbSamples)
 {
-    qDebug("GLScopeGUI::on_scope_traceSizeChanged: %u", traceNbSamples);
-    m_traceLenMult = traceNbSamples / ScopeVis::m_traceChunkSize;
-    ui->traceLen->setValue(m_traceLenMult);
+    qDebug("GLScopeGUI::onScopeTraceSizeChanged: %u", traceNbSamples);
+    m_settings.m_traceLenMult = traceNbSamples / m_scopeVis->getTraceChunkSize();
+    ui->traceLen->setValue(m_settings.m_traceLenMult);
     setTraceLenDisplay();
 }
 
-void GLScopeGUI::on_scope_preTriggerChanged(uint32_t preTriggerNbSamples)
+void GLScopeGUI::onScopePreTriggerChanged(uint32_t preTriggerNbSamples)
 {
-    qDebug("GLScopeGUI::on_scope_preTriggerChanged: %u", preTriggerNbSamples);
+    qDebug("GLScopeGUI::onScopePreTriggerChanged: %u", preTriggerNbSamples);
     ui->trigPre->setValue(preTriggerNbSamples*100 / m_glScope->getTraceSize()); // slider position is a percentage value of the trace size
     setTrigPreDisplay();
 }
 
 void GLScopeGUI::resetToDefaults()
 {
+    m_settings.resetToDefaults();
 }
-
 
 QByteArray GLScopeGUI::serialize() const
 {
-    SimpleSerializer s(1);
-
-    // first row
-    s.writeS32(1, (int) m_glScope->getDisplayMode());
-    s.writeS32(2, ui->traceIntensity->value());
-    s.writeS32(3, ui->gridIntensity->value());
-    s.writeS32(4, ui->time->value());
-    s.writeS32(5, ui->timeOfs->value());
-    s.writeS32(6, ui->traceLen->value());
-
-    // second row - by trace
-    const std::vector<ScopeVis::TraceData>& tracesData = m_scopeVis->getTracesData();
-    std::vector<ScopeVis::TraceData>::const_iterator traceDataIt = tracesData.begin();
-    s.writeU32(10, (uint32_t) tracesData.size());
-    int i = 0;
-
-    for (; traceDataIt != tracesData.end(); ++traceDataIt, i++)
-    {
-        s.writeS32(20 + 16*i, (int) traceDataIt->m_projectionType);
-        s.writeU32(21 + 16*i, traceDataIt->m_ampIndex);
-        s.writeS32(22 + 16*i, traceDataIt->m_ofsCoarse);
-        s.writeS32(23 + 16*i, traceDataIt->m_ofsFine);
-        s.writeS32(24 + 16*i, traceDataIt->m_traceDelayCoarse);
-        s.writeS32(25 + 16*i, traceDataIt->m_traceDelayFine);
-        s.writeFloat(26 + 16*i, traceDataIt->m_traceColorR);
-        s.writeFloat(27 + 16*i, traceDataIt->m_traceColorG);
-        s.writeFloat(28 + 16*i, traceDataIt->m_traceColorB);
-    }
-
-    // third row - by trigger
-    s.writeU32(200, (uint32_t) m_scopeVis->getNbTriggers());
-    s.writeS32(201, ui->trigPre->value());
-
-    for (unsigned int i = 0; i < m_scopeVis->getNbTriggers(); i++)
-    {
-        const ScopeVis::TriggerData& triggerData = m_scopeVis->getTriggerData(i);
-        s.writeS32(210 + 16*i, (int) triggerData.m_projectionType);
-        s.writeS32(211 + 16*i, triggerData.m_triggerRepeat);
-        s.writeBool(212 + 16*i, triggerData.m_triggerPositiveEdge);
-        s.writeBool(213 + 16*i, triggerData.m_triggerBothEdges);
-        s.writeS32(214 + 16*i, triggerData.m_triggerLevelCoarse);
-        s.writeS32(215 + 16*i, triggerData.m_triggerLevelFine);
-        s.writeS32(216 + 16*i, triggerData.m_triggerDelayCoarse);
-        s.writeS32(217 + 16*i, triggerData.m_triggerDelayFine);
-        s.writeFloat(218 + 16*i, triggerData.m_triggerColorR);
-        s.writeFloat(219 + 16*i, triggerData.m_triggerColorG);
-        s.writeFloat(220 + 16*i, triggerData.m_triggerColorB);
-        s.writeU32(221 + 16*i, triggerData.m_triggerHoldoff);
-    }
-
-    return s.final();
+    return m_settings.serialize();
 }
 
 bool GLScopeGUI::deserialize(const QByteArray& data)
 {
-    qDebug("GLScopeGUI::deserialize");
-    SimpleDeserializer d(data);
+    bool ret;
 
-    if(!d.isValid()) {
-        resetToDefaults();
-        return false;
-    }
-
-    if(d.getVersion() == 1)
+    if (m_settings.deserialize(data))
     {
-        TraceUIBlocker traceUIBlocker(ui);
-        TrigUIBlocker trigUIBlocker(ui);
-        int intValue;
-        uint32_t uintValue;
-        bool boolValue;
-
-        ui->onlyX->setEnabled(false);
-        ui->onlyY->setEnabled(false);
-        ui->horizontalXY->setEnabled(false);
-        ui->verticalXY->setEnabled(false);
-        ui->polar->setEnabled(false);
-
-        ui->traceMode->setCurrentIndex(0);
-        d.readS32(1, &intValue, (int) GLScope::DisplayX);
-        m_glScope->setDisplayMode((GLScope::DisplayMode) intValue);
-
-        ui->onlyX->setChecked(false);
-        ui->onlyY->setChecked(false);
-        ui->horizontalXY->setChecked(false);
-        ui->verticalXY->setChecked(false);
-        ui->polar->setChecked(false);
-
-        switch (m_glScope->getDisplayMode())
-        {
-        case GLScope::DisplayY:
-            ui->onlyY->setChecked(true);
-            break;
-        case GLScope::DisplayXYH:
-            ui->horizontalXY->setChecked(true);
-            break;
-        case GLScope::DisplayXYV:
-            ui->verticalXY->setChecked(true);
-            break;
-        case GLScope::DisplayPol:
-            ui->polar->setChecked(true);
-            break;
-        case GLScope::DisplayX:
-        default:
-            ui->onlyX->setChecked(true);
-            break;
-        }
-
-        d.readS32(2, &intValue, 50);
-        ui->traceIntensity->setValue(intValue);
-        d.readS32(3, &intValue, 10);
-        ui->gridIntensity->setValue(intValue);
-        d.readS32(4, &intValue, 1);
-        ui->time->setValue(intValue);
-        d.readS32(5, &intValue, 0);
-        ui->timeOfs->setValue(intValue);
-        d.readS32(6, &intValue, 1);
-        ui->traceLen->setValue(intValue);
-
-        // trace stuff
-
-        uint32_t nbTracesSaved;
-        d.readU32(10, &nbTracesSaved, 1);
-        const std::vector<ScopeVis::TraceData>& tracesData = m_scopeVis->getTracesData();
-        uint32_t iTrace = tracesData.size();
-
-        qDebug("GLScopeGUI::deserialize: nbTracesSaved: %u tracesData.size(): %lu", nbTracesSaved, tracesData.size());
-
-        while (iTrace > nbTracesSaved) // remove possible traces in excess
-        {
-            m_scopeVis->removeTrace(iTrace - 1);
-            iTrace--;
-        }
-
-        for (iTrace = 0; iTrace < nbTracesSaved; iTrace++)
-        {
-            ScopeVis::TraceData traceData;
-            float r, g, b;
-
-            d.readS32(20 + 16*iTrace, &intValue, 0);
-            ui->traceMode->setCurrentIndex(intValue);
-            d.readU32(21 + 16*iTrace, &uintValue, 0);
-            ui->amp->setValue(uintValue);
-            d.readS32(22 + 16*iTrace, &intValue, 0);
-            ui->ofsCoarse->setValue(intValue);
-            d.readS32(23 + 16*iTrace, &intValue, 0);
-            ui->ofsFine->setValue(intValue);
-            d.readS32(24 + 16*iTrace, &intValue, 0);
-            ui->traceDelayCoarse->setValue(intValue);
-            d.readS32(25 + 16*iTrace, &intValue, 0);
-            ui->traceDelayFine->setValue(intValue);
-            d.readFloat(26 + 16*iTrace, &r, 1.0f);
-            d.readFloat(27 + 16*iTrace, &g, 1.0f);
-            d.readFloat(28 + 16*iTrace, &b, 1.0f);
-            m_focusedTraceColor.setRgbF(r, g, b);
-
-            fillTraceData(traceData);
-
-            if (iTrace < tracesData.size()) // change existing traces
-            {
-                m_scopeVis->changeTrace(traceData, iTrace);
-            }
-            else // add new traces
-            {
-                m_scopeVis->addTrace(traceData);
-            }
-        }
-
-
-        ui->trace->setMaximum(nbTracesSaved-1);
-        ui->trace->setValue(nbTracesSaved-1);
-        m_glScope->setFocusedTraceIndex(nbTracesSaved-1);
-
-        int r,g,b,a;
-        m_focusedTraceColor.getRgb(&r, &g, &b, &a);
-        ui->traceColor->setStyleSheet(tr("QLabel { background-color : rgb(%1,%2,%3); }").arg(r).arg(g).arg(b));
-
-        setTraceIndexDisplay();
-        setAmpScaleDisplay();
-        setAmpOfsDisplay();
-        setTraceDelayDisplay();
-
-        ui->onlyX->setEnabled(true);
-        ui->onlyY->setEnabled(nbTracesSaved > 1);
-        ui->horizontalXY->setEnabled(nbTracesSaved > 1);
-        ui->verticalXY->setEnabled(nbTracesSaved > 1);
-        ui->polar->setEnabled(nbTracesSaved > 1);
-
-        // trigger stuff
-
-        uint32_t nbTriggersSaved;
-        d.readU32(200, &nbTriggersSaved, 1);
-        uint32_t nbTriggers = m_scopeVis->getNbTriggers();
-        uint32_t iTrigger = nbTriggers;
-
-        d.readS32(201, &intValue, 0);
-        ui->trigPre->setValue(intValue);
-
-        qDebug("GLScopeGUI::deserialize: nbTriggersSaved: %u nbTriggers: %u", nbTriggersSaved, nbTriggers);
-
-        while (iTrigger > nbTriggersSaved) // remove possible triggers in excess
-        {
-            m_scopeVis->removeTrigger(iTrigger - 1);
-            iTrigger--;
-        }
-
-        for (iTrigger = 0; iTrigger < nbTriggersSaved; iTrigger++)
-        {
-            ScopeVis::TriggerData triggerData;
-            float r, g, b;
-
-            d.readS32(210 + 16*iTrigger, &intValue, 0);
-            ui->trigMode->setCurrentIndex(intValue);
-            d.readS32(211 + 16*iTrigger, &intValue, 1);
-            ui->trigCount->setValue(intValue);
-            d.readBool(212 + 16*iTrigger, &boolValue, true);
-            ui->trigPos->setChecked(boolValue);
-            d.readBool(213 + 16*iTrigger, &boolValue, false);
-            ui->trigBoth->setChecked(boolValue);
-            d.readS32(214 + 16*iTrigger, &intValue, 1);
-            ui->trigLevelCoarse->setValue(intValue);
-            d.readS32(215 + 16*iTrigger, &intValue, 1);
-            ui->trigLevelFine->setValue(intValue);
-            d.readS32(216 + 16*iTrigger, &intValue, 1);
-            ui->trigDelayCoarse->setValue(intValue);
-            d.readS32(217 + 16*iTrigger, &intValue, 1);
-            ui->trigDelayFine->setValue(intValue);
-            d.readFloat(218 + 16*iTrigger, &r, 1.0f);
-            d.readFloat(219 + 16*iTrigger, &g, 1.0f);
-            d.readFloat(220 + 16*iTrigger, &b, 1.0f);
-            m_focusedTriggerColor.setRgbF(r, g, b);
-            d.readU32(221 + 16*iTrigger, &uintValue, 1);
-            ui->trigHoldoff->setValue(uintValue);
-            ui->trigHoldoffText->setText(tr("%1").arg(uintValue));
-
-            fillTriggerData(triggerData);
-
-            if (iTrigger < nbTriggers) // change existing triggers
-            {
-                m_scopeVis->changeTrigger(triggerData, iTrigger);
-            }
-            else // add new trigers
-            {
-                m_scopeVis->addTrigger(triggerData);
-            }
-
-            if (iTrigger == nbTriggersSaved-1)
-            {
-                m_glScope->setFocusedTriggerData(triggerData);
-            }
-        }
-
-        ui->trig->setMaximum(nbTriggersSaved-1);
-        ui->trig->setValue(nbTriggersSaved-1);
-
-        m_focusedTriggerColor.getRgb(&r, &g, &b, &a);
-        ui->trigColor->setStyleSheet(tr("QLabel { background-color : rgb(%1,%2,%3); }").arg(r).arg(g).arg(b));
-
-        setTrigCountDisplay();
-        setTrigDelayDisplay();
-        setTrigIndexDisplay();
-        setTrigLevelDisplay();
-        setTrigPreDisplay();
-
-        return true;
+        displaySettings();
+        ret = true;
     }
     else
     {
         resetToDefaults();
-        return false;
+        ret = false;
     }
+
+    // trace stuff
+
+    const std::vector<GLScopeSettings::TraceData>& tracesData = m_scopeVis->getTracesData();
+    uint32_t iTrace = tracesData.size();
+    uint32_t nbTracesSaved = m_settings.m_tracesData.size();
+    ui->trace->setMaximum(nbTracesSaved-1);
+
+    while (iTrace > nbTracesSaved) // remove possible traces in excess
+    {
+        ScopeVis::MsgScopeVisRemoveTrace *msg = ScopeVis::MsgScopeVisRemoveTrace::create(iTrace - 1);
+        m_scopeVis->getInputMessageQueue()->push(msg);
+        iTrace--;
+    }
+
+    for (iTrace = 0; iTrace < nbTracesSaved; iTrace++)
+    {
+        GLScopeSettings::TraceData& traceData = m_settings.m_tracesData[iTrace];
+
+        if (iTrace < tracesData.size()) // change existing traces
+        {
+            ScopeVis::MsgScopeVisChangeTrace *msg = ScopeVis::MsgScopeVisChangeTrace::create(traceData, iTrace);
+            m_scopeVis->getInputMessageQueue()->push(msg);
+        }
+        else // add new traces
+        {
+            ScopeVis::MsgScopeVisAddTrace *msg = ScopeVis::MsgScopeVisAddTrace::create(traceData);
+            m_scopeVis->getInputMessageQueue()->push(msg);
+        }
+    }
+
+    setTraceIndexDisplay();
+    setAmpScaleDisplay();
+    setAmpOfsDisplay();
+    setTraceDelayDisplay();
+    setDisplayMode(m_settings.m_displayMode);
+
+    // trigger stuff
+
+    uint32_t nbTriggersSaved = m_settings.m_triggersData.size();
+    uint32_t nbTriggers = m_scopeVis->getNbTriggers();
+    uint32_t iTrigger = nbTriggers;
+    ui->trig->setMaximum(nbTriggersSaved-1);
+
+    while (iTrigger > nbTriggersSaved) // remove possible triggers in excess
+    {
+        ScopeVis::MsgScopeVisRemoveTrigger *msg = ScopeVis::MsgScopeVisRemoveTrigger::create(iTrigger - 1);
+        m_scopeVis->getInputMessageQueue()->push(msg);
+        iTrigger--;
+    }
+
+    for (iTrigger = 0; iTrigger < nbTriggersSaved; iTrigger++)
+    {
+        GLScopeSettings::TriggerData& triggerData = m_settings.m_triggersData[iTrigger];
+
+        if (iTrigger < nbTriggers) // change existing triggers
+        {
+            ScopeVis::MsgScopeVisChangeTrigger *msg = ScopeVis::MsgScopeVisChangeTrigger::create(triggerData, iTrigger);
+            m_scopeVis->getInputMessageQueue()->push(msg);
+        }
+        else // add new triggers
+        {
+            ScopeVis::MsgScopeVisAddTrigger *msg = ScopeVis::MsgScopeVisAddTrigger::create(triggerData);
+            m_scopeVis->getInputMessageQueue()->push(msg);
+        }
+    }
+
+    setTrigCountDisplay();
+    setTrigDelayDisplay();
+    setTrigIndexDisplay();
+    setTrigLevelDisplay();
+    setTrigPreDisplay();
+
+    displaySettings();
+
+    return ret;
+}
+
+void GLScopeGUI::formatTo(SWGSDRangel::SWGObject *swgObject) const
+{
+    m_settings.formatTo(swgObject);
+}
+
+void GLScopeGUI::updateFrom(const QStringList& keys, const SWGSDRangel::SWGObject *swgObject)
+{
+    m_settings.updateFrom(keys, swgObject);
+}
+
+void GLScopeGUI::updateSettings()
+{
+    displaySettings();
+    applySettings(m_settings); /// FIXME
+}
+
+void GLScopeGUI::setNbStreams(unsigned int nbStreams)
+{
+    QStringList streamNames;
+
+    for (unsigned int s = 0; s < nbStreams; s++) {
+        streamNames.append(tr("%1").arg(s));
+    }
+
+    setStreams(streamNames);
+}
+
+void GLScopeGUI::setStreams(const QStringList& streamNames)
+{
+    int traceStreamIndex = ui->traceStream->currentIndex();
+    int triggerStreamIndex = ui->trigStream->currentIndex();
+    ui->traceStream->blockSignals(true);
+    ui->trigStream->blockSignals(true);
+    ui->traceStream->clear();
+    ui->trigStream->clear();
+
+    for (QString s : streamNames)
+    {
+        ui->traceStream->addItem(s);
+        ui->trigStream->addItem(s);
+    }
+
+    int newTraceStreamIndex = traceStreamIndex < streamNames.size() ? traceStreamIndex : streamNames.size() - 1;
+    int newTriggerStreamIndex = triggerStreamIndex < streamNames.size() ? triggerStreamIndex: streamNames.size() - 1;
+
+    ui->traceStream->setCurrentIndex(newTraceStreamIndex);
+
+    if (newTraceStreamIndex != traceStreamIndex) {
+        changeCurrentTrace();
+    }
+
+    ui->trigStream->setCurrentIndex(newTriggerStreamIndex);
+
+    if (newTriggerStreamIndex != triggerStreamIndex) {
+        changeCurrentTrigger();
+    }
+
+    ui->traceStream->blockSignals(false);
+    ui->trigStream->blockSignals(false);
 }
 
 void GLScopeGUI::on_onlyX_toggled(bool checked)
 {
     if (checked)
     {
+        m_glScope->setDisplayMode(GLScope::DisplayX);
+        ui->onlyX->setEnabled(false);
+        ui->onlyY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->horizontalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->verticalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->polar->setEnabled(m_scopeVis->getNbTraces() > 1);
         ui->onlyY->setChecked(false);
         ui->horizontalXY->setChecked(false);
         ui->verticalXY->setChecked(false);
         ui->polar->setChecked(false);
-        m_glScope->setDisplayMode(GLScope::DisplayX);
-    }
-    else
-    {
-        if (!ui->onlyY->isChecked() && !ui->horizontalXY->isChecked() && !ui->verticalXY->isChecked() && !ui->polar->isChecked()) {
-            ui->polar->setChecked(true);
-        }
+        m_settings.m_displayMode = GLScopeSettings::DisplayX;
+        m_scopeVis->configure(
+            m_settings.m_displayMode,
+            m_settings.m_traceIntensity,
+            m_settings.m_gridIntensity
+        );
     }
 }
 
@@ -468,17 +353,22 @@ void GLScopeGUI::on_onlyY_toggled(bool checked)
 {
     if (checked)
     {
+        m_glScope->setDisplayMode(GLScope::DisplayY);
+        ui->onlyX->setEnabled(true);
+        ui->onlyY->setEnabled(false);
+        ui->horizontalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->verticalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->polar->setEnabled(m_scopeVis->getNbTraces() > 1);
         ui->onlyX->setChecked(false);
         ui->horizontalXY->setChecked(false);
         ui->verticalXY->setChecked(false);
         ui->polar->setChecked(false);
-        m_glScope->setDisplayMode(GLScope::DisplayY);
-    }
-    else
-    {
-        if (!ui->onlyX->isChecked() && !ui->horizontalXY->isChecked() && !ui->verticalXY->isChecked() && !ui->polar->isChecked()) {
-            ui->polar->setChecked(true);
-        }
+        m_settings.m_displayMode = GLScopeSettings::DisplayY;
+        m_scopeVis->configure(
+            m_settings.m_displayMode,
+            m_settings.m_traceIntensity,
+            m_settings.m_gridIntensity
+        );
     }
 }
 
@@ -486,17 +376,22 @@ void GLScopeGUI::on_horizontalXY_toggled(bool checked)
 {
     if (checked)
     {
+        m_glScope->setDisplayMode(GLScope::DisplayXYH);
+        ui->onlyX->setEnabled(true);
+        ui->onlyY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->horizontalXY->setEnabled(false);
+        ui->verticalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->polar->setEnabled(m_scopeVis->getNbTraces() > 1);
         ui->onlyX->setChecked(false);
         ui->onlyY->setChecked(false);
         ui->verticalXY->setChecked(false);
         ui->polar->setChecked(false);
-        m_glScope->setDisplayMode(GLScope::DisplayXYH);
-    }
-    else
-    {
-        if (!ui->onlyX->isChecked() && !ui->onlyY->isChecked() && !ui->verticalXY->isChecked() && !ui->polar->isChecked()) {
-            ui->polar->setChecked(true);
-        }
+        m_settings.m_displayMode = GLScopeSettings::DisplayXYH;
+        m_scopeVis->configure(
+            m_settings.m_displayMode,
+            m_settings.m_traceIntensity,
+            m_settings.m_gridIntensity
+        );
     }
 }
 
@@ -504,17 +399,22 @@ void GLScopeGUI::on_verticalXY_toggled(bool checked)
 {
     if (checked)
     {
+        m_glScope->setDisplayMode(GLScope::DisplayXYV);
+        ui->onlyX->setEnabled(true);
+        ui->onlyY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->horizontalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->verticalXY->setEnabled(false);
+        ui->polar->setEnabled(m_scopeVis->getNbTraces() > 1);
         ui->onlyX->setChecked(false);
         ui->onlyY->setChecked(false);
         ui->horizontalXY->setChecked(false);
         ui->polar->setChecked(false);
-        m_glScope->setDisplayMode(GLScope::DisplayXYV);
-    }
-    else
-    {
-        if (!ui->onlyX->isChecked() && !ui->onlyY->isChecked() && !ui->horizontalXY->isChecked() && !ui->polar->isChecked()) {
-            ui->polar->setChecked(true);
-        }
+        m_settings.m_displayMode = GLScopeSettings::DisplayXYV;
+        m_scopeVis->configure(
+            m_settings.m_displayMode,
+            m_settings.m_traceIntensity,
+            m_settings.m_gridIntensity
+        );
     }
 }
 
@@ -522,17 +422,22 @@ void GLScopeGUI::on_polar_toggled(bool checked)
 {
     if (checked)
     {
+        m_glScope->setDisplayMode(GLScope::DisplayPol);
+        ui->onlyX->setEnabled(true);
+        ui->onlyY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->horizontalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->verticalXY->setEnabled(m_scopeVis->getNbTraces() > 1);
+        ui->polar->setEnabled(false);
         ui->onlyX->setChecked(false);
         ui->onlyY->setChecked(false);
         ui->horizontalXY->setChecked(false);
         ui->verticalXY->setChecked(false);
-        m_glScope->setDisplayMode(GLScope::DisplayPol);
-    }
-    else
-    {
-        if (!ui->onlyX->isChecked() && !ui->onlyY->isChecked() && !ui->horizontalXY->isChecked() && !ui->verticalXY->isChecked()) {
-            ui->polar->setChecked(true);
-        }
+        m_settings.m_displayMode = GLScopeSettings::DisplayPol;
+        m_scopeVis->configure(
+            m_settings.m_displayMode,
+            m_settings.m_traceIntensity,
+            m_settings.m_gridIntensity
+        );
     }
 }
 
@@ -541,28 +446,48 @@ void GLScopeGUI::on_polarPoints_toggled(bool checked)
     m_glScope->setDisplayXYPoints(checked);
 }
 
+void GLScopeGUI::on_polarGrid_toggled(bool checked)
+{
+    m_glScope->setDisplayXYPolarGrid(checked);
+}
+
 void GLScopeGUI::on_traceIntensity_valueChanged(int value)
 {
     ui->traceIntensity->setToolTip(QString("Trace intensity: %1").arg(value));
     m_glScope->setDisplayTraceIntensity(value);
+    m_settings.m_traceIntensity = value;
+    m_scopeVis->configure(
+        m_settings.m_displayMode,
+        m_settings.m_traceIntensity,
+        m_settings.m_gridIntensity
+    );
 }
 
 void GLScopeGUI::on_gridIntensity_valueChanged(int value)
 {
     ui->gridIntensity->setToolTip(QString("Grid intensity: %1").arg(value));
     m_glScope->setDisplayGridIntensity(value);
+    m_settings.m_gridIntensity = value;
+    m_scopeVis->configure(
+        m_settings.m_displayMode,
+        m_settings.m_traceIntensity,
+        m_settings.m_gridIntensity
+    );
 }
 
 void GLScopeGUI::on_time_valueChanged(int value)
 {
     m_timeBase = value;
+    m_settings.m_time = value;
     setTimeScaleDisplay();
     setTraceDelayDisplay();
-    m_scopeVis->configure(m_traceLenMult*ScopeVis::m_traceChunkSize,
-            m_timeBase,
-            m_timeOffset*10,
-            (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
-            ui->freerun->isChecked());
+    m_scopeVis->configure(
+        m_settings.m_traceLenMult*m_scopeVis->getTraceChunkSize(),
+        m_timeBase,
+        m_timeOffset*10,
+        (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
+        ui->freerun->isChecked()
+    );
 }
 
 void GLScopeGUI::on_timeOfs_valueChanged(int value)
@@ -572,12 +497,21 @@ void GLScopeGUI::on_timeOfs_valueChanged(int value)
     }
 
     m_timeOffset = value;
+    m_settings.m_timeOfs = value;
     setTimeOfsDisplay();
-    m_scopeVis->configure(m_traceLenMult*ScopeVis::m_traceChunkSize,
-            m_timeBase,
-            m_timeOffset*10,
-            (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
-            ui->freerun->isChecked());
+    m_scopeVis->configure(
+        m_settings.m_traceLenMult*m_scopeVis->getTraceChunkSize(),
+        m_timeBase,
+        m_timeOffset*10,
+        (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
+        ui->freerun->isChecked()
+    );
+
+    if ((value > 0) && (ui->mem->value() == 0)) // switch from live to memory trace
+    {
+        ui->mem->setValue(1);
+        ui->memText->setText("01");
+    }
 }
 
 void GLScopeGUI::on_traceLen_valueChanged(int value)
@@ -586,12 +520,14 @@ void GLScopeGUI::on_traceLen_valueChanged(int value)
         return;
     }
 
-    m_traceLenMult = value;
-    m_scopeVis->configure(m_traceLenMult*ScopeVis::m_traceChunkSize,
-            m_timeBase,
-            m_timeOffset*10,
-            (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
-            ui->freerun->isChecked());
+    m_settings.m_traceLenMult = value;
+    m_scopeVis->configure(
+        m_settings.m_traceLenMult*m_scopeVis->getTraceChunkSize(),
+        m_timeBase,
+        m_timeOffset*10,
+        (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
+        ui->freerun->isChecked()
+    );
     setTraceLenDisplay();
     setTimeScaleDisplay();
     setTimeOfsDisplay();
@@ -603,7 +539,8 @@ void GLScopeGUI::on_trace_valueChanged(int value)
 {
     ui->traceText->setText(value == 0 ? "X" : QString("Y%1").arg(ui->trace->value()));
 
-    ScopeVis::TraceData traceData;
+    m_ctlTraceIndex = value;
+    GLScopeSettings::TraceData traceData;
     m_scopeVis->getTraceData(traceData, value);
 
     qDebug() << "GLScopeGUI::on_trace_valueChanged:"
@@ -614,13 +551,14 @@ void GLScopeGUI::on_trace_valueChanged(int value)
 
     setTraceUI(traceData);
 
-    m_scopeVis->focusOnTrace(value);
+    ScopeVis::MsgScopeVisFocusOnTrace *msg = ScopeVis::MsgScopeVisFocusOnTrace::create(value);
+    m_scopeVis->getInputMessageQueue()->push(msg);
 }
 
 void GLScopeGUI::on_traceAdd_clicked(bool checked)
 {
     (void) checked;
-    ScopeVis::TraceData traceData;
+    GLScopeSettings::TraceData traceData;
     fillTraceData(traceData);
     addTrace(traceData);
 }
@@ -632,17 +570,16 @@ void GLScopeGUI::on_traceDel_clicked(bool checked)
     {
         ui->trace->setMaximum(ui->trace->maximum() - 1);
 
-        if (ui->trace->value() == 0)
+        if (ui->trace->maximum() == 0)
         {
-            ui->onlyX->setChecked(true);
-            ui->onlyY->setEnabled(false);
-            ui->horizontalXY->setEnabled(false);
-            ui->verticalXY->setEnabled(false);
-            ui->polar->setEnabled(false);
+            setDisplayMode(GLScopeSettings::DisplayX);
             m_glScope->setDisplayMode(GLScope::DisplayX);
         }
 
-        m_scopeVis->removeTrace(ui->trace->value());
+        ScopeVis::MsgScopeVisRemoveTrace *msg = ScopeVis::MsgScopeVisRemoveTrace::create(ui->trace->value());
+        m_scopeVis->getInputMessageQueue()->push(msg);
+        settingsTraceDel(ui->trace->value());
+
         changeCurrentTrace();
     }
 }
@@ -653,12 +590,15 @@ void GLScopeGUI::on_traceUp_clicked(bool checked)
     if (ui->trace->maximum() > 0) // more than one trace
     {
         int newTraceIndex = (ui->trace->value() + 1) % (ui->trace->maximum()+1);
-        m_scopeVis->moveTrace(ui->trace->value(), true);
+        ScopeVis::MsgScopeVisMoveTrace *msgMoveTrace = ScopeVis::MsgScopeVisMoveTrace::create(ui->trace->value(), true);
+        m_scopeVis->getInputMessageQueue()->push(msgMoveTrace);
+        settingsTraceMove(ui->trace->value(), true);
         ui->trace->setValue(newTraceIndex); // follow trace
-        ScopeVis::TraceData traceData;
+        GLScopeSettings::TraceData traceData;
         m_scopeVis->getTraceData(traceData, ui->trace->value());
         setTraceUI(traceData);
-        m_scopeVis->focusOnTrace(ui->trace->value());
+        ScopeVis::MsgScopeVisFocusOnTrace *msgFocusOnTrace = ScopeVis::MsgScopeVisFocusOnTrace::create(ui->trace->value());
+        m_scopeVis->getInputMessageQueue()->push(msgFocusOnTrace);
     }
 }
 
@@ -668,12 +608,15 @@ void GLScopeGUI::on_traceDown_clicked(bool checked)
     if (ui->trace->value() > 0) // not the X (lowest) trace
     {
         int newTraceIndex = (ui->trace->value() - 1) % (ui->trace->maximum()+1);
-        m_scopeVis->moveTrace(ui->trace->value(), false);
+        ScopeVis::MsgScopeVisMoveTrace *msgMoveTrace = ScopeVis::MsgScopeVisMoveTrace::create(ui->trace->value(), false);
+        m_scopeVis->getInputMessageQueue()->push(msgMoveTrace);
+        settingsTraceMove(ui->trace->value(), false);
         ui->trace->setValue(newTraceIndex); // follow trace
-        ScopeVis::TraceData traceData;
+        GLScopeSettings::TraceData traceData;
         m_scopeVis->getTraceData(traceData, ui->trace->value());
         setTraceUI(traceData);
-        m_scopeVis->focusOnTrace(ui->trace->value());
+        ScopeVis::MsgScopeVisFocusOnTrace *msgFocusOnTrace = ScopeVis::MsgScopeVisFocusOnTrace::create(ui->trace->value());
+        m_scopeVis->getInputMessageQueue()->push(msgFocusOnTrace);
     }
 }
 
@@ -681,7 +624,8 @@ void GLScopeGUI::on_trig_valueChanged(int value)
 {
     ui->trigText->setText(tr("%1").arg(value));
 
-    ScopeVis::TriggerData triggerData;
+    m_ctlTriggerIndex = value;
+    GLScopeSettings::TriggerData triggerData;
     m_scopeVis->getTriggerData(triggerData, value);
 
     qDebug() << "GLScopeGUI::on_trig_valueChanged:"
@@ -692,14 +636,14 @@ void GLScopeGUI::on_trig_valueChanged(int value)
             << " m_triggerLevel" << triggerData.m_triggerLevel;
 
     setTriggerUI(triggerData);
-
-    m_scopeVis->focusOnTrigger(value);
+    ScopeVis::MsgScopeVisFocusOnTrigger *msg = ScopeVis::MsgScopeVisFocusOnTrigger::create(value);
+    m_scopeVis->getInputMessageQueue()->push(msg);
 }
 
 void GLScopeGUI::on_trigAdd_clicked(bool checked)
 {
     (void) checked;
-    ScopeVis::TriggerData triggerData;
+    GLScopeSettings::TriggerData triggerData;
     fillTriggerData(triggerData);
     addTrigger(triggerData);
 }
@@ -709,7 +653,9 @@ void GLScopeGUI::on_trigDel_clicked(bool checked)
     (void) checked;
     if (ui->trig->value() > 0)
     {
-        m_scopeVis->removeTrigger(ui->trig->value());
+        ScopeVis::MsgScopeVisRemoveTrigger *msg = ScopeVis::MsgScopeVisRemoveTrigger::create(ui->trig->value());
+        m_scopeVis->getInputMessageQueue()->push(msg);
+        settingsTriggerDel(ui->trig->value());
         ui->trig->setMaximum(ui->trig->maximum() - 1);
     }
 }
@@ -720,12 +666,15 @@ void GLScopeGUI::on_trigUp_clicked(bool checked)
     if (ui->trig->maximum() > 0) // more than one trigger
     {
         int newTriggerIndex = (ui->trig->value() + 1) % (ui->trig->maximum()+1);
-        m_scopeVis->moveTrigger(ui->trace->value(), true);
+        ScopeVis::MsgScopeVisMoveTrigger *msgMoveTrigger = ScopeVis::MsgScopeVisMoveTrigger::create(ui->trace->value(), true);
+        m_scopeVis->getInputMessageQueue()->push(msgMoveTrigger);
+        settingsTriggerMove(ui->trace->value(), true);
         ui->trig->setValue(newTriggerIndex); // follow trigger
-        ScopeVis::TriggerData triggerData;
+        GLScopeSettings::TriggerData triggerData;
         m_scopeVis->getTriggerData(triggerData, ui->trig->value());
         setTriggerUI(triggerData);
-        m_scopeVis->focusOnTrigger(ui->trig->value());
+        ScopeVis::MsgScopeVisFocusOnTrigger *msgFocusOnTrigger = ScopeVis::MsgScopeVisFocusOnTrigger::create(ui->trig->value());
+        m_scopeVis->getInputMessageQueue()->push(msgFocusOnTrigger);
     }
 }
 
@@ -735,13 +684,22 @@ void GLScopeGUI::on_trigDown_clicked(bool checked)
     if (ui->trig->value() > 0) // not the 0 (lowest) trigger
     {
         int newTriggerIndex = (ui->trig->value() - 1) % (ui->trig->maximum()+1);
-        m_scopeVis->moveTrigger(ui->trace->value(), false);
+        ScopeVis::MsgScopeVisMoveTrigger *msgMoveTrigger = ScopeVis::MsgScopeVisMoveTrigger::create(ui->trace->value(), false);
+        m_scopeVis->getInputMessageQueue()->push(msgMoveTrigger);
+        settingsTriggerMove(ui->trace->value(), false);
         ui->trig->setValue(newTriggerIndex); // follow trigger
-        ScopeVis::TriggerData triggerData;
+        GLScopeSettings::TriggerData triggerData;
         m_scopeVis->getTriggerData(triggerData, ui->trig->value());
         setTriggerUI(triggerData);
-        m_scopeVis->focusOnTrigger(ui->trig->value());
+        ScopeVis::MsgScopeVisFocusOnTrigger *msgFocusOnTrigger = ScopeVis::MsgScopeVisFocusOnTrigger::create(ui->trig->value());
+        m_scopeVis->getInputMessageQueue()->push(msgFocusOnTrigger);
     }
+}
+
+void GLScopeGUI::on_traceStream_currentIndexChanged(int index)
+{
+    (void) index;
+    changeCurrentTrace();
 }
 
 void GLScopeGUI::on_traceMode_currentIndexChanged(int index)
@@ -752,10 +710,44 @@ void GLScopeGUI::on_traceMode_currentIndexChanged(int index)
     changeCurrentTrace();
 }
 
+void GLScopeGUI::on_ampReset_clicked(bool checked)
+{
+    (void) checked;
+    ui->amp->setValue(0);
+    ui->ampCoarse->setValue(1);
+    ui->ampExp->setValue(0);
+    setAmpScaleDisplay();
+    changeCurrentTrace();
+}
+
 void GLScopeGUI::on_amp_valueChanged(int value)
 {
     (void) value;
     setAmpScaleDisplay();
+    changeCurrentTrace();
+}
+
+void GLScopeGUI::on_ampCoarse_valueChanged(int value)
+{
+    (void) value;
+    setAmpScaleDisplay();
+    changeCurrentTrace();
+}
+
+void GLScopeGUI::on_ampExp_valueChanged(int value)
+{
+    (void) value;
+    setAmpScaleDisplay();
+    changeCurrentTrace();
+}
+
+void GLScopeGUI::on_ofsReset_clicked(bool checked)
+{
+    (void) checked;
+    ui->ofsFine->setValue(0);
+    ui->ofsCoarse->setValue(0);
+    ui->ofsExp->setValue(0);
+    setAmpOfsDisplay();
     changeCurrentTrace();
 }
 
@@ -767,6 +759,13 @@ void GLScopeGUI::on_ofsCoarse_valueChanged(int value)
 }
 
 void GLScopeGUI::on_ofsFine_valueChanged(int value)
+{
+    (void) value;
+    setAmpOfsDisplay();
+    changeCurrentTrace();
+}
+
+void GLScopeGUI::on_ofsExp_valueChanged(int value)
 {
     (void) value;
     setAmpOfsDisplay();
@@ -811,7 +810,7 @@ void GLScopeGUI::on_memorySave_clicked(bool checked)
 {
     (void) checked;
     QString fileName = QFileDialog::getSaveFileName(this,
-        tr("Open trace memory file"), ".", tr("Trace memory files (*.trcm)"), 0, QFileDialog::DontUseNativeDialog);
+        tr("Create trace memory file"), ".", tr("Trace memory files (*.trcm)"), 0, QFileDialog::DontUseNativeDialog);
 
     if (fileName != "")
     {
@@ -868,11 +867,16 @@ void GLScopeGUI::on_memoryLoad_clicked(bool checked)
 
 void GLScopeGUI::on_mem_valueChanged(int value)
 {
-    QString text;
-    text.sprintf("%02d", value);
+    QString text = QStringLiteral("%1").arg(value, 2, 10, QLatin1Char('0'));
     ui->memText->setText(text);
    	disableLiveMode(value > 0); // live / memory mode toggle
    	m_scopeVis->setMemoryIndex(value);
+}
+
+void GLScopeGUI::on_trigStream_currentIndexChanged(int index)
+{
+    (void) index;
+    changeCurrentTrigger();
 }
 
 void GLScopeGUI::on_trigMode_currentIndexChanged(int index)
@@ -957,11 +961,14 @@ void GLScopeGUI::on_trigPre_valueChanged(int value)
 {
     (void) value;
     setTrigPreDisplay();
-    m_scopeVis->configure(m_traceLenMult*ScopeVis::m_traceChunkSize,
-            m_timeBase,
-            m_timeOffset*10,
-            (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
-            ui->freerun->isChecked());
+    m_scopeVis->configure(
+        m_settings.m_traceLenMult*m_scopeVis->getTraceChunkSize(),
+        m_timeBase,
+        m_timeOffset*10,
+        (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
+        ui->freerun->isChecked()
+    );
+    m_settings.m_trigPre = (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f));
 }
 
 void GLScopeGUI::on_trigColor_clicked()
@@ -995,11 +1002,15 @@ void GLScopeGUI::on_freerun_toggled(bool checked)
         ui->trigOneShot->setEnabled(true);
     }
 
-    m_scopeVis->configure(m_traceLenMult*ScopeVis::m_traceChunkSize,
-            m_timeBase,
-            m_timeOffset*10,
-            (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
-            ui->freerun->isChecked());
+    m_scopeVis->configure(
+        m_settings.m_traceLenMult*m_scopeVis->getTraceChunkSize(),
+        m_timeBase,
+        m_timeOffset*10,
+        (uint32_t) (m_glScope->getTraceSize() * (ui->trigPre->value()/100.0f)),
+        ui->freerun->isChecked()
+    );
+
+    m_settings.m_freerun = checked;
 }
 
 void GLScopeGUI::setTraceIndexDisplay()
@@ -1009,8 +1020,7 @@ void GLScopeGUI::setTraceIndexDisplay()
 
 void GLScopeGUI::setTrigCountDisplay()
 {
-    QString text;
-    text.sprintf("%02d", ui->trigCount->value());
+    QString text = QStringLiteral("%1").arg(ui->trigCount->value(), 2, 10, QLatin1Char('0'));
     ui->trigCountText->setText(text);
 }
 
@@ -1052,7 +1062,7 @@ void GLScopeGUI::setTimeScaleDisplay()
 
 void GLScopeGUI::setTraceLenDisplay()
 {
-    unsigned int n_samples = m_traceLenMult * ScopeVis::m_traceChunkSize;
+    unsigned int n_samples = m_settings.m_traceLenMult * m_scopeVis->getTraceChunkSize();
 
     if (n_samples < 1000) {
         ui->traceLenText->setToolTip(tr("%1 S").arg(n_samples));
@@ -1101,66 +1111,52 @@ void GLScopeGUI::setTimeOfsDisplay()
 void GLScopeGUI::setAmpScaleDisplay()
 {
     Projector::ProjectionType projectionType = (Projector::ProjectionType) ui->traceMode->currentIndex();
-    double ampValue = amps[ui->amp->value()];
+    double amp  = (ui->amp->value() / 1000.0) + ui->ampCoarse->value();
+    int ampExp = ui->ampExp->value();
+    double ampValue = amp * pow(10.0, ampExp);
+    ui->ampText->setText(tr("%1").arg(amp, 0, 'f', 3));
 
     if (projectionType == Projector::ProjectionMagDB)
     {
-        double displayValue = ampValue*500.0f;
-
-        if (displayValue < 10.0f) {
-            ui->ampText->setText(tr("%1\ndB").arg(displayValue, 0, 'f', 2));
-        }
-        else {
-            ui->ampText->setText(tr("%1\ndB").arg(displayValue, 0, 'f', 1));
-        }
+        ui->ampExpText->setText(tr("e%1%2").arg(ampExp+2 < 0 ? "" : "+").arg(ampExp+2));
+        ui->ampMultiplierText->setText("-");
     }
     else
     {
-        double a = ampValue*10.0f;
+        ui->ampExpText->setText(tr("e%1%2").arg(ampExp < 0 ? "" : "+").arg(ampExp));
+        double ampValue2 = 2.0 * ampValue;
 
-        if(a < 0.000001)
-            ui->ampText->setText(tr("%1\nn").arg(a * 1000000000.0));
-        else if(a < 0.001)
-            ui->ampText->setText(tr("%1\nµ").arg(a * 1000000.0));
-        else if(a < 1.0)
-            ui->ampText->setText(tr("%1\nm").arg(a * 1000.0));
-        else
-            ui->ampText->setText(tr("%1").arg(a * 1.0));
+        if (ampValue2 < 1e-9) {
+            ui->ampMultiplierText->setText("p");
+        } else if (ampValue2 < 1e-6) {
+            ui->ampMultiplierText->setText("n");
+        } else if (ampValue2 < 1e-3) {
+            ui->ampMultiplierText->setText("µ");
+        } else if (ampValue2 < 1e0) {
+            ui->ampMultiplierText->setText("m");
+        } else if (ampValue2 <= 1e3) {
+            ui->ampMultiplierText->setText("-");
+        } else if (ampValue2 <= 1e6) {
+            ui->ampMultiplierText->setText("k");
+        } else if (ampValue2 <= 1e9) {
+            ui->ampMultiplierText->setText("M");
+        } else {
+            ui->ampMultiplierText->setText("G");
+        }
     }
 }
 
 void GLScopeGUI::setAmpOfsDisplay()
 {
     Projector::ProjectionType projectionType = (Projector::ProjectionType) ui->traceMode->currentIndex();
-    double o = (ui->ofsCoarse->value() * 10.0f) + (ui->ofsFine->value() / 20.0f);
+    double ofs = (ui->ofsFine->value() / 1000.0) + ui->ofsCoarse->value();
+    int ofsExp = ui->ofsExp->value();
+    ui->ofsText->setText(tr("%1").arg(ofs, 0, 'f', 3));
 
-    if (projectionType == Projector::ProjectionMagDB)
-    {
-        ui->ofsText->setText(tr("%1\ndB").arg(o/10.0f - 100.0f, 0, 'f', 1));
-    }
-    else
-    {
-        double a;
-
-        if ((projectionType == Projector::ProjectionMagLin) || (projectionType == Projector::ProjectionMagSq))
-        {
-            a = o/2000.0f;
-        }
-        else
-        {
-            a = o/1000.0f;
-        }
-
-        if(fabs(a) < 1e-9)
-            ui->ofsText->setText(tr("%1\np").arg(a * 1e12));
-        else if(fabs(a) < 1e-6)
-            ui->ofsText->setText(tr("%1\nn").arg(a * 1e9));
-        else if(fabs(a) < 1e-3)
-            ui->ofsText->setText(tr("%1\nµ").arg(a * 1e6));
-        else if(fabs(a) < 1.0f)
-            ui->ofsText->setText(tr("%1\nm").arg(a * 1e3));
-        else
-            ui->ofsText->setText(tr("%1").arg(a * 1.0));
+    if (projectionType == Projector::ProjectionMagDB) {
+        ui->ofsExpText->setText(tr("e%1%2").arg(ofsExp+2 < 0 ? "" : "+").arg(ofsExp+2));
+    } else {
+        ui->ofsExpText->setText(tr("e%1%2").arg(ofsExp < 0 ? "" : "+").arg(ofsExp));
     }
 }
 
@@ -1231,8 +1227,8 @@ void GLScopeGUI::setTrigDelayDisplay()
 {
     if (m_sampleRate > 0)
     {
-        double delayMult = ui->trigDelayCoarse->value() + ui->trigDelayFine->value() / (ScopeVis::m_traceChunkSize / 10.0);
-        unsigned int n_samples_delay = m_traceLenMult * ScopeVis::m_traceChunkSize * delayMult;
+        double delayMult = ui->trigDelayCoarse->value() + ui->trigDelayFine->value() / (m_scopeVis->getTraceChunkSize() / 10.0);
+        unsigned int n_samples_delay = m_settings.m_traceLenMult * m_scopeVis->getTraceChunkSize() * delayMult;
 
         if (n_samples_delay < 1000) {
             ui->trigDelayText->setToolTip(tr("%1 S").arg(n_samples_delay));
@@ -1288,18 +1284,28 @@ void GLScopeGUI::setTrigPreDisplay()
 
 void GLScopeGUI::changeCurrentTrace()
 {
-    ScopeVis::TraceData traceData;
+    GLScopeSettings::TraceData traceData;
     fillTraceData(traceData);
     uint32_t currentTraceIndex = ui->trace->value();
-    m_scopeVis->changeTrace(traceData, currentTraceIndex);
+    ScopeVis::MsgScopeVisChangeTrace *msg = ScopeVis::MsgScopeVisChangeTrace::create(traceData, currentTraceIndex);
+    m_scopeVis->getInputMessageQueue()->push(msg);
+
+    if (currentTraceIndex < m_settings.m_tracesData.size()) {
+        m_settings.m_tracesData[currentTraceIndex] = traceData;
+    }
 }
 
 void GLScopeGUI::changeCurrentTrigger()
 {
-    ScopeVis::TriggerData triggerData;
+    GLScopeSettings::TriggerData triggerData;
     fillTriggerData(triggerData);
     uint32_t currentTriggerIndex = ui->trig->value();
-    m_scopeVis->changeTrigger(triggerData, currentTriggerIndex);
+    ScopeVis::MsgScopeVisChangeTrigger *msg = ScopeVis::MsgScopeVisChangeTrigger::create(triggerData, currentTriggerIndex);
+    m_scopeVis->getInputMessageQueue()->push(msg);
+
+    if (currentTriggerIndex < m_settings.m_triggersData.size()) {
+        m_settings.m_triggersData[currentTriggerIndex] = triggerData;
+    }
 }
 
 void GLScopeGUI::fillProjectionCombo(QComboBox* comboBox)
@@ -1308,8 +1314,11 @@ void GLScopeGUI::fillProjectionCombo(QComboBox* comboBox)
     comboBox->addItem("Imag", Projector::ProjectionImag);
     comboBox->addItem("Mag", Projector::ProjectionMagLin);
     comboBox->addItem("MagSq", Projector::ProjectionMagSq);
+    comboBox->addItem("dMagSq", Projector::ProjectionDMagSq);
     comboBox->addItem("MagdB", Projector::ProjectionMagDB);
     comboBox->addItem("Phi", Projector::ProjectionPhase);
+    comboBox->addItem("DOAP", Projector::ProjectionDOAP);
+    comboBox->addItem("DOAN", Projector::ProjectionDOAN);
     comboBox->addItem("dPhi", Projector::ProjectionDPhase);
     comboBox->addItem("BPSK", Projector::ProjectionBPSK);
     comboBox->addItem("QPSK", Projector::ProjectionQPSK);
@@ -1339,23 +1348,19 @@ void GLScopeGUI::disableLiveMode(bool disable)
     ui->memoryLoad->setEnabled(disable);
 }
 
-void GLScopeGUI::fillTraceData(ScopeVis::TraceData& traceData)
+void GLScopeGUI::fillTraceData(GLScopeSettings::TraceData& traceData)
 {
+    traceData.m_streamIndex = ui->traceStream->currentIndex();
     traceData.m_projectionType = (Projector::ProjectionType) ui->traceMode->currentIndex();
-    traceData.m_hasTextOverlay = (traceData.m_projectionType == Projector::ProjectionMagDB) || (traceData.m_projectionType == Projector::ProjectionMagSq);
+    traceData.m_hasTextOverlay = (traceData.m_projectionType == Projector::ProjectionMagDB)
+        || (traceData.m_projectionType == Projector::ProjectionMagSq);
     traceData.m_textOverlay.clear();
-    traceData.m_inputIndex = 0;
-    traceData.m_amp = 0.2 / amps[ui->amp->value()];
-    traceData.m_ampIndex = ui->amp->value();
 
-    traceData.m_ofsCoarse = ui->ofsCoarse->value();
-    traceData.m_ofsFine = ui->ofsFine->value();
+    double ampValue = ((ui->amp->value() / 1000.0) + ui->ampCoarse->value()) * pow(10.0, ui->ampExp->value());
+    traceData.m_amp = 1.0 / ampValue;
 
-    if ((traceData.m_projectionType == Projector::ProjectionMagLin)  || (traceData.m_projectionType == Projector::ProjectionMagSq)) {
-        traceData.m_ofs = ((10.0 * ui->ofsCoarse->value()) + (ui->ofsFine->value() / 20.0)) / 2000.0f;
-    } else {
-        traceData.m_ofs = ((10.0 * ui->ofsCoarse->value()) + (ui->ofsFine->value() / 20.0)) / 1000.0f;
-    }
+    double ofsValue = ((ui->ofsFine->value() / 1000.0) + ui->ofsCoarse->value()) * pow(10.0, ui->ofsExp->value());
+    traceData.m_ofs = ofsValue;
 
     traceData.m_traceDelayCoarse = ui->traceDelayCoarse->value();
     traceData.m_traceDelayFine = ui->traceDelayFine->value();
@@ -1364,8 +1369,9 @@ void GLScopeGUI::fillTraceData(ScopeVis::TraceData& traceData)
     traceData.m_viewTrace = ui->traceView->isChecked();
 }
 
-void GLScopeGUI::fillTriggerData(ScopeVis::TriggerData& triggerData)
+void GLScopeGUI::fillTriggerData(GLScopeSettings::TriggerData& triggerData)
 {
+    triggerData.m_streamIndex = ui->trigStream->currentIndex();
     triggerData.m_projectionType = (Projector::ProjectionType) ui->trigMode->currentIndex();
     triggerData.m_inputIndex = 0;
     triggerData.m_triggerLevel = (ui->trigLevelCoarse->value() / 100.0) + (ui->trigLevelFine->value() / 50000.0);
@@ -1375,23 +1381,40 @@ void GLScopeGUI::fillTriggerData(ScopeVis::TriggerData& triggerData)
     triggerData.m_triggerBothEdges = ui->trigBoth->isChecked();
     triggerData.m_triggerHoldoff = ui->trigHoldoff->value();
     triggerData.m_triggerRepeat = ui->trigCount->value();
-    triggerData.m_triggerDelayMult = ui->trigDelayCoarse->value() + ui->trigDelayFine->value() / (ScopeVis::m_traceChunkSize / 10.0);
-    triggerData.m_triggerDelay = (int) (m_traceLenMult * ScopeVis::m_traceChunkSize * triggerData.m_triggerDelayMult);
+    triggerData.m_triggerDelayMult = ui->trigDelayCoarse->value() + ui->trigDelayFine->value() / (m_scopeVis->getTraceChunkSize() / 10.0);
+    triggerData.m_triggerDelay = (int) (m_settings.m_traceLenMult * m_scopeVis->getTraceChunkSize() * triggerData.m_triggerDelayMult);
     triggerData.m_triggerDelayCoarse = ui->trigDelayCoarse->value();
     triggerData.m_triggerDelayFine = ui->trigDelayFine->value();
     triggerData.setColor(m_focusedTriggerColor);
 }
 
-void GLScopeGUI::setTraceUI(const ScopeVis::TraceData& traceData)
+void GLScopeGUI::setTraceUI(const GLScopeSettings::TraceData& traceData)
 {
     TraceUIBlocker traceUIBlocker(ui);
 
+    ui->traceStream->setCurrentIndex(traceData.m_streamIndex);
     ui->traceMode->setCurrentIndex((int) traceData.m_projectionType);
-    ui->amp->setValue(traceData.m_ampIndex);
+
+    double ampValue = 1.0 / traceData.m_amp;
+    int ampExp;
+    double ampMant = CalcDb::frexp10(ampValue, &ampExp) * 10.0;
+    int ampCoarse = (int) ampMant;
+    int ampFine = round((ampMant - ampCoarse) * 1000.0);
+    ampExp -= 1;
+    ui->amp->setValue(ampFine);
+    ui->ampCoarse->setValue(ampCoarse);
+    ui->ampExp->setValue(ampExp);
     setAmpScaleDisplay();
 
-    ui->ofsCoarse->setValue(traceData.m_ofsCoarse);
-    ui->ofsFine->setValue(traceData.m_ofsFine);
+    double ofsValue = traceData.m_ofs;
+    int ofsExp;
+    double ofsMant = CalcDb::frexp10(ofsValue, &ofsExp) * 10.0;
+    int ofsCoarse = (int) ofsMant;
+    int ofsFine = round((ofsMant - ofsCoarse) * 1000.0);
+    ofsExp -= ofsMant == 0 ? 0 : 1;
+    ui->ofsFine->setValue(ofsFine);
+    ui->ofsCoarse->setValue(ofsCoarse);
+    ui->ofsExp->setValue(ofsExp);
     setAmpOfsDisplay();
 
     ui->traceDelayCoarse->setValue(traceData.m_traceDelayCoarse);
@@ -1406,10 +1429,11 @@ void GLScopeGUI::setTraceUI(const ScopeVis::TraceData& traceData)
     ui->traceView->setChecked(traceData.m_viewTrace);
 }
 
-void GLScopeGUI::setTriggerUI(const ScopeVis::TriggerData& triggerData)
+void GLScopeGUI::setTriggerUI(const GLScopeSettings::TriggerData& triggerData)
 {
     TrigUIBlocker trigUIBlocker(ui);
 
+    ui->trigStream->setCurrentIndex(triggerData.m_streamIndex);
     ui->trigMode->setCurrentIndex((int) triggerData.m_projectionType);
     ui->trigCount->setValue(triggerData.m_triggerRepeat);
     setTrigCountDisplay();
@@ -1457,8 +1481,41 @@ void GLScopeGUI::setTriggerUI(const ScopeVis::TriggerData& triggerData)
     ui->trigColor->setStyleSheet(tr("QLabel { background-color : rgb(%1,%2,%3); }").arg(r).arg(g).arg(b));
 }
 
-void GLScopeGUI::applySettings()
+void GLScopeGUI::applySettings(const GLScopeSettings& settings, bool force)
 {
+    if (m_scopeVis)
+    {
+        ScopeVis::MsgConfigureScopeVis *msg = ScopeVis::MsgConfigureScopeVis::create(settings, force);
+        m_scopeVis->getInputMessageQueue()->push(msg);
+    }
+}
+
+void GLScopeGUI::displaySettings()
+{
+    MainUIBlocker mainUIBlocker(ui);
+
+    ui->traceText->setText(m_ctlTraceIndex == 0 ? "X" : QString("Y%1").arg(m_ctlTraceIndex));
+    ui->trace->setValue(m_ctlTraceIndex);
+    const GLScopeSettings::TraceData& traceData = m_settings.m_tracesData[m_ctlTraceIndex];
+    setTraceUI(traceData);
+    ui->trigText->setText(tr("%1").arg(m_ctlTriggerIndex));
+    ui->trig->setValue(m_ctlTriggerIndex);
+    const GLScopeSettings::TriggerData& triggerData = m_settings.m_triggersData[m_ctlTriggerIndex];
+    setTriggerUI(triggerData);
+    setDisplayMode(m_settings.m_displayMode);
+    ui->traceIntensity->setToolTip(QString("Trace intensity: %1").arg(m_settings.m_traceIntensity));
+    ui->traceIntensity->setValue(m_settings.m_traceIntensity);
+    m_glScope->setDisplayTraceIntensity(m_settings.m_traceIntensity);
+    ui->gridIntensity->setToolTip(QString("Grid intensity: %1").arg(m_settings.m_gridIntensity));
+    ui->gridIntensity->setValue(m_settings.m_gridIntensity);
+    m_glScope->setDisplayGridIntensity(m_settings.m_gridIntensity);
+    setTimeScaleDisplay();
+    ui->timeOfs->setValue(m_settings.m_timeOfs);
+    setTimeOfsDisplay();
+    ui->traceLen->setValue(m_settings.m_traceLenMult);
+    setPreTrigger(100.0f * m_settings.m_trigPre / m_glScope->getTraceSize());
+    ui->freerun->setChecked(m_settings.m_freerun);
+    changeCurrentTrigger(); // Ensure consistency with GUI
 }
 
 bool GLScopeGUI::handleMessage(Message* message)
@@ -1470,6 +1527,7 @@ bool GLScopeGUI::handleMessage(Message* message)
 GLScopeGUI::TrigUIBlocker::TrigUIBlocker(Ui::GLScopeGUI *ui) :
         m_ui(ui)
 {
+    m_oldStateTrigStream      = ui->trigStream->blockSignals(true);
     m_oldStateTrigMode        = ui->trigMode->blockSignals(true);
     m_oldStateTrigCount       = ui->trigCount->blockSignals(true);
     m_oldStateTrigPos         = ui->trigPos->blockSignals(true);
@@ -1479,6 +1537,7 @@ GLScopeGUI::TrigUIBlocker::TrigUIBlocker(Ui::GLScopeGUI *ui) :
     m_oldStateTrigLevelFine   = ui->trigLevelFine->blockSignals(true);
     m_oldStateTrigDelayCoarse = ui->trigDelayCoarse->blockSignals(true);
     m_oldStateTrigDelayFine   = ui->trigDelayFine->blockSignals(true);
+    m_oldStateTrigColor       = ui->trigColor->blockSignals(true);
 }
 
 GLScopeGUI::TrigUIBlocker::~TrigUIBlocker()
@@ -1488,6 +1547,7 @@ GLScopeGUI::TrigUIBlocker::~TrigUIBlocker()
 
 void GLScopeGUI::TrigUIBlocker::unBlock()
 {
+    m_ui->trigStream->blockSignals(m_oldStateTrigStream);
     m_ui->trigMode->blockSignals(m_oldStateTrigMode);
     m_ui->trigCount->blockSignals(m_oldStateTrigCount);
     m_ui->trigPos->blockSignals(m_oldStateTrigPos);
@@ -1497,21 +1557,27 @@ void GLScopeGUI::TrigUIBlocker::unBlock()
     m_ui->trigLevelFine->blockSignals(m_oldStateTrigLevelFine);
     m_ui->trigDelayCoarse->blockSignals(m_oldStateTrigDelayCoarse);
     m_ui->trigDelayFine->blockSignals(m_oldStateTrigDelayFine);
+    m_ui->trigColor->blockSignals(m_oldStateTrigColor);
 }
 
 GLScopeGUI::TraceUIBlocker::TraceUIBlocker(Ui::GLScopeGUI* ui) :
         m_ui(ui)
 {
-    m_oldStateTrace            = m_ui->trace->blockSignals(true);
-    m_oldStateTraceAdd         = m_ui->traceAdd->blockSignals(true);
-    m_oldStateTraceDel         = m_ui->traceDel->blockSignals(true);
+    m_oldStateTraceStream      = m_ui->traceStream->blockSignals(true);
     m_oldStateTraceMode        = m_ui->traceMode->blockSignals(true);
     m_oldStateAmp              = m_ui->amp->blockSignals(true);
+    m_oldStateAmpCoarse        = m_ui->ampCoarse->blockSignals(true);
+    m_oldStateAmpExp           = m_ui->ampExp->blockSignals(true);
     m_oldStateOfsCoarse        = m_ui->ofsCoarse->blockSignals(true);
     m_oldStateOfsFine          = m_ui->ofsFine->blockSignals(true);
+    m_oldStateOfsExp           = m_ui->ofsExp->blockSignals(true);
     m_oldStateTraceDelayCoarse = m_ui->traceDelayCoarse->blockSignals(true);
     m_oldStateTraceDelayFine   = m_ui->traceDelayFine->blockSignals(true);
     m_oldStateTraceColor       = m_ui->traceColor->blockSignals(true);
+    m_oldStateTraceView        = m_ui->traceView->blockSignals(true);
+    m_oldStateTrace            = m_ui->trace->blockSignals(true);
+    m_oldStateTraceAdd         = m_ui->traceAdd->blockSignals(true);
+    m_oldStateTraceDel         = m_ui->traceDel->blockSignals(true);
 }
 
 GLScopeGUI::TraceUIBlocker::~TraceUIBlocker()
@@ -1521,16 +1587,21 @@ GLScopeGUI::TraceUIBlocker::~TraceUIBlocker()
 
 void GLScopeGUI::TraceUIBlocker::unBlock()
 {
+    m_ui->traceStream->blockSignals(m_oldStateTraceStream);
     m_ui->trace->blockSignals(m_oldStateTrace);
     m_ui->traceAdd->blockSignals(m_oldStateTraceAdd);
     m_ui->traceDel->blockSignals(m_oldStateTraceDel);
     m_ui->traceMode->blockSignals(m_oldStateTraceMode);
     m_ui->amp->blockSignals(m_oldStateAmp);
+    m_ui->ampCoarse->blockSignals(m_oldStateAmpCoarse);
+    m_ui->ampExp->blockSignals(m_oldStateAmpExp);
     m_ui->ofsCoarse->blockSignals(m_oldStateOfsCoarse);
     m_ui->ofsFine->blockSignals(m_oldStateOfsFine);
+    m_ui->ofsExp->blockSignals(m_oldStateOfsExp);
     m_ui->traceDelayCoarse->blockSignals(m_oldStateTraceDelayCoarse);
     m_ui->traceDelayFine->blockSignals(m_oldStateTraceDelayFine);
     m_ui->traceColor->blockSignals(m_oldStateTraceColor);
+    m_ui->traceView->blockSignals(m_oldStateTraceView);
 }
 
 GLScopeGUI::MainUIBlocker::MainUIBlocker(Ui::GLScopeGUI* ui) :
@@ -1563,36 +1634,64 @@ void GLScopeGUI::MainUIBlocker::unBlock()
 //    m_ui->traceLen->blockSignals(m_oldStateTraceLen);
 }
 
-void GLScopeGUI::setDisplayMode(DisplayMode displayMode)
+void GLScopeGUI::setDisplayMode(GLScopeSettings::DisplayMode displayMode)
 {
-    if (ui->trace->maximum() == 0)
+    uint32_t nbTraces = m_scopeVis->getNbTraces();
+
+    ui->onlyX->setChecked(false);
+    ui->onlyY->setChecked(false);
+    ui->horizontalXY->setChecked(false);
+    ui->verticalXY->setChecked(false);
+    ui->polar->setChecked(false);
+
+    ui->onlyX->setEnabled(true);
+    ui->onlyY->setEnabled(nbTraces > 1);
+    ui->horizontalXY->setEnabled(nbTraces > 1);
+    ui->verticalXY->setEnabled(nbTraces > 1);
+    ui->polar->setEnabled(nbTraces > 1);
+
+    if (ui->trace->maximum() == 1)
     {
         ui->onlyX->setChecked(true);
+        ui->onlyX->setEnabled(false);
     }
     else
     {
         switch (displayMode)
         {
-        case DisplayX:
+        case GLScopeSettings::DisplayX:
             ui->onlyX->setChecked(true);
+            ui->onlyX->setEnabled(false);
             break;
-        case DisplayY:
+        case GLScopeSettings::DisplayY:
             ui->onlyY->setChecked(true);
+            ui->onlyY->setEnabled(false);
             break;
-        case DisplayXYH:
+        case GLScopeSettings::DisplayXYH:
             ui->horizontalXY->setChecked(true);
+            ui->horizontalXY->setEnabled(false);
             break;
-        case DisplayXYV:
+        case GLScopeSettings::DisplayXYV:
             ui->verticalXY->setChecked(true);
+            ui->verticalXY->setEnabled(false);
             break;
-        case DisplayPol:
+        case GLScopeSettings::DisplayPol:
             ui->polar->setChecked(true);
+            ui->polar->setEnabled(false);
             break;
         default:
             ui->onlyX->setChecked(true);
+            ui->onlyX->setEnabled(false);
             break;
         }
     }
+
+    m_settings.m_displayMode = displayMode;
+    m_scopeVis->configure(
+        m_settings.m_displayMode,
+        m_settings.m_traceIntensity,
+        m_settings.m_gridIntensity
+    );
 }
 
 void GLScopeGUI::setTraceIntensity(int value)
@@ -1649,14 +1748,16 @@ void GLScopeGUI::setPreTrigger(int step)
     ui->trigPre->setValue(step);
 }
 
-void GLScopeGUI::changeTrace(int traceIndex, const ScopeVis::TraceData& traceData)
+void GLScopeGUI::changeTrace(int traceIndex, const GLScopeSettings::TraceData& traceData)
 {
-    m_scopeVis->changeTrace(traceData, traceIndex);
+    ScopeVis::MsgScopeVisChangeTrace *msg = ScopeVis::MsgScopeVisChangeTrace::create(traceData, traceIndex);
+    m_scopeVis->getInputMessageQueue()->push(msg);
+    settingsTraceChange(traceData, traceIndex);
 }
 
-void GLScopeGUI::addTrace(const ScopeVis::TraceData& traceData)
+void GLScopeGUI::addTrace(const GLScopeSettings::TraceData& traceData)
 {
-    if (ui->trace->maximum() < 3)
+    if (ui->trace->maximum() < 7) // Limit number of channels to 8. Is it necessary?
     {
         if (ui->trace->value() == 0)
         {
@@ -1666,7 +1767,9 @@ void GLScopeGUI::addTrace(const ScopeVis::TraceData& traceData)
             ui->polar->setEnabled(true);
         }
 
-        m_scopeVis->addTrace(traceData);
+        ScopeVis::MsgScopeVisAddTrace *msg = ScopeVis::MsgScopeVisAddTrace::create(traceData);
+        m_scopeVis->getInputMessageQueue()->push(msg);
+        settingsTraceAdd(traceData);
         ui->trace->setMaximum(ui->trace->maximum() + 1);
     }
 }
@@ -1676,16 +1779,20 @@ void GLScopeGUI::focusOnTrace(int traceIndex)
     on_trace_valueChanged(traceIndex);
 }
 
-void GLScopeGUI::changeTrigger(int triggerIndex, const ScopeVis::TriggerData& triggerData)
+void GLScopeGUI::changeTrigger(int triggerIndex, const GLScopeSettings::TriggerData& triggerData)
 {
-    m_scopeVis->changeTrigger(triggerData, triggerIndex);
+    ScopeVis::MsgScopeVisChangeTrigger *msg = ScopeVis::MsgScopeVisChangeTrigger::create(triggerData, triggerIndex);
+    m_scopeVis->getInputMessageQueue()->push(msg);
+    settingsTriggerChange(triggerData, triggerIndex);
 }
 
-void GLScopeGUI::addTrigger(const ScopeVis::TriggerData& triggerData)
+void GLScopeGUI::addTrigger(const GLScopeSettings::TriggerData& triggerData)
 {
     if (ui->trig->maximum() < 9)
     {
-        m_scopeVis->addTrigger(triggerData);
+        ScopeVis::MsgScopeVisAddTrigger *msg = ScopeVis::MsgScopeVisAddTrigger::create(triggerData);
+        m_scopeVis->getInputMessageQueue()->push(msg);
+        settingsTriggerAdd(triggerData);
         ui->trig->setMaximum(ui->trig->maximum() + 1);
     }
 }
@@ -1695,4 +1802,75 @@ void GLScopeGUI::focusOnTrigger(int triggerIndex)
     on_trig_valueChanged(triggerIndex);
 }
 
+void GLScopeGUI::traceLengthChange()
+{
+    on_traceLen_valueChanged(m_settings.m_traceLenMult);
+}
 
+void GLScopeGUI::settingsTraceAdd(const GLScopeSettings::TraceData& traceData)
+{
+    m_settings.m_tracesData.push_back(traceData);
+}
+
+void GLScopeGUI::settingsTraceChange(const GLScopeSettings::TraceData& traceData, uint32_t traceIndex)
+{
+    m_settings.m_tracesData[traceIndex] = traceData;
+}
+
+void GLScopeGUI::settingsTraceDel(uint32_t traceIndex)
+{
+    unsigned int iDest = 0;
+
+    for (unsigned int iSource = 0; iSource < m_settings.m_tracesData.size(); iSource++)
+    {
+        if (iSource != traceIndex) {
+            m_settings.m_tracesData[iDest++] = m_settings.m_tracesData[iSource];
+        }
+    }
+
+    if (m_settings.m_tracesData.size() != 0) {
+        m_settings.m_tracesData.pop_back();
+    }
+}
+
+void GLScopeGUI::settingsTraceMove(uint32_t traceIndex, bool upElseDown)
+{
+    int nextTraceIndex = (traceIndex + (upElseDown ? 1 : -1)) % m_settings.m_tracesData.size();
+    GLScopeSettings::TraceData nextTraceData = m_settings.m_tracesData[nextTraceIndex];
+    m_settings.m_tracesData[nextTraceIndex] = m_settings.m_tracesData[traceIndex];
+    m_settings.m_tracesData[traceIndex] = nextTraceData;
+}
+
+void GLScopeGUI::settingsTriggerAdd(const GLScopeSettings::TriggerData& triggerData)
+{
+    m_settings.m_triggersData.push_back(triggerData);
+}
+
+void GLScopeGUI::settingsTriggerChange(const GLScopeSettings::TriggerData& triggerData, uint32_t triggerIndex)
+{
+    m_settings.m_triggersData[triggerIndex] = triggerData;
+}
+
+void GLScopeGUI::settingsTriggerDel(uint32_t triggerIndex)
+{
+    unsigned int iDest = 0;
+
+    for (unsigned int iSource = 0; iSource < m_settings.m_triggersData.size(); iSource++)
+    {
+        if (iSource != triggerIndex) {
+            m_settings.m_triggersData[iDest++] = m_settings.m_triggersData[iSource];
+        }
+    }
+
+    if (m_settings.m_triggersData.size() != 0) {
+        m_settings.m_triggersData.pop_back();
+    }
+}
+
+void GLScopeGUI::settingsTriggerMove(uint32_t triggerIndex, bool upElseDown)
+{
+    int nextTriggerIndex = (triggerIndex + (upElseDown ? 1 : -1)) % m_settings.m_triggersData.size();
+    GLScopeSettings::TriggerData nextTriggerData = m_settings.m_triggersData[nextTriggerIndex];
+    m_settings.m_triggersData[nextTriggerIndex] = m_settings.m_triggersData[triggerIndex];
+    m_settings.m_triggersData[triggerIndex] = nextTriggerData;
+}

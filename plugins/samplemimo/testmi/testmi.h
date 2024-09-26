@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -27,10 +30,10 @@
 #include "testmisettings.h"
 
 class DeviceAPI;
-class TestMIThread;
-class FileRecord;
+class TestMIWorker;
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 
 class TestMI : public DeviceSampleMIMO {
     Q_OBJECT
@@ -58,28 +61,6 @@ public:
 		{ }
 	};
 
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-        int getStreamIndex() const { return m_streamIndex; }
-
-        static MsgFileRecord* create(bool startStop, int streamIndex) {
-            return new MsgFileRecord(startStop, streamIndex);
-        }
-
-    protected:
-        bool m_startStop;
-        int m_streamIndex;
-
-        MsgFileRecord(bool startStop, int streamIndex) :
-            Message(),
-            m_startStop(startStop),
-            m_streamIndex(streamIndex)
-        { }
-    };
-
     class MsgStartStop : public Message {
         MESSAGE_CLASS_DECLARATION
 
@@ -104,8 +85,10 @@ public:
 	virtual void destroy();
 
 	virtual void init();
-	virtual bool start();
-	virtual void stop();
+	virtual bool startRx();
+	virtual void stopRx();
+	virtual bool startTx();
+	virtual void stopTx();
 
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
@@ -123,6 +106,9 @@ public:
 	virtual quint64 getSinkCenterFrequency(int index) const { return 0; (void) index; }
     virtual void setSinkCenterFrequency(qint64 centerFrequency, int index) { (void) centerFrequency; (void) index; }
 
+    virtual quint64 getMIMOCenterFrequency() const { return getSourceCenterFrequency(0); }
+    virtual unsigned int getMIMOSampleRate() const { return getSourceSampleRate(0); }
+
 	virtual bool handleMessage(const Message& message);
 
     virtual int webapiSettingsGet(
@@ -136,15 +122,24 @@ public:
                 QString& errorMessage);
 
     virtual int webapiRunGet(
+            int subsystemIndex,
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
     virtual int webapiRun(
             bool run,
+            int subsystemIndex,
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
-    bool isRecording(unsigned int istream) const;
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const TestMISettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            TestMISettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
 
 private:
     struct DeviceSettingsKeys
@@ -154,18 +149,19 @@ private:
     };
 
 	DeviceAPI *m_deviceAPI;
-    std::vector<FileRecord *> m_fileSinks; //!< File sinks to record device I/Q output
 	QMutex m_mutex;
 	TestMISettings m_settings;
-	std::vector<TestMIThread*> m_testSourceThreads;
+	std::vector<TestMIWorker*> m_testSourceWorkers;
+    std::vector<QThread*> m_testSourceWorkerThreads;
 	QString m_deviceDescription;
 	bool m_running;
     const QTimer& m_masterTimer;
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
+    void startWorkers();
+    void stopWorkers();
 	bool applySettings(const TestMISettings& settings, bool force);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const TestMISettings& settings);
     void webapiReverseSendSettings(const DeviceSettingsKeys& deviceSettingsKeys, const TestMISettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 

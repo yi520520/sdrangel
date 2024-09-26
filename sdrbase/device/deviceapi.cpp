@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016, 2019-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -15,7 +16,6 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include "plugin/plugininstancegui.h"
 #include "plugin/plugininterface.h"
 #include "dsp/dspdevicesourceengine.h"
 #include "dsp/dspdevicesinkengine.h"
@@ -26,8 +26,10 @@
 #include "dsp/devicesamplemimo.h"
 #include "settings/preset.h"
 #include "channel/channelapi.h"
+#include "util/simpleserializer.h"
 
 #include "deviceapi.h"
+#include <algorithm>
 
 DeviceAPI::DeviceAPI(
         StreamType streamType,
@@ -45,68 +47,25 @@ DeviceAPI::DeviceAPI(
     m_pluginInterface(nullptr),
     m_masterTimer(DSPEngine::instance()->getMasterTimer()),
     m_samplingDeviceSequence(0),
-    m_samplingDevicePluginInstanceUI(0),
+    m_workspaceIndex(0),
     m_buddySharedPtr(nullptr),
     m_isBuddyLeader(false),
     m_deviceSourceEngine(deviceSourceEngine),
     m_deviceSinkEngine(deviceSinkEngine),
     m_deviceMIMOEngine(deviceMIMOEngine)
 {
-}
-
-DeviceAPI::~DeviceAPI()
-{
-}
-
-void DeviceAPI::addSourceStream(bool connect)
-{
-    if (m_deviceMIMOEngine) {
-        m_deviceMIMOEngine->addSourceStream(connect);
-    }
-}
-
-void DeviceAPI::removeLastSourceStream()
-{
-    if (m_deviceMIMOEngine) {
-        m_deviceMIMOEngine->removeLastSourceStream();
-    }
-}
-
-void DeviceAPI::addSinkStream(bool connect)
-{
-    if (m_deviceMIMOEngine) {
-        m_deviceMIMOEngine->addSinkStream(connect);
-    }
-}
-
-void DeviceAPI::removeLastSinkStream()
-{
-    if (m_deviceMIMOEngine) {
-        m_deviceMIMOEngine->removeLastSinkStream();
-    }
-}
-
-void DeviceAPI::addAncillarySink(BasebandSampleSink *sink, unsigned int index)
-{
     if (m_deviceSourceEngine) {
-        m_deviceSourceEngine->addSink(sink);
-    } else if (m_deviceSinkEngine) {
-        m_deviceSinkEngine->addSpectrumSink(sink);
-    } else if (m_deviceMIMOEngine) {
-        m_deviceMIMOEngine->addAncillarySink(sink, index);
+        QObject::connect(m_deviceSourceEngine, &DSPDeviceSourceEngine::stateChanged, this, &DeviceAPI::engineStateChanged);
+    }
+    if (m_deviceSinkEngine) {
+        QObject::connect(m_deviceSinkEngine, &DSPDeviceSinkEngine::stateChanged, this, &DeviceAPI::engineStateChanged);
+    }
+    if (m_deviceMIMOEngine) {
+        QObject::connect(m_deviceMIMOEngine, &DSPDeviceMIMOEngine::stateChanged, this, &DeviceAPI::engineStateChanged);
     }
 }
 
-void DeviceAPI::removeAncillarySink(BasebandSampleSink* sink, unsigned int index)
-{
-    if (m_deviceSourceEngine) {
-        m_deviceSourceEngine->removeSink(sink);
-    } else if (m_deviceSinkEngine) {
-        m_deviceSinkEngine->removeSpectrumSink(sink);
-    } else if (m_deviceMIMOEngine) {
-        m_deviceMIMOEngine->removeAncillarySink(sink, index);
-    }
-}
+DeviceAPI::~DeviceAPI() = default;
 
 void DeviceAPI::setSpectrumSinkInput(bool sourceElseSink, unsigned int index)
 {
@@ -115,55 +74,64 @@ void DeviceAPI::setSpectrumSinkInput(bool sourceElseSink, unsigned int index)
     }
 }
 
-void DeviceAPI::addChannelSink(ThreadedBasebandSampleSink* sink, int streamIndex)
+void DeviceAPI::addChannelSink(BasebandSampleSink* sink, int streamIndex)
 {
     if (m_deviceSourceEngine) {
-        m_deviceSourceEngine->addThreadedSink(sink);
+        m_deviceSourceEngine->addSink(sink);
     } else if (m_deviceMIMOEngine) {
         m_deviceMIMOEngine->addChannelSink(sink, streamIndex);
     }
 }
 
-void DeviceAPI::removeChannelSink(ThreadedBasebandSampleSink* sink, int streamIndex)
+void DeviceAPI::removeChannelSink(BasebandSampleSink* sink, int streamIndex)
 {
-    (void) streamIndex;
-
     if (m_deviceSourceEngine) {
-        m_deviceSourceEngine->removeThreadedSink(sink);
+        m_deviceSourceEngine->removeSink(sink);
     } else if (m_deviceMIMOEngine) {
         m_deviceMIMOEngine->removeChannelSink(sink, streamIndex);
     }
 }
 
-void DeviceAPI::addChannelSource(ThreadedBasebandSampleSource* source, int streamIndex)
+void DeviceAPI::addChannelSource(BasebandSampleSource* source, int streamIndex)
 {
-    (void) streamIndex;
-
     if (m_deviceSinkEngine) {
-        m_deviceSinkEngine->addThreadedSource(source);
+        m_deviceSinkEngine->addChannelSource(source);
+    } else if (m_deviceMIMOEngine) {
+        m_deviceMIMOEngine->addChannelSource(source, streamIndex);
     }
 }
 
-void DeviceAPI::removeChannelSource(ThreadedBasebandSampleSource* source, int streamIndex)
+void DeviceAPI::removeChannelSource(BasebandSampleSource* source, int streamIndex)
 {
-    (void) streamIndex;
-
     if (m_deviceSinkEngine) {
-        m_deviceSinkEngine->removeThreadedSource(source);
+        m_deviceSinkEngine->removeChannelSource(source);
+    } else if (m_deviceMIMOEngine) {
+        m_deviceMIMOEngine->removeChannelSource(source, streamIndex);
     }
 }
 
-void DeviceAPI::addChannelSinkAPI(ChannelAPI* channelAPI, int streamIndex)
+void DeviceAPI::addMIMOChannel(MIMOChannel* channel)
 {
-    (void) streamIndex;
+    if (m_deviceMIMOEngine) {
+        m_deviceMIMOEngine->addMIMOChannel(channel);
+    }
+}
+
+void DeviceAPI::removeMIMOChannel(MIMOChannel* channel)
+{
+    if (m_deviceMIMOEngine) {
+        m_deviceMIMOEngine->removeMIMOChannel(channel);
+    }
+}
+
+void DeviceAPI::addChannelSinkAPI(ChannelAPI* channelAPI)
+{
     m_channelSinkAPIs.append(channelAPI);
     renumerateChannels();
 }
 
-void DeviceAPI::removeChannelSinkAPI(ChannelAPI* channelAPI, int streamIndex)
+void DeviceAPI::removeChannelSinkAPI(ChannelAPI* channelAPI)
 {
-    (void) streamIndex;
-
     if (m_channelSinkAPIs.removeOne(channelAPI)) {
         renumerateChannels();
     }
@@ -171,18 +139,30 @@ void DeviceAPI::removeChannelSinkAPI(ChannelAPI* channelAPI, int streamIndex)
     channelAPI->setIndexInDeviceSet(-1);
 }
 
-void DeviceAPI::addChannelSourceAPI(ChannelAPI* channelAPI, int streamIndex)
+void DeviceAPI::addChannelSourceAPI(ChannelAPI* channelAPI)
 {
-    (void) streamIndex;
     m_channelSourceAPIs.append(channelAPI);
     renumerateChannels();
 }
 
-void DeviceAPI::removeChannelSourceAPI(ChannelAPI* channelAPI, int streamIndex)
+void DeviceAPI::removeChannelSourceAPI(ChannelAPI* channelAPI)
 {
-    (void) streamIndex;
-
     if (m_channelSourceAPIs.removeOne(channelAPI)) {
+        renumerateChannels();
+    }
+
+    channelAPI->setIndexInDeviceSet(-1);
+}
+
+void DeviceAPI::addMIMOChannelAPI(ChannelAPI* channelAPI)
+{
+    m_mimoChannelAPIs.append(channelAPI);
+    renumerateChannels();
+}
+
+void DeviceAPI::removeMIMOChannelAPI(ChannelAPI *channelAPI)
+{
+    if (m_mimoChannelAPIs.removeOne(channelAPI)) {
         renumerateChannels();
     }
 
@@ -237,64 +217,64 @@ DeviceSampleMIMO *DeviceAPI::getSampleMIMO()
     }
 }
 
-bool DeviceAPI::initDeviceEngine()
+bool DeviceAPI::initDeviceEngine(int subsystemIndex)
 {
     if (m_deviceSourceEngine) {
         return m_deviceSourceEngine->initAcquisition();
     } else if (m_deviceSinkEngine) {
         return m_deviceSinkEngine->initGeneration();
     } else if (m_deviceMIMOEngine) {
-        return m_deviceMIMOEngine->initProcess();
+        return m_deviceMIMOEngine->initProcess(subsystemIndex);
     } else {
         return false;
     }
 }
 
-bool DeviceAPI::startDeviceEngine()
+bool DeviceAPI::startDeviceEngine(int subsystemIndex)
 {
     if (m_deviceSourceEngine) {
         return m_deviceSourceEngine->startAcquisition();
     } else if (m_deviceSinkEngine) {
         return m_deviceSinkEngine->startGeneration();
     } else if (m_deviceMIMOEngine) {
-        return m_deviceMIMOEngine->startProcess();
+        return m_deviceMIMOEngine->startProcess(subsystemIndex);
     } else {
         return false;
     }
 }
 
-void DeviceAPI::stopDeviceEngine()
+void DeviceAPI::stopDeviceEngine(int subsystemIndex)
 {
     if (m_deviceSourceEngine) {
         m_deviceSourceEngine->stopAcquistion();
     } else if (m_deviceSinkEngine) {
         m_deviceSinkEngine->stopGeneration();
     } else if (m_deviceMIMOEngine) {
-        m_deviceMIMOEngine->stopProcess();
+        m_deviceMIMOEngine->stopProcess(subsystemIndex);
     }
 }
 
-DeviceAPI::EngineState DeviceAPI::state() const
+DeviceAPI::EngineState DeviceAPI::state(int subsystemIndex) const
 {
     if (m_deviceSourceEngine) {
         return (DeviceAPI::EngineState) m_deviceSourceEngine->state();
     } else if (m_deviceSinkEngine) {
         return (DeviceAPI::EngineState) m_deviceSinkEngine->state();
     } else if (m_deviceMIMOEngine) {
-        return (DeviceAPI::EngineState) m_deviceMIMOEngine->state();
+        return (DeviceAPI::EngineState) m_deviceMIMOEngine->state(subsystemIndex);
     } else {
         return StError;
     }
 }
 
-QString DeviceAPI::errorMessage()
+QString DeviceAPI::errorMessage(int subsystemIndex) const
 {
     if (m_deviceSourceEngine) {
         return m_deviceSourceEngine->errorMessage();
     } else if (m_deviceSinkEngine) {
         return m_deviceSinkEngine->errorMessage();
     } else if (m_deviceMIMOEngine) {
-        return m_deviceMIMOEngine->errorMessage();
+        return m_deviceMIMOEngine->errorMessage(subsystemIndex);
     } else {
         return "Not implemented";
     }
@@ -378,33 +358,28 @@ void DeviceAPI::setDeviceItemIndex(uint32_t index)
 
 void DeviceAPI::setSamplingDevicePluginInterface(PluginInterface *iface)
 {
-     m_pluginInterface = iface;
+    m_pluginInterface = iface;
 }
 
-void DeviceAPI::setSamplingDevicePluginInstanceGUI(PluginInstanceGUI *gui)
-{
-    m_samplingDevicePluginInstanceUI = gui;
-}
-
-void DeviceAPI::getDeviceEngineStateStr(QString& state)
+void DeviceAPI::getDeviceEngineStateStr(QString& state, int subsystemIndex) const
 {
     if (m_deviceSourceEngine)
     {
         switch(m_deviceSourceEngine->state())
         {
-        case DSPDeviceSourceEngine::StNotStarted:
+        case DSPDeviceSourceEngine::State::StNotStarted:
             state = "notStarted";
             break;
-        case DSPDeviceSourceEngine::StIdle:
+        case DSPDeviceSourceEngine::State::StIdle:
             state = "idle";
             break;
-        case DSPDeviceSourceEngine::StReady:
+        case DSPDeviceSourceEngine::State::StReady:
             state = "ready";
             break;
-        case DSPDeviceSourceEngine::StRunning:
+        case DSPDeviceSourceEngine::State::StRunning:
             state = "running";
             break;
-        case DSPDeviceSourceEngine::StError:
+        case DSPDeviceSourceEngine::State::StError:
             state = "error";
             break;
         default:
@@ -416,19 +391,43 @@ void DeviceAPI::getDeviceEngineStateStr(QString& state)
     {
         switch(m_deviceSinkEngine->state())
         {
-        case DSPDeviceSinkEngine::StNotStarted:
+        case DSPDeviceSinkEngine::State::StNotStarted:
             state = "notStarted";
             break;
-        case DSPDeviceSinkEngine::StIdle:
+        case DSPDeviceSinkEngine::State::StIdle:
             state = "idle";
             break;
-        case DSPDeviceSinkEngine::StReady:
+        case DSPDeviceSinkEngine::State::StReady:
             state = "ready";
             break;
-        case DSPDeviceSinkEngine::StRunning:
+        case DSPDeviceSinkEngine::State::StRunning:
             state = "running";
             break;
-        case DSPDeviceSinkEngine::StError:
+        case DSPDeviceSinkEngine::State::StError:
+            state = "error";
+            break;
+        default:
+            state = "notStarted";
+            break;
+        }
+    }
+    else if (m_deviceMIMOEngine)
+    {
+        switch(m_deviceMIMOEngine->state(subsystemIndex))
+        {
+        case DSPDeviceMIMOEngine::State::StNotStarted:
+            state = "notStarted";
+            break;
+        case DSPDeviceMIMOEngine::State::StIdle:
+            state = "idle";
+            break;
+        case DSPDeviceMIMOEngine::State::StReady:
+            state = "ready";
+            break;
+        case DSPDeviceMIMOEngine::State::StRunning:
+            state = "running";
+            break;
+        case DSPDeviceMIMOEngine::State::StError:
             state = "error";
             break;
         default:
@@ -442,39 +441,141 @@ void DeviceAPI::getDeviceEngineStateStr(QString& state)
     }
 }
 
-ChannelAPI *DeviceAPI::getChanelSinkAPIAt(int index, int streamIndex)
+ChannelAPI *DeviceAPI::getChanelSinkAPIAt(int index)
 {
-    (void) streamIndex;
-
-    if (m_streamType == StreamSingleRx)
-    {
-        if (index < m_channelSinkAPIs.size()) {
-            return m_channelSinkAPIs.at(index);
-        } else {
-            return nullptr;
-        }
-    }
-    else // TODO: not implemented
-    {
+    if (index < m_channelSinkAPIs.size()) {
+        return m_channelSinkAPIs.at(index);
+    } else {
         return nullptr;
     }
 }
 
-ChannelAPI *DeviceAPI::getChanelSourceAPIAt(int index, int streamIndex)
+ChannelAPI *DeviceAPI::getChanelSourceAPIAt(int index)
 {
-    (void) streamIndex;
+    if (index < m_channelSourceAPIs.size()) {
+        return m_channelSourceAPIs.at(index);
+    } else {
+        return nullptr;
+    }
+}
 
-     if (m_streamType == StreamSingleTx)
+ChannelAPI *DeviceAPI::getMIMOChannelAPIAt(int index)
+{
+    if (index < m_mimoChannelAPIs.size()) {
+        return m_mimoChannelAPIs.at(index);
+    } else {
+        return nullptr;
+    }
+}
+
+QList<quint64> DeviceAPI::getCenterFrequency() const
+{
+    QList<quint64> frequencies;
+
+    if (m_deviceSourceEngine && m_deviceSourceEngine->getSource())
     {
-        if (index < m_channelSourceAPIs.size()) {
-            return m_channelSourceAPIs.at(index);
-        } else {
-            return nullptr;
+        frequencies.append(m_deviceSourceEngine->getSource()->getCenterFrequency());
+    }
+    else if (m_deviceSinkEngine && m_deviceSinkEngine->getSink())
+    {
+        frequencies.append(m_deviceSinkEngine->getSink()->getCenterFrequency());
+    }
+    else if (m_deviceMIMOEngine && m_deviceMIMOEngine->getMIMO())
+    {
+        for (uint32_t i = 0; i < m_deviceMIMOEngine->getMIMO()->getNbSourceStreams(); i++) {
+            frequencies.append(m_deviceMIMOEngine->getMIMO()->getSourceCenterFrequency(i));
+        }
+        for (uint32_t i = 0; i < m_deviceMIMOEngine->getMIMO()->getNbSinkStreams(); i++) {
+            frequencies.append(m_deviceMIMOEngine->getMIMO()->getSinkCenterFrequency(i));
         }
     }
-    else // TODO: not implemented
+    return frequencies;
+}
+
+void DeviceAPI::setCenterFrequency(QList<quint64> centerFrequency)
+{
+    if (m_deviceSourceEngine && m_deviceSourceEngine->getSource())
     {
-        return nullptr;
+        m_deviceSourceEngine->getSource()->setCenterFrequency(centerFrequency[0]);
+    }
+    else if (m_deviceSinkEngine && m_deviceSinkEngine->getSink())
+    {
+        m_deviceSinkEngine->getSink()->setCenterFrequency(centerFrequency[0]);
+    }
+    else if (m_deviceMIMOEngine && m_deviceMIMOEngine->getMIMO())
+    {
+        int idx = 0;
+        for (uint32_t i = 0; i < m_deviceMIMOEngine->getMIMO()->getNbSourceStreams(); i++, idx++) {
+            m_deviceMIMOEngine->getMIMO()->setSourceCenterFrequency(centerFrequency[idx], i);
+        }
+        for (uint32_t i = 0; i < m_deviceMIMOEngine->getMIMO()->getNbSinkStreams(); i++, idx++) {
+            m_deviceMIMOEngine->getMIMO()->setSinkCenterFrequency(centerFrequency[idx], i);
+        }
+    }
+}
+
+// Serialization is only currently used for saving device settings as part of a Device preset
+// loadSamplingDeviceSettings/saveSamplingDeviceSettings is used for Device Set presets (which includes channel settings)
+
+QByteArray DeviceAPI::serialize() const
+{
+    SimpleSerializer s(1);
+
+    if (m_deviceSourceEngine && m_deviceSourceEngine->getSource()) {
+        s.writeBlob(1, m_deviceSourceEngine->getSource()->serialize());
+    }
+    if (m_deviceSinkEngine && m_deviceSinkEngine->getSink()) {
+        s.writeBlob(2, m_deviceSinkEngine->getSink()->serialize());
+    }
+    if (m_deviceMIMOEngine && m_deviceMIMOEngine->getMIMO()) {
+        s.writeBlob(3, m_deviceMIMOEngine->getMIMO()->serialize());
+    }
+    s.writeList<quint64>(4, getCenterFrequency());
+    return s.final();
+}
+
+bool DeviceAPI::deserialize(const QByteArray& data)
+{
+    SimpleDeserializer d(data);
+
+    if (!d.isValid()) {
+        return false;
+    }
+
+    if (d.getVersion() == 1)
+    {
+        QByteArray bdata;
+        QList<quint64> centerFrequency;
+
+        if (m_deviceSourceEngine && m_deviceSourceEngine->getSource())
+        {
+            d.readBlob(1, &bdata);
+            if (data.size() > 0) {
+                m_deviceSourceEngine->getSource()->deserialize(data);
+            }
+        }
+        if (m_deviceSinkEngine && m_deviceSinkEngine->getSink())
+        {
+            d.readBlob(2, &bdata);
+            if (data.size() > 0) {
+                m_deviceSinkEngine->getSink()->deserialize(data);
+            }
+        }
+        if (m_deviceMIMOEngine && m_deviceMIMOEngine->getMIMO())
+        {
+            d.readBlob(3, &bdata);
+            if (data.size() > 0) {
+                m_deviceMIMOEngine->getMIMO()->deserialize(data);
+            }
+        }
+        d.readList<quint64>(4, &centerFrequency);
+        setCenterFrequency(centerFrequency);
+
+        return true;
+    }
+    else
+    {
+        return false;
     }
 }
 
@@ -482,22 +583,18 @@ void DeviceAPI::loadSamplingDeviceSettings(const Preset* preset)
 {
     if (m_deviceSourceEngine && (preset->isSourcePreset()))
     {
-        qDebug("DeviceAPI::loadSamplingDeviceSettings: Loading preset [%s | %s]", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
+        qDebug("DeviceAPI::loadSamplingDeviceSettings: Loading Rx preset [%s | %s]", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
 
         const QByteArray* sourceConfig = preset->findBestDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence);
         qint64 centerFrequency = preset->getCenterFrequency();
-        qDebug("DeviceAPI::loadSamplingDeviceSettings: center frequency: %llu Hz", centerFrequency);
+        qDebug("DeviceAPI::loadSamplingDeviceSettings: source center frequency: %llu Hz", centerFrequency);
 
-        if (sourceConfig != 0)
+        if (sourceConfig)
         {
             qDebug("DeviceAPI::loadSamplingDeviceSettings: deserializing source %s[%d]: %s",
                 qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
 
-            if (m_samplingDevicePluginInstanceUI != 0) // GUI flavor
-            {
-                m_samplingDevicePluginInstanceUI->deserialize(*sourceConfig);
-            }
-            else if (m_deviceSourceEngine->getSource() != 0) // Server flavor
+            if (m_deviceSourceEngine->getSource() != nullptr) // Server flavor
             {
                 m_deviceSourceEngine->getSource()->deserialize(*sourceConfig);
             }
@@ -513,11 +610,7 @@ void DeviceAPI::loadSamplingDeviceSettings(const Preset* preset)
         }
 
         // set center frequency anyway
-        if (m_samplingDevicePluginInstanceUI != 0) // GUI flavor
-        {
-            m_samplingDevicePluginInstanceUI->setCenterFrequency(centerFrequency);
-        }
-        else if (m_deviceSourceEngine->getSource() != 0) // Server flavor
+        if (m_deviceSourceEngine->getSource())
         {
             m_deviceSourceEngine->getSource()->setCenterFrequency(centerFrequency);
         }
@@ -526,25 +619,20 @@ void DeviceAPI::loadSamplingDeviceSettings(const Preset* preset)
             qDebug("DeviceAPI::loadSamplingDeviceSettings: no source");
         }
     }
-    else if (m_deviceSinkEngine && (!preset->isSourcePreset())) // TODO: refine preset stream type
+    else if (m_deviceSinkEngine && preset->isSinkPreset())
     {
-        qDebug("DeviceAPI::loadSamplingDeviceSettings: Loading preset [%s | %s]", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
+        qDebug("DeviceAPI::loadSamplingDeviceSettings: Loading Tx preset [%s | %s]", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
 
         const QByteArray* sinkConfig = preset->findBestDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence);
         qint64 centerFrequency = preset->getCenterFrequency();
-        qDebug("DeviceAPI::loadSamplingDeviceSettings: center frequency: %llu Hz", centerFrequency);
+        qDebug("DeviceAPI::loadSamplingDeviceSettings: sink center frequency: %llu Hz", centerFrequency);
 
-        if (sinkConfig != 0)
+        if (sinkConfig)
         {
             qDebug("DeviceAPI::loadSamplingDeviceSettings: deserializing sink %s[%d]: %s",
                 qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
 
-            if (m_samplingDevicePluginInstanceUI != 0) // GUI flavor
-            {
-                m_samplingDevicePluginInstanceUI->deserialize(*sinkConfig);
-                m_samplingDevicePluginInstanceUI->setCenterFrequency(centerFrequency);
-            }
-            else if (m_deviceSinkEngine->getSink() != 0) // Server flavor
+            if (m_deviceSinkEngine->getSink())
             {
                 m_deviceSinkEngine->getSink()->deserialize(*sinkConfig);
                 m_deviceSinkEngine->getSink()->setCenterFrequency(centerFrequency);
@@ -557,6 +645,36 @@ void DeviceAPI::loadSamplingDeviceSettings(const Preset* preset)
         else
         {
             qDebug("DeviceAPI::loadSamplingDeviceSettings: sink %s[%d]: %s not found",
+                qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
+        }
+    }
+    else if (m_deviceMIMOEngine && preset->isMIMOPreset())
+    {
+        qDebug("DeviceAPI::loadSamplingDeviceSettings: Loading MIMO preset [%s | %s]", qPrintable(preset->getGroup()), qPrintable(preset->getDescription()));
+
+        const QByteArray* mimoConfig = preset->findBestDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence);
+        qint64 centerFrequency = preset->getCenterFrequency();
+        qDebug("DeviceAPI::loadSamplingDeviceSettings: MIMO center frequency: %llu Hz", centerFrequency);
+
+        if (mimoConfig)
+        {
+            qDebug("DeviceAPI::loadSamplingDeviceSettings: deserializing MIMO %s[%d]: %s",
+                qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
+
+            if (m_deviceMIMOEngine->getMIMO())
+            {
+                m_deviceMIMOEngine->getMIMO()->deserialize(*mimoConfig);
+                m_deviceMIMOEngine->getMIMO()->setSourceCenterFrequency(centerFrequency, 0);
+                m_deviceMIMOEngine->getMIMO()->setSinkCenterFrequency(centerFrequency, 0);
+            }
+            else
+            {
+                qDebug("DeviceAPI::loadSamplingDeviceSettings: no MIMO");
+            }
+        }
+        else
+        {
+            qDebug("DeviceAPI::loadSamplingDeviceSettings: MIMO %s[%d]: %s not found",
                 qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
         }
     }
@@ -573,12 +691,7 @@ void DeviceAPI::saveSamplingDeviceSettings(Preset* preset)
         qDebug("DeviceAPI::saveSamplingDeviceSettings: serializing source %s[%d]: %s",
             qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
 
-        if (m_samplingDevicePluginInstanceUI != 0)
-        {
-            preset->addOrUpdateDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence, m_samplingDevicePluginInstanceUI->serialize());
-            preset->setCenterFrequency(m_samplingDevicePluginInstanceUI->getCenterFrequency());
-        }
-        else if (m_deviceSourceEngine->getSource() != 0)
+        if (m_deviceSourceEngine->getSource()) // Server flavor
         {
             preset->addOrUpdateDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence, m_deviceSourceEngine->getSource()->serialize());
             preset->setCenterFrequency(m_deviceSourceEngine->getSource()->getCenterFrequency());
@@ -588,17 +701,12 @@ void DeviceAPI::saveSamplingDeviceSettings(Preset* preset)
             qDebug("DeviceAPI::saveSamplingDeviceSettings: no source");
         }
     }
-    else if (m_deviceSinkEngine && (!preset->isSourcePreset())) // TODO: refine preset stream type
+    else if (m_deviceSinkEngine && preset->isSinkPreset())
     {
         qDebug("DeviceAPI::saveSamplingDeviceSettings: serializing sink %s[%d]: %s",
             qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
 
-        if (m_samplingDevicePluginInstanceUI != 0) // GUI flavor
-        {
-            preset->addOrUpdateDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence, m_deviceSinkEngine->getSink()->serialize());
-            preset->setCenterFrequency(m_deviceSinkEngine->getSink()->getCenterFrequency());
-        }
-        else if (m_deviceSinkEngine->getSink() != 0) // Server flavor
+        if (m_deviceSinkEngine->getSink()) // Server flavor
         {
             preset->addOrUpdateDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence, m_deviceSinkEngine->getSink()->serialize());
             preset->setCenterFrequency(m_deviceSinkEngine->getSink()->getCenterFrequency());
@@ -608,34 +716,53 @@ void DeviceAPI::saveSamplingDeviceSettings(Preset* preset)
             qDebug("DeviceAPI::saveSamplingDeviceSettings: no sink");
         }
     }
+    else if (m_deviceMIMOEngine && preset->isMIMOPreset())
+    {
+        qDebug("DeviceAPI::saveSamplingDeviceSettings: serializing MIMO %s[%d]: %s",
+            qPrintable(m_samplingDeviceId), m_samplingDeviceSequence, qPrintable(m_samplingDeviceSerial));
+
+        if (m_deviceMIMOEngine->getMIMO()) // Server flavor
+        {
+            preset->addOrUpdateDeviceConfig(m_samplingDeviceId, m_samplingDeviceSerial, m_samplingDeviceSequence, m_deviceMIMOEngine->getMIMO()->serialize());
+            preset->setCenterFrequency(m_deviceMIMOEngine->getMIMO()->getMIMOCenterFrequency());
+        }
+        else
+        {
+            qDebug("DeviceAPI::saveSamplingDeviceSettings: no MIMO");
+        }
+    }
     else
     {
         qDebug("DeviceAPI::saveSamplingDeviceSettings: not a suitable preset");
     }
 }
 
-void DeviceAPI::addSourceBuddy(DeviceAPI* buddy)
+void DeviceAPI::addBuddy(DeviceAPI* buddy)
 {
-    if (buddy->m_streamType != StreamSingleRx)
+    if (buddy->m_streamType == StreamSingleRx)
     {
-        qDebug("DeviceAPI::addSourceBuddy: buddy %s(%s) is not of single Rx type",
-                qPrintable(buddy->getHardwareId()),
-                qPrintable(buddy->getSamplingDeviceSerial()));
+        m_sourceBuddies.push_back(buddy); // this is a source
+    }
+    else if (buddy->m_streamType == StreamSingleTx)
+    {
+        m_sinkBuddies.push_back(buddy); // this is a sink
+    }
+    else
+    {
+        qDebug("DeviceAPI::addBuddy: not relevant if buddy is not a single Rx or Tx");
         return;
     }
-
-    m_sourceBuddies.push_back(buddy);
 
     if (m_streamType == StreamSingleRx) {
         buddy->m_sourceBuddies.push_back(this); // this is a source
     } else if (m_streamType == StreamSingleTx) {
         buddy->m_sinkBuddies.push_back(this); // this is a sink
     } else {
-        qDebug("DeviceAPI::addSourceBuddy: not relevant if this is not a single Rx or Tx");
+        qDebug("DeviceAPI::addBuddy: not relevant if this is not a single Rx or Tx");
         return;
     }
 
-    qDebug("DeviceAPI::addSourceBuddy: added buddy %s(%s) [%llu] <-> [%llu]",
+    qDebug("DeviceAPI::addBuddy: added buddy %s(%s) [%llu] <-> [%llu]",
             qPrintable(buddy->getHardwareId()),
             qPrintable(buddy->getSamplingDeviceSerial()),
             (quint64) buddy,
@@ -643,104 +770,27 @@ void DeviceAPI::addSourceBuddy(DeviceAPI* buddy)
 }
 
 
-void DeviceAPI::addSinkBuddy(DeviceAPI* buddy)
+void DeviceAPI::removeBuddy(DeviceAPI* buddy)
 {
-    if (buddy->m_streamType != StreamSingleTx)
-    {
-        qDebug("DeviceAPI::addSinkBuddy: buddy %s(%s) is not of single Tx type",
+    switch(buddy->m_streamType) {
+    case StreamSingleRx:
+        m_sourceBuddies.erase(std::find(m_sourceBuddies.begin(), m_sourceBuddies.end(), buddy));
+        break;
+    case StreamSingleTx:
+        m_sinkBuddies.erase(std::find(m_sinkBuddies.begin(), m_sinkBuddies.end(), buddy));
+        break;
+    default:
+        qDebug("DeviceAPI::removeSourceBuddy: buddy %s(%s) is not of single Rx or Tx type",
                 qPrintable(buddy->getHardwareId()),
                 qPrintable(buddy->getSamplingDeviceSerial()));
         return;
     }
-
-    m_sinkBuddies.push_back(buddy);
-
-    if (m_streamType == StreamSingleRx) {
-        buddy->m_sourceBuddies.push_back(this); // this is a source
-    } else if (m_streamType == StreamSingleTx) {
-        buddy->m_sinkBuddies.push_back(this); // this is a sink
-    } else {
-        qDebug("DeviceAPI::addSinkBuddy: not relevant if this is not a  single Rx or Tx");
-        return;
-    }
-
-    qDebug("DeviceAPI::addSinkBuddy: added buddy %s(%s) [%llu] <-> [%llu]",
-            qPrintable(buddy->getHardwareId()),
-            qPrintable(buddy->getSamplingDeviceSerial()),
-            (quint64) buddy,
-            (quint64) this);
-}
-
-void DeviceAPI::removeSourceBuddy(DeviceAPI* buddy)
-{
-    if (buddy->m_streamType != StreamSingleRx)
-    {
-        qDebug("DeviceAPI::removeSourceBuddy: buddy %s(%s) is not of single Rx type",
-                qPrintable(buddy->getHardwareId()),
-                qPrintable(buddy->getSamplingDeviceSerial()));
-        return;
-    }
-
-    std::vector<DeviceAPI*>::iterator it = m_sourceBuddies.begin();
-
-    for (;it != m_sourceBuddies.end(); ++it)
-    {
-        if (*it == buddy)
-        {
-            qDebug("DeviceAPI::removeSourceBuddy: buddy %s(%s) [%llu] removed from the list of [%llu]",
-                    qPrintable(buddy->getHardwareId()),
-                    qPrintable(buddy->getSamplingDeviceSerial()),
-                    (quint64) (*it),
-                    (quint64) this);
-            m_sourceBuddies.erase(it);
-            return;
-        }
-    }
-
-    qDebug("DeviceAPI::removeSourceBuddy: buddy %s(%s) [%llu] not found in the list of [%llu]",
-            qPrintable(buddy->getHardwareId()),
-            qPrintable(buddy->getSamplingDeviceSerial()),
-            (quint64) buddy,
-            (quint64) this);
-}
-
-void DeviceAPI::removeSinkBuddy(DeviceAPI* buddy)
-{
-    if (buddy->m_streamType != StreamSingleTx)
-    {
-        qDebug("DeviceAPI::removeSinkBuddy: buddy %s(%s) is not of single Tx type",
-                qPrintable(buddy->getHardwareId()),
-                qPrintable(buddy->getSamplingDeviceSerial()));
-        return;
-    }
-
-    std::vector<DeviceAPI*>::iterator it = m_sinkBuddies.begin();
-
-    for (;it != m_sinkBuddies.end(); ++it)
-    {
-        if (*it == buddy)
-        {
-            qDebug("DeviceAPI::removeSinkBuddy: buddy %s(%s) [%llu] removed from the list of [%llu]",
-                    qPrintable(buddy->getHardwareId()),
-                    qPrintable(buddy->getSamplingDeviceSerial()),
-                    (quint64) (*it),
-                    (quint64) this);
-            m_sinkBuddies.erase(it);
-            return;
-        }
-    }
-
-    qDebug("DeviceAPI::removeSourceBuddy: buddy %s(%s) [%llu] not found in the list of [%llu]",
-            qPrintable(buddy->getHardwareId()),
-            qPrintable(buddy->getSamplingDeviceSerial()),
-            (quint64) buddy,
-            (quint64) this);
 }
 
 void DeviceAPI::clearBuddiesLists()
 {
-    std::vector<DeviceAPI*>::iterator itSource = m_sourceBuddies.begin();
-    std::vector<DeviceAPI*>::iterator itSink = m_sinkBuddies.begin();
+    auto itSource = m_sourceBuddies.begin();
+    auto itSink = m_sinkBuddies.begin();
     bool leaderElected = false;
 
     for (;itSource != m_sourceBuddies.end(); ++itSource)
@@ -751,7 +801,7 @@ void DeviceAPI::clearBuddiesLists()
             leaderElected = true;
         }
 
-        (*itSource)->removeSinkBuddy(this);
+        (*itSource)->removeBuddy(this);
     }
 
     m_sourceBuddies.clear();
@@ -764,7 +814,7 @@ void DeviceAPI::clearBuddiesLists()
             leaderElected = true;
         }
 
-        (*itSink)->removeSinkBuddy(this);
+        (*itSink)->removeBuddy(this);
     }
 
     m_sinkBuddies.clear();
@@ -790,4 +840,42 @@ void DeviceAPI::renumerateChannels()
             m_channelSourceAPIs.at(i)->setDeviceAPI(this);
         }
     }
+    else if (m_streamType == StreamMIMO)
+    {
+        int index = 0;
+
+        for (; index < m_channelSinkAPIs.size(); ++index)
+        {
+            m_channelSinkAPIs.at(index)->setIndexInDeviceSet(index);
+            m_channelSinkAPIs.at(index)->setDeviceSetIndex(m_deviceTabIndex);
+            m_channelSinkAPIs.at(index)->setDeviceAPI(this);
+        }
+
+        for (; index < m_channelSourceAPIs.size() + m_channelSinkAPIs.size(); ++index)
+        {
+            int sourceIndex = index - m_channelSinkAPIs.size();
+            m_channelSourceAPIs.at(sourceIndex)->setIndexInDeviceSet(index);
+            m_channelSourceAPIs.at(sourceIndex)->setDeviceSetIndex(m_deviceTabIndex);
+            m_channelSourceAPIs.at(sourceIndex)->setDeviceAPI(this);
+        }
+
+        for (; index < m_mimoChannelAPIs.size() + m_channelSourceAPIs.size() + m_channelSinkAPIs.size(); ++index)
+        {
+            int mimoIndex = index - m_channelSourceAPIs.size() - m_channelSinkAPIs.size();
+            m_mimoChannelAPIs.at(mimoIndex)->setIndexInDeviceSet(index);
+            m_mimoChannelAPIs.at(mimoIndex)->setDeviceSetIndex(m_deviceTabIndex);
+            m_mimoChannelAPIs.at(mimoIndex)->setDeviceAPI(this);
+        }
+    }
+}
+
+void DeviceAPI::setDeviceSetIndex(int deviceSetIndex)
+{
+    m_deviceTabIndex = deviceSetIndex;
+    renumerateChannels();
+}
+
+void DeviceAPI::engineStateChanged()
+{
+    emit stateChanged(this);
 }

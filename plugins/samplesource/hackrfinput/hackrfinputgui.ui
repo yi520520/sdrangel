@@ -6,20 +6,26 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>310</width>
-    <height>300</height>
+    <width>360</width>
+    <height>230</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
   </property>
   <property name="minimumSize">
    <size>
-    <width>310</width>
-    <height>300</height>
+    <width>360</width>
+    <height>230</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>380</width>
+    <height>272</height>
    </size>
   </property>
   <property name="font">
@@ -30,6 +36,9 @@
   </property>
   <property name="windowTitle">
    <string>HackRF</string>
+  </property>
+  <property name="toolTip">
+   <string>Transverter frequency translation dialog</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="spacing">
@@ -74,20 +83,6 @@
            </property>
           </widget>
          </item>
-         <item>
-          <widget class="ButtonSwitch" name="record">
-           <property name="toolTip">
-            <string>Toggle record I/Q samples from device</string>
-           </property>
-           <property name="text">
-            <string/>
-           </property>
-           <property name="icon">
-            <iconset resource="../../../sdrgui/resources/res.qrc">
-             <normaloff>:/record_off.png</normaloff>:/record_off.png</iconset>
-           </property>
-          </widget>
-         </item>
         </layout>
        </item>
        <item>
@@ -127,13 +122,13 @@
        <property name="minimumSize">
         <size>
          <width>32</width>
-         <height>50</height>
+         <height>0</height>
         </size>
        </property>
        <property name="font">
         <font>
          <family>Liberation Mono</family>
-         <pointsize>20</pointsize>
+         <pointsize>16</pointsize>
         </font>
        </property>
        <property name="cursor">
@@ -226,6 +221,13 @@
      <property name="bottomMargin">
       <number>2</number>
      </property>
+     <item row="0" column="0">
+      <widget class="QLabel" name="corrLabel">
+       <property name="text">
+        <string>Auto</string>
+       </property>
+      </widget>
+     </item>
      <item row="0" column="1">
       <widget class="ButtonSwitch" name="dcOffset">
        <property name="toolTip">
@@ -246,14 +248,30 @@
        </property>
       </widget>
      </item>
-     <item row="0" column="0">
-      <widget class="QLabel" name="corrLabel">
+     <item row="0" column="3">
+      <widget class="ButtonSwitch" name="autoBBF">
+       <property name="toolTip">
+        <string>Bandpass Filter auto select</string>
+       </property>
        <property name="text">
-        <string>Auto</string>
+        <string>BBF</string>
        </property>
       </widget>
      </item>
      <item row="0" column="4">
+      <spacer name="horizontalSpacer_2">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item row="0" column="5">
       <widget class="QCheckBox" name="biasT">
        <property name="toolTip">
         <string>Activate antenna bias tee</string>
@@ -266,7 +284,7 @@
        </property>
       </widget>
      </item>
-     <item row="0" column="5">
+     <item row="0" column="6">
       <widget class="QCheckBox" name="lnaExt">
        <property name="toolTip">
         <string>Extra LNA +14dB</string>
@@ -279,18 +297,18 @@
        </property>
       </widget>
      </item>
-     <item row="0" column="3">
-      <spacer name="horizontalSpacer_2">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
+     <item row="0" column="7">
+      <widget class="TransverterButton" name="transverter">
+       <property name="maximumSize">
         <size>
-         <width>40</width>
-         <height>20</height>
+         <width>24</width>
+         <height>24</height>
         </size>
        </property>
-      </spacer>
+       <property name="text">
+        <string>X</string>
+       </property>
+      </widget>
      </item>
     </layout>
    </item>
@@ -646,23 +664,6 @@
      </item>
     </layout>
    </item>
-   <item>
-    <layout class="QHBoxLayout" name="padLayout">
-     <item>
-      <spacer name="verticalSpacer">
-       <property name="orientation">
-        <enum>Qt::Vertical</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>20</width>
-         <height>40</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-    </layout>
-   </item>
   </layout>
  </widget>
  <customwidgets>
@@ -676,6 +677,11 @@
    <class>ButtonSwitch</class>
    <extends>QToolButton</extends>
    <header>gui/buttonswitch.h</header>
+  </customwidget>
+  <customwidget>
+   <class>TransverterButton</class>
+   <extends>QPushButton</extends>
+   <header>gui/transverterbutton.h</header>
   </customwidget>
  </customwidgets>
  <resources>

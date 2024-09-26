@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -26,12 +29,13 @@ RemoteInputSettings::RemoteInputSettings()
 void RemoteInputSettings::resetToDefaults()
 {
     m_apiAddress = "127.0.0.1";
-    m_apiPort = 9091;
+    m_apiPort = 8091;
     m_dataAddress = "127.0.0.1";
     m_dataPort = 9090;
+    m_multicastAddress = "224.0.0.1";
+    m_multicastJoin = false;
     m_dcBlock = false;
     m_iqCorrection = false;
-    m_fileRecordName = "";
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
@@ -42,6 +46,8 @@ QByteArray RemoteInputSettings::serialize() const
 {
     SimpleSerializer s(1);
 
+    s.writeString(3, m_multicastAddress);
+    s.writeBool(4, m_multicastJoin);
     s.writeString(5, m_apiAddress);
     s.writeU32(6, m_apiPort);
     s.writeU32(7, m_dataPort);
@@ -70,10 +76,12 @@ bool RemoteInputSettings::deserialize(const QByteArray& data)
     {
         quint32 uintval;
 
+        d.readString(3, &m_multicastAddress, "224.0.0.1");
+        d.readBool(4, &m_multicastJoin, false);
         d.readString(5, &m_apiAddress, "127.0.0.1");
-        d.readU32(6, &uintval, 9090);
+        d.readU32(6, &uintval, 8091);
         m_apiPort = uintval % (1<<16);
-        d.readU32(7, &uintval, 9091);
+        d.readU32(7, &uintval, 9090);
         m_dataPort = uintval % (1<<16);
         d.readString(8, &m_dataAddress, "127.0.0.1");
         d.readBool(9, &m_dcBlock, false);
@@ -90,6 +98,7 @@ bool RemoteInputSettings::deserialize(const QByteArray& data)
 
         d.readU32(14, &uintval, 0);
         m_reverseAPIDeviceIndex = uintval > 99 ? 99 : uintval;
+
         return true;
     }
     else
@@ -99,5 +108,87 @@ bool RemoteInputSettings::deserialize(const QByteArray& data)
     }
 }
 
+void RemoteInputSettings::applySettings(const QStringList& settingsKeys, const RemoteInputSettings& settings)
+{
+    if (settingsKeys.contains("apiAddress")) {
+        m_apiAddress = settings.m_apiAddress;
+    }
+    if (settingsKeys.contains("apiPort")) {
+        m_apiPort = settings.m_apiPort;
+    }
+    if (settingsKeys.contains("dataAddress")) {
+        m_dataAddress = settings.m_dataAddress;
+    }
+    if (settingsKeys.contains("dataPort")) {
+        m_dataPort = settings.m_dataPort;
+    }
+    if (settingsKeys.contains("multicastAddress")) {
+        m_multicastAddress = settings.m_multicastAddress;
+    }
+    if (settingsKeys.contains("multicastJoin")) {
+        m_multicastJoin = settings.m_multicastJoin;
+    }
+    if (settingsKeys.contains("dcBlock")) {
+        m_dcBlock = settings.m_dcBlock;
+    }
+    if (settingsKeys.contains("iqCorrection")) {
+        m_iqCorrection = settings.m_iqCorrection;
+    }
+    if (settingsKeys.contains("useReverseAPI")) {
+        m_useReverseAPI = settings.m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress")) {
+        m_reverseAPIAddress = settings.m_reverseAPIAddress;
+    }
+    if (settingsKeys.contains("reverseAPIPort")) {
+        m_reverseAPIPort = settings.m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex")) {
+        m_reverseAPIDeviceIndex = settings.m_reverseAPIDeviceIndex;
+    }
+}
 
+QString RemoteInputSettings::getDebugString(const QStringList& settingsKeys, bool force) const
+{
+    std::ostringstream ostr;
+
+    if (settingsKeys.contains("apiAddress") || force) {
+        ostr << " m_apiAddress: " << m_apiAddress.toStdString();
+    }
+    if (settingsKeys.contains("apiPort") || force) {
+        ostr << " m_apiPort: " << m_apiPort;
+    }
+    if (settingsKeys.contains("dataAddress") || force) {
+        ostr << " m_dataAddress: " << m_dataAddress.toStdString();
+    }
+    if (settingsKeys.contains("dataPort") || force) {
+        ostr << " m_dataPort: " << m_dataPort;
+    }
+    if (settingsKeys.contains("multicastAddress") || force) {
+        ostr << " m_multicastAddress: " << m_multicastAddress.toStdString();
+    }
+    if (settingsKeys.contains("multicastJoin") || force) {
+        ostr << " m_multicastJoin: " << m_multicastJoin;
+    }
+    if (settingsKeys.contains("dcBlock") || force) {
+        ostr << " m_dcBlock: " << m_dcBlock;
+    }
+    if (settingsKeys.contains("iqCorrection") || force) {
+        ostr << " m_iqCorrection: " << m_iqCorrection;
+    }
+    if (settingsKeys.contains("useReverseAPI") || force) {
+        ostr << " m_useReverseAPI: " << m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress") || force) {
+        ostr << " m_reverseAPIAddress: " << m_reverseAPIAddress.toStdString();
+    }
+    if (settingsKeys.contains("reverseAPIPort") || force) {
+        ostr << " m_reverseAPIPort: " << m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex") || force) {
+        ostr << " m_reverseAPIDeviceIndex: " << m_reverseAPIDeviceIndex;
+    }
+
+    return QString(ostr.str().c_str());
+}
 

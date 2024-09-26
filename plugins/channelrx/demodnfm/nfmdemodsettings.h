@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,18 +23,22 @@
 
 #include <stdint.h>
 
+#include "dsp/dsptypes.h"
+
 class Serializable;
 
 struct NFMDemodSettings
 {
-    static const int m_nbRfBW;
+    static const int m_nbChannelSpacings;
+    static const int m_channelSpacings[];
     static const int m_rfBW[];
+    static const int m_afBW[];
     static const int m_fmDev[];
 
     int32_t m_inputFrequencyOffset;
     Real m_rfBandwidth;
     Real m_afBandwidth;
-    int  m_fmDeviation;
+    Real m_fmDeviation;
     int  m_squelchGate;
     bool m_deltaSquelch;
     Real m_squelch; //!< deci-Bels
@@ -39,27 +46,41 @@ struct NFMDemodSettings
     bool m_ctcssOn;
     bool m_audioMute;
     int  m_ctcssIndex;
+    bool m_dcsOn;
+    unsigned int m_dcsCode;
+    bool m_dcsPositive;
     quint32 m_rgbColor;
     QString m_title;
     QString m_audioDeviceName;
     bool m_highPass;
+    int m_streamIndex; //!< MIMO channel. Not relevant when connected to SI (single Rx).
     bool m_useReverseAPI;
     QString m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
     uint16_t m_reverseAPIDeviceIndex;
     uint16_t m_reverseAPIChannelIndex;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
 
     Serializable *m_channelMarker;
+    Serializable *m_rollupState;
 
     NFMDemodSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
 
+    static int getChannelSpacing(int index);
+    static int getChannelSpacingIndex(int channelSpacing);
     static int getRFBW(int index);
-    static int getFMDev(int index);
     static int getRFBWIndex(int rfbw);
+    static int getAFBW(int index);
+    static int getAFBWIndex(int rfbw);
+    static int getFMDev(int index);
+    static int getFMDevIndex(int fmDev);
 };
 
 

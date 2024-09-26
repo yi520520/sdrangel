@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2016-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -161,7 +161,6 @@ const signed char CWKeyer::m_asciiToMorse[128][7] = {
 };
 
 CWKeyer::CWKeyer() :
-    m_mutex(QMutex::Recursive),
     m_textPointer(0),
 	m_elementPointer(0),
     m_samplePointer(0),
@@ -551,12 +550,24 @@ void CWKeyer::handleInputMessages()
 
 void CWKeyer::applySettings(const CWKeyerSettings& settings, bool force)
 {
+    qDebug() << "CWKeyer::applySettings: "
+        << " m_dashKey: " << settings.m_dashKey
+        << " m_dashKeyModifiers: " << settings.m_dashKeyModifiers
+        << " m_dotKey: " << settings.m_dotKey
+        << " m_dotKeyModifiers: " << settings.m_dotKeyModifiers
+        << " m_keyboardIambic: " << settings.m_keyboardIambic
+        << " m_loop: " << settings.m_loop
+        << " m_mode: " << settings.m_mode
+        << " m_sampleRate: " << settings.m_sampleRate
+        << " m_text: " << settings.m_text
+        << " m_wpm: " << settings.m_wpm;
+
     if ((m_settings.m_wpm != settings.m_wpm)
      || (m_settings.m_sampleRate != settings.m_sampleRate) || force)
     {
         QMutexLocker mutexLocker(&m_mutex);
-        m_dotLength = (int) (0.24f * settings.m_sampleRate * (5.0f / settings.m_wpm));
-        m_cwSmoother.setNbFadeSamples(m_dotLength/5); // 20% the dot time
+        m_dotLength = (int) ((1.2f / settings.m_wpm) * settings.m_sampleRate);
+        m_cwSmoother.setNbFadeSamples(m_dotLength/10); // 10% the dot time
     }
 
     if ((m_settings.m_mode != settings.m_mode) || force)
@@ -602,36 +613,7 @@ void CWKeyer::webapiSettingsPutPatch(
     SWGSDRangel::SWGCWKeyerSettings *apiCwKeyerSettings
 )
 {
-    if (channelSettingsKeys.contains("cwKeyer.loop")) {
-        cwKeyerSettings.m_loop = apiCwKeyerSettings->getLoop() != 0;
-    }
-    if (channelSettingsKeys.contains("cwKeyer.mode")) {
-        cwKeyerSettings.m_mode = (CWKeyerSettings::CWMode) apiCwKeyerSettings->getMode();
-    }
-    if (channelSettingsKeys.contains("cwKeyer.text")) {
-        cwKeyerSettings.m_text = *apiCwKeyerSettings->getText();
-    }
-    if (channelSettingsKeys.contains("cwKeyer.sampleRate")) {
-        cwKeyerSettings.m_sampleRate = apiCwKeyerSettings->getSampleRate();
-    }
-    if (channelSettingsKeys.contains("cwKeyer.wpm")) {
-        cwKeyerSettings.m_wpm = apiCwKeyerSettings->getWpm();
-    }
-    if (channelSettingsKeys.contains("cwKeyer.keyboardIambic")) {
-        cwKeyerSettings.m_wpm = apiCwKeyerSettings->getKeyboardIambic() != 0;
-    }
-    if (channelSettingsKeys.contains("cwKeyer.dotKey")) {
-        cwKeyerSettings.m_dotKey = (Qt::Key) apiCwKeyerSettings->getDotKey();
-    }
-    if (channelSettingsKeys.contains("cwKeyer.dotKeyModifiers")) {
-        cwKeyerSettings.m_dotKeyModifiers = (Qt::KeyboardModifiers) apiCwKeyerSettings->getDotKeyModifiers();
-    }
-    if (channelSettingsKeys.contains("cwKeyer.dashKey")) {
-        cwKeyerSettings.m_dashKey = (Qt::Key) apiCwKeyerSettings->getDashKey();
-    }
-    if (channelSettingsKeys.contains("cwKeyer.dashKeyModifiers")) {
-        cwKeyerSettings.m_dashKeyModifiers = (Qt::KeyboardModifiers) apiCwKeyerSettings->getDashKeyModifiers();
-    }
+    cwKeyerSettings.updateFrom(channelSettingsKeys, apiCwKeyerSettings);
 }
 
 void CWKeyer::webapiFormatChannelSettings(
@@ -639,20 +621,5 @@ void CWKeyer::webapiFormatChannelSettings(
     const CWKeyerSettings& cwKeyerSettings
 )
 {
-    apiCwKeyerSettings->setLoop(cwKeyerSettings.m_loop ? 1 : 0);
-    apiCwKeyerSettings->setMode((int) cwKeyerSettings.m_mode);
-    apiCwKeyerSettings->setSampleRate(cwKeyerSettings.m_sampleRate);
-
-    if (apiCwKeyerSettings->getText()) {
-        *apiCwKeyerSettings->getText() = cwKeyerSettings.m_text;
-    } else {
-        apiCwKeyerSettings->setText(new QString(cwKeyerSettings.m_text));
-    }
-
-    apiCwKeyerSettings->setWpm(cwKeyerSettings.m_wpm);
-    apiCwKeyerSettings->setKeyboardIambic(cwKeyerSettings.m_keyboardIambic ? 1 : 0);
-    apiCwKeyerSettings->setDotKey((int) cwKeyerSettings.m_dotKey);
-    apiCwKeyerSettings->setDotKeyModifiers((unsigned int) cwKeyerSettings.m_dotKeyModifiers);
-    apiCwKeyerSettings->setDashKey((int) cwKeyerSettings.m_dashKey);
-    apiCwKeyerSettings->setDashKeyModifiers((unsigned int) cwKeyerSettings.m_dashKeyModifiers);
+    cwKeyerSettings.formatTo(apiCwKeyerSettings);
 }

@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,10 +25,11 @@
 #include <QMutex>
 #include <QWaitCondition>
 #include <libbladeRF.h>
-#include "dsp/samplesourcefifo.h"
 #include "dsp/interpolators.h"
 
 #define BLADERFOUTPUT_BLOCKSIZE (1<<16)
+
+class SampleSourceFifo;
 
 class Bladerf1OutputThread : public QThread {
 	Q_OBJECT
@@ -54,6 +58,7 @@ private:
 
 	void run();
 	void callback(qint16* buf, qint32 len);
+    void callbackPart(qint16* buf, SampleVector& data, unsigned int iBegin, unsigned int iEnd);
 };
 
 #endif // INCLUDE_BLADERFOUTPUTTHREAD_H

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2019-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,224 +19,112 @@
 
 #include "filesource.h"
 
-#if (defined _WIN32_) || (defined _MSC_VER)
-#include "windows_time.h"
-#include <stdint.h>
-#else
-#include <sys/time.h>
-#include <unistd.h>
-#endif
-
 #include <QDebug>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QBuffer>
+#include <QThread>
 
 #include "SWGChannelSettings.h"
+#include "SWGWorkspaceInfo.h"
 #include "SWGChannelReport.h"
+#include "SWGChannelActions.h"
 #include "SWGFileSourceReport.h"
 
 #include "device/deviceapi.h"
 #include "dsp/dspcommands.h"
-#include "dsp/devicesamplesink.h"
-#include "dsp/upchannelizer.h"
-#include "dsp/threadedbasebandsamplesource.h"
 #include "dsp/hbfilterchainconverter.h"
-#include "dsp/filerecord.h"
+#include "settings/serializable.h"
 #include "util/db.h"
+#include "maincore.h"
 
-MESSAGE_CLASS_DEFINITION(FileSource::MsgConfigureChannelizer, Message)
-MESSAGE_CLASS_DEFINITION(FileSource::MsgSampleRateNotification, Message)
+#include "filesourcebaseband.h"
+#include "filesourcereport.h"
+
 MESSAGE_CLASS_DEFINITION(FileSource::MsgConfigureFileSource, Message)
-MESSAGE_CLASS_DEFINITION(FileSource::MsgConfigureFileSourceName, Message)
 MESSAGE_CLASS_DEFINITION(FileSource::MsgConfigureFileSourceWork, Message)
 MESSAGE_CLASS_DEFINITION(FileSource::MsgConfigureFileSourceStreamTiming, Message)
 MESSAGE_CLASS_DEFINITION(FileSource::MsgConfigureFileSourceSeek, Message)
 MESSAGE_CLASS_DEFINITION(FileSource::MsgReportFileSourceAcquisition, Message)
-MESSAGE_CLASS_DEFINITION(FileSource::MsgPlayPause, Message)
-MESSAGE_CLASS_DEFINITION(FileSource::MsgReportFileSourceStreamData, Message)
-MESSAGE_CLASS_DEFINITION(FileSource::MsgReportFileSourceStreamTiming, Message)
-MESSAGE_CLASS_DEFINITION(FileSource::MsgReportHeaderCRC, Message)
 
-const QString FileSource::m_channelIdURI = "sdrangel.channeltx.filesource";
-const QString FileSource::m_channelId ="FileSource";
+const char* const FileSource::m_channelIdURI = "sdrangel.channeltx.filesource";
+const char* const FileSource::m_channelId ="FileSource";
 
 FileSource::FileSource(DeviceAPI *deviceAPI) :
     ChannelAPI(m_channelIdURI, ChannelAPI::StreamSingleSource),
     m_deviceAPI(deviceAPI),
-	m_fileName("..."),
-	m_sampleSize(0),
-	m_centerFrequency(0),
-    m_frequencyOffset(0),
-    m_fileSampleRate(0),
-    m_samplesCount(0),
-	m_sampleRate(0),
-    m_deviceSampleRate(0),
-	m_recordLength(0),
-    m_startingTimeStamp(0),
-    m_running(false)
+	m_frequencyOffset(0),
+	m_basebandSampleRate(0)
 {
     setObjectName(m_channelId);
 
-    m_channelizer = new UpChannelizer(this);
-    m_threadedChannelizer = new ThreadedBasebandSampleSource(m_channelizer, this);
-    m_deviceAPI->addChannelSource(m_threadedChannelizer);
+    m_thread = new QThread(this);
+    m_basebandSource = new FileSourceBaseband();
+    m_basebandSource->moveToThread(m_thread);
+
+    applySettings(m_settings, true);
+
+    m_deviceAPI->addChannelSource(this);
     m_deviceAPI->addChannelSourceAPI(this);
 
     m_networkManager = new QNetworkAccessManager();
-    connect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
-
-    m_linearGain = 1.0f;
-	m_magsq = 0.0f;
-	m_magsqSum = 0.0f;
-	m_magsqPeak = 0.0f;
-	m_magsqCount = 0;
+    QObject::connect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &FileSource::networkManagerFinished
+    );
 }
 
 FileSource::~FileSource()
 {
-    disconnect(m_networkManager, SIGNAL(finished(QNetworkReply*)), this, SLOT(networkManagerFinished(QNetworkReply*)));
+    QObject::disconnect(
+        m_networkManager,
+        &QNetworkAccessManager::finished,
+        this,
+        &FileSource::networkManagerFinished
+    );
     delete m_networkManager;
     m_deviceAPI->removeChannelSourceAPI(this);
-    m_deviceAPI->removeChannelSource(m_threadedChannelizer);
-    delete m_threadedChannelizer;
-    delete m_channelizer;
+    m_deviceAPI->removeChannelSource(this);
+    delete m_basebandSource;
+    delete m_thread;
 }
 
-void FileSource::pull(Sample& sample)
+void FileSource::setDeviceAPI(DeviceAPI *deviceAPI)
 {
-    Real re;
-    Real im;
-
-    struct Sample16
+    if (deviceAPI != m_deviceAPI)
     {
-        int16_t real;
-        int16_t imag;
-    };
-
-    struct Sample24
-    {
-        int32_t real;
-        int32_t imag;
-    };
-
-    if (!m_running)
-    {
-        re = 0;
-        im = 0;
+        m_deviceAPI->removeChannelSourceAPI(this);
+        m_deviceAPI->removeChannelSource(this);
+        m_deviceAPI = deviceAPI;
+        m_deviceAPI->addChannelSource(this);
+        m_deviceAPI->addChannelSinkAPI(this);
     }
-	else if (m_sampleSize == 16)
-	{
-        Sample16 sample16;
-        m_ifstream.read(reinterpret_cast<char*>(&sample16), sizeof(Sample16));
-
-        if (m_ifstream.eof()) {
-            handleEOF();
-        } else {
-            m_samplesCount++;
-        }
-
-        // scale to +/-1.0
-        re = (sample16.real * m_linearGain) / 32760.0f;
-        im = (sample16.imag * m_linearGain) / 32760.0f;
-    }
-    else if (m_sampleSize == 24)
-    {
-        Sample24 sample24;
-        m_ifstream.read(reinterpret_cast<char*>(&sample24), sizeof(Sample24));
-
-        if (m_ifstream.eof()) {
-            handleEOF();
-        } else {
-            m_samplesCount++;
-        }
-
-        // scale to +/-1.0
-        re = (sample24.real * m_linearGain) / 8388608.0f;
-        im = (sample24.imag * m_linearGain) / 8388608.0f;
-    }
-    else
-    {
-        re = 0;
-        im = 0;
-    }
-
-
-    if (SDR_TX_SAMP_SZ == 16)
-    {
-        sample.setReal(re * 32768.0f);
-        sample.setImag(im * 32768.0f);
-    }
-    else if (SDR_TX_SAMP_SZ == 24)
-    {
-        sample.setReal(re * 8388608.0f);
-        sample.setImag(im * 8388608.0f);
-    }
-    else
-    {
-        sample.setReal(0);
-        sample.setImag(0);
-    }
-
-    Real magsq = re*re + im*im;
-    m_movingAverage(magsq);
-    m_magsq = m_movingAverage.asDouble();
-    m_magsqSum += magsq;
-
-    if (magsq > m_magsqPeak) {
-        m_magsqPeak = magsq;
-    }
-
-    m_magsqCount++;
-}
-
-void FileSource::pullAudio(int nbSamples)
-{
-    (void) nbSamples;
 }
 
 void FileSource::start()
 {
-    qDebug("FileSource::start");
-    m_running = true;
-
-	if (getMessageQueueToGUI())
-    {
-        MsgReportFileSourceAcquisition *report = MsgReportFileSourceAcquisition::create(true); // acquisition on
-        getMessageQueueToGUI()->push(report);
-	}
+	qDebug("FileSource::start");
+    m_basebandSource->reset();
+    m_thread->start();
 }
 
 void FileSource::stop()
 {
     qDebug("FileSource::stop");
-    m_running = false;
+	m_thread->exit();
+	m_thread->wait();
+}
 
-	if (getMessageQueueToGUI())
-    {
-        MsgReportFileSourceAcquisition *report = MsgReportFileSourceAcquisition::create(false); // acquisition off
-        getMessageQueueToGUI()->push(report);
-	}
+void FileSource::pull(SampleVector::iterator& begin, unsigned int nbSamples)
+{
+    m_basebandSource->pull(begin, nbSamples);
 }
 
 bool FileSource::handleMessage(const Message& cmd)
 {
-	if (UpChannelizer::MsgChannelizerNotification::match(cmd))
-	{
-		UpChannelizer::MsgChannelizerNotification& notif = (UpChannelizer::MsgChannelizerNotification&) cmd;
-        int sampleRate = notif.getSampleRate();
-
-        qDebug() << "FileSource::handleMessage: MsgChannelizerNotification:"
-                << " channelSampleRate: " << sampleRate
-                << " offsetFrequency: " << notif.getFrequencyOffset();
-
-        if (sampleRate > 0) {
-            setSampleRate(sampleRate);
-        }
-
-		return true;
-	}
-    else if (DSPSignalNotification::match(cmd))
+    if (DSPSignalNotification::match(cmd))
     {
         DSPSignalNotification& notif = (DSPSignalNotification&) cmd;
 
@@ -242,19 +132,19 @@ bool FileSource::handleMessage(const Message& cmd)
                 << " inputSampleRate: " << notif.getSampleRate()
                 << " centerFrequency: " << notif.getCenterFrequency();
 
-        setCenterFrequency(notif.getCenterFrequency());
-        m_deviceSampleRate = notif.getSampleRate();
+        m_basebandSampleRate = notif.getSampleRate();
         calculateFrequencyOffset(); // This is when device sample rate changes
+        setCenterFrequency(notif.getCenterFrequency());
 
-        // Redo the channelizer stuff with the new sample rate to re-synchronize everything
-        m_channelizer->set(m_channelizer->getInputMessageQueue(),
-            m_settings.m_log2Interp,
-            m_settings.m_filterChainHash);
+        // Notify source of input sample rate change
+        qDebug() << "FileSource::handleMessage: DSPSignalNotification: push to source";
+        DSPSignalNotification *sig = new DSPSignalNotification(notif);
+        m_basebandSource->getInputMessageQueue()->push(sig);
 
         if (m_guiMessageQueue)
         {
-            MsgSampleRateNotification *msg = MsgSampleRateNotification::create(notif.getSampleRate());
-            m_guiMessageQueue->push(msg);
+            qDebug() << "FileSource::handleMessage: DSPSignalNotification: push to GUI";
+            m_guiMessageQueue->push(new DSPSignalNotification(notif));
         }
 
         return true;
@@ -266,58 +156,28 @@ bool FileSource::handleMessage(const Message& cmd)
         applySettings(cfg.getSettings(), cfg.getForce());
         return true;
     }
-    else if (MsgConfigureChannelizer::match(cmd))
-    {
-        MsgConfigureChannelizer& cfg = (MsgConfigureChannelizer&) cmd;
-        m_settings.m_log2Interp = cfg.getLog2Interp();
-        m_settings.m_filterChainHash =  cfg.getFilterChainHash();
-
-        qDebug() << "FileSource::handleMessage: MsgConfigureChannelizer:"
-                << " log2Interp: " << m_settings.m_log2Interp
-                << " filterChainHash: " << m_settings.m_filterChainHash;
-
-        m_channelizer->set(m_channelizer->getInputMessageQueue(),
-            m_settings.m_log2Interp,
-            m_settings.m_filterChainHash);
-
-        calculateFrequencyOffset(); // This is when decimation or filter chain changes
-
-        return true;
-    }
-    else if (MsgConfigureFileSourceName::match(cmd))
-	{
-		MsgConfigureFileSourceName& conf = (MsgConfigureFileSourceName&) cmd;
-		m_fileName = conf.getFileName();
-		openFileStream();
-		return true;
-	}
 	else if (MsgConfigureFileSourceWork::match(cmd))
 	{
 		MsgConfigureFileSourceWork& conf = (MsgConfigureFileSourceWork&) cmd;
-
-        if (conf.isWorking()) {
-            start();
-        } else {
-            stop();
-        }
+        FileSourceBaseband::MsgConfigureFileSourceWork *msg = FileSourceBaseband::MsgConfigureFileSourceWork::create(conf.isWorking());
+        m_basebandSource->getInputMessageQueue()->push(msg);
 
 		return true;
 	}
 	else if (MsgConfigureFileSourceSeek::match(cmd))
 	{
 		MsgConfigureFileSourceSeek& conf = (MsgConfigureFileSourceSeek&) cmd;
-		int seekMillis = conf.getMillis();
-		seekFileStream(seekMillis);
+        FileSourceBaseband::MsgConfigureFileSourceSeek *msg = FileSourceBaseband::MsgConfigureFileSourceSeek::create(conf.getMillis());
+        m_basebandSource->getInputMessageQueue()->push(msg);
 
 		return true;
 	}
 	else if (MsgConfigureFileSourceStreamTiming::match(cmd))
 	{
-		MsgReportFileSourceStreamTiming *report;
-
         if (getMessageQueueToGUI())
         {
-            report = MsgReportFileSourceStreamTiming::create(getSamplesCount());
+            FileSourceReport::MsgReportFileSourceStreamTiming *report =
+                FileSourceReport::MsgReportFileSourceStreamTiming::create(m_basebandSource->getSamplesCount());
             getMessageQueueToGUI()->push(report);
         }
 
@@ -352,135 +212,68 @@ bool FileSource::deserialize(const QByteArray& data)
     }
 }
 
-void FileSource::openFileStream()
-{
-	//stop();
-
-	if (m_ifstream.is_open()) {
-		m_ifstream.close();
-	}
-
-#ifdef Q_OS_WIN
-	m_ifstream.open(m_fileName.toStdWString().c_str(), std::ios::binary | std::ios::ate);
-#else
-	m_ifstream.open(m_fileName.toStdString().c_str(), std::ios::binary | std::ios::ate);
-#endif
-	quint64 fileSize = m_ifstream.tellg();
-    m_samplesCount = 0;
-
-	if (fileSize > sizeof(FileRecord::Header))
-	{
-	    FileRecord::Header header;
-	    m_ifstream.seekg(0,std::ios_base::beg);
-		bool crcOK = FileRecord::readHeader(m_ifstream, header);
-		m_fileSampleRate = header.sampleRate;
-		m_centerFrequency = header.centerFrequency;
-		m_startingTimeStamp = header.startTimeStamp;
-		m_sampleSize = header.sampleSize;
-		QString crcHex = QString("%1").arg(header.crc32 , 0, 16);
-
-	    if (crcOK)
-	    {
-	        qDebug("FileSource::openFileStream: CRC32 OK for header: %s", qPrintable(crcHex));
-	        m_recordLength = (fileSize - sizeof(FileRecord::Header)) / ((m_sampleSize == 24 ? 8 : 4) * m_fileSampleRate);
-	    }
-	    else
-	    {
-	        qCritical("FileSource::openFileStream: bad CRC32 for header: %s", qPrintable(crcHex));
-	        m_recordLength = 0;
-	    }
-
-		if (getMessageQueueToGUI()) {
-			MsgReportHeaderCRC *report = MsgReportHeaderCRC::create(crcOK);
-			getMessageQueueToGUI()->push(report);
-		}
-	}
-	else
-	{
-		m_recordLength = 0;
-	}
-
-	qDebug() << "FileSource::openFileStream: " << m_fileName.toStdString().c_str()
-			<< " fileSize: " << fileSize << " bytes"
-			<< " length: " << m_recordLength << " seconds"
-			<< " sample rate: " << m_fileSampleRate << " S/s"
-			<< " center frequency: " << m_centerFrequency << " Hz"
-			<< " sample size: " << m_sampleSize << " bits"
-            << " starting TS: " << m_startingTimeStamp << "s";
-
-	if (getMessageQueueToGUI()) {
-	    MsgReportFileSourceStreamData *report = MsgReportFileSourceStreamData::create(m_fileSampleRate,
-	            m_sampleSize,
-	            m_centerFrequency,
-	            m_startingTimeStamp,
-	            m_recordLength); // file stream data
-	    getMessageQueueToGUI()->push(report);
-	}
-
-	if (m_recordLength == 0) {
-	    m_ifstream.close();
-	}
-}
-
-void FileSource::seekFileStream(int seekMillis)
-{
-	QMutexLocker mutexLocker(&m_mutex);
-
-	if ((m_ifstream.is_open()) && !m_running)
-	{
-        quint64 seekPoint = ((m_recordLength * seekMillis) / 1000) * m_fileSampleRate;
-        m_samplesCount = seekPoint;
-        seekPoint *= (m_sampleSize == 24 ? 8 : 4); // + sizeof(FileSink::Header)
-		m_ifstream.clear();
-		m_ifstream.seekg(seekPoint + sizeof(FileRecord::Header), std::ios::beg);
-	}
-}
-
-void FileSource::handleEOF()
-{
-    if (getMessageQueueToGUI())
-    {
-        MsgReportFileSourceStreamTiming *report = MsgReportFileSourceStreamTiming::create(getSamplesCount());
-        getMessageQueueToGUI()->push(report);
-    }
-
-    if (m_settings.m_loop)
-    {
-        stop();
-        seekFileStream(0);
-        start();
-    }
-    else
-    {
-        stop();
-
-        if (getMessageQueueToGUI())
-        {
-            MsgPlayPause *report = MsgPlayPause::create(false);
-            getMessageQueueToGUI()->push(report);
-        }
-    }
-}
-
 void FileSource::applySettings(const FileSourceSettings& settings, bool force)
 {
     qDebug() << "FileSource::applySettings:"
-            << " force: " << force;
+        << "m_fileName:" << settings.m_fileName
+        << "m_loop:" << settings.m_loop
+        << "m_gainDB:" << settings.m_gainDB
+        << "m_log2Interp:" << settings.m_log2Interp
+        << "m_filterChainHash:" << settings.m_filterChainHash
+        << "m_useReverseAPI:" << settings.m_useReverseAPI
+        << "m_reverseAPIAddress:" << settings.m_reverseAPIAddress
+        << "m_reverseAPIChannelIndex:" << settings.m_reverseAPIChannelIndex
+        << "m_reverseAPIDeviceIndex:" << settings.m_reverseAPIDeviceIndex
+        << "m_reverseAPIPort:" << settings.m_reverseAPIPort
+        << "m_rgbColor:" << settings.m_rgbColor
+        << "m_title:" << settings.m_title
+        << " force: " << force;
 
     QList<QString> reverseAPIKeys;
+
+    if ((m_settings.m_fileName != settings.m_fileName) || force)
+    {
+        reverseAPIKeys.append("fileName");
+        FileSourceBaseband::MsgConfigureFileSourceName *msg = FileSourceBaseband::MsgConfigureFileSourceName::create(settings.m_fileName);
+        m_basebandSource->getInputMessageQueue()->push(msg);
+    }
 
     if ((m_settings.m_loop != settings.m_loop) || force) {
         reverseAPIKeys.append("loop");
     }
-    if ((m_settings.m_fileName != settings.m_fileName) || force) {
-        reverseAPIKeys.append("fileName");
+    if ((m_settings.m_log2Interp != settings.m_log2Interp) || force) {
+        reverseAPIKeys.append("log2Interp");
     }
-
-    if ((m_settings.m_gainDB != settings.m_gainDB) || force)
-    {
-        m_linearGain = CalcDb::powerFromdB(settings.m_gainDB);
+    if ((m_settings.m_filterChainHash != settings.m_filterChainHash) || force) {
+        reverseAPIKeys.append("filterChainHash");
+    }
+    if ((m_settings.m_gainDB != settings.m_gainDB) || force) {
         reverseAPIKeys.append("gainDB");
     }
+    if ((m_settings.m_rgbColor != settings.m_rgbColor) || force) {
+        reverseAPIKeys.append("rgbColor");
+    }
+    if ((m_settings.m_title != settings.m_title) || force) {
+        reverseAPIKeys.append("title");
+    }
+
+    if (m_settings.m_streamIndex != settings.m_streamIndex)
+    {
+        if (m_deviceAPI->getSampleMIMO()) // change of stream is possible for MIMO devices only
+        {
+            m_deviceAPI->removeChannelSourceAPI(this);
+            m_deviceAPI->removeChannelSource(this, m_settings.m_streamIndex);
+            m_deviceAPI->addChannelSource(this, settings.m_streamIndex);
+            m_deviceAPI->addChannelSourceAPI(this);
+            m_settings.m_streamIndex = settings.m_streamIndex; // make sure ChannelAPI::getStreamIndex() is consistent
+            emit streamIndexChanged(settings.m_streamIndex);
+        }
+
+        reverseAPIKeys.append("streamIndex");
+    }
+
+    FileSourceBaseband::MsgConfigureFileSourceBaseband *msg = FileSourceBaseband::MsgConfigureFileSourceBaseband::create(settings, force);
+    m_basebandSource->getInputMessageQueue()->push(msg);
 
     if (settings.m_useReverseAPI)
     {
@@ -490,6 +283,13 @@ void FileSource::applySettings(const FileSourceSettings& settings, bool force)
                 (m_settings.m_reverseAPIDeviceIndex != settings.m_reverseAPIDeviceIndex) ||
                 (m_settings.m_reverseAPIChannelIndex != settings.m_reverseAPIChannelIndex);
         webapiReverseSendSettings(reverseAPIKeys, settings, fullUpdate || force);
+    }
+
+    QList<ObjectPipe*> pipes;
+    MainCore::instance()->getMessagePipes().getMessagePipes(this, "settings", pipes);
+
+    if (pipes.size() > 0) {
+        sendChannelSettings(pipes, reverseAPIKeys, settings, force);
     }
 
     m_settings = settings;
@@ -509,7 +309,7 @@ void FileSource::validateFilterChainHash(FileSourceSettings& settings)
 void FileSource::calculateFrequencyOffset()
 {
     double shiftFactor = HBFilterChainConverter::getShiftFactor(m_settings.m_log2Interp, m_settings.m_filterChainHash);
-    m_frequencyOffset = m_deviceSampleRate * shiftFactor;
+    m_frequencyOffset = m_basebandSampleRate * shiftFactor;
 }
 
 int FileSource::webapiSettingsGet(
@@ -523,6 +323,15 @@ int FileSource::webapiSettingsGet(
     return 200;
 }
 
+int FileSource::webapiWorkspaceGet(
+        SWGSDRangel::SWGWorkspaceInfo& response,
+        QString& errorMessage)
+{
+    (void) errorMessage;
+    response.setIndex(m_settings.m_workspaceIndex);
+    return 200;
+}
+
 int FileSource::webapiSettingsPutPatch(
         bool force,
         const QStringList& channelSettingsKeys,
@@ -531,41 +340,7 @@ int FileSource::webapiSettingsPutPatch(
 {
     (void) errorMessage;
     FileSourceSettings settings = m_settings;
-
-    if (channelSettingsKeys.contains("log2Interp")) {
-        settings.m_log2Interp = response.getFileSourceSettings()->getLog2Interp();
-    }
-
-    if (channelSettingsKeys.contains("filterChainHash"))
-    {
-        settings.m_filterChainHash = response.getFileSourceSettings()->getFilterChainHash();
-        validateFilterChainHash(settings);
-    }
-
-    if (channelSettingsKeys.contains("rgbColor")) {
-        settings.m_rgbColor = response.getFileSourceSettings()->getRgbColor();
-    }
-    if (channelSettingsKeys.contains("title")) {
-        settings.m_title = *response.getFileSourceSettings()->getTitle();
-    }
-    if (channelSettingsKeys.contains("gainDB")) {
-        settings.m_gainDB = response.getFileSourceSettings()->getGainDb();
-    }
-    if (channelSettingsKeys.contains("useReverseAPI")) {
-        settings.m_useReverseAPI = response.getFileSourceSettings()->getUseReverseApi() != 0;
-    }
-    if (channelSettingsKeys.contains("reverseAPIAddress")) {
-        settings.m_reverseAPIAddress = *response.getFileSourceSettings()->getReverseApiAddress();
-    }
-    if (channelSettingsKeys.contains("reverseAPIPort")) {
-        settings.m_reverseAPIPort = response.getFileSourceSettings()->getReverseApiPort();
-    }
-    if (channelSettingsKeys.contains("reverseAPIDeviceIndex")) {
-        settings.m_reverseAPIDeviceIndex = response.getFileSourceSettings()->getReverseApiDeviceIndex();
-    }
-    if (channelSettingsKeys.contains("reverseAPIChannelIndex")) {
-        settings.m_reverseAPIChannelIndex = response.getFileSourceSettings()->getReverseApiChannelIndex();
-    }
+    webapiUpdateChannelSettings(settings, channelSettingsKeys, response);
 
     MsgConfigureFileSource *msg = MsgConfigureFileSource::create(settings, force);
     m_inputMessageQueue.push(msg);
@@ -582,6 +357,62 @@ int FileSource::webapiSettingsPutPatch(
     return 200;
 }
 
+void FileSource::webapiUpdateChannelSettings(
+        FileSourceSettings& settings,
+        const QStringList& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings& response)
+{
+    if (channelSettingsKeys.contains("fileName")) {
+        settings.m_fileName = *response.getFileSourceSettings()->getFileName();
+    }
+    if (channelSettingsKeys.contains("loop")) {
+        settings.m_loop = response.getFileSourceSettings()->getLoop() != 0;
+    }
+    if (channelSettingsKeys.contains("log2Interp")) {
+        settings.m_log2Interp = response.getFileSourceSettings()->getLog2Interp();
+    }
+
+    if (channelSettingsKeys.contains("filterChainHash"))
+    {
+        settings.m_filterChainHash = response.getFileSourceSettings()->getFilterChainHash();
+        validateFilterChainHash(settings);
+    }
+
+    if (channelSettingsKeys.contains("gainDB")) {
+        settings.m_gainDB = response.getFileSourceSettings()->getGainDb();
+    }
+    if (channelSettingsKeys.contains("rgbColor")) {
+        settings.m_rgbColor = response.getFileSourceSettings()->getRgbColor();
+    }
+    if (channelSettingsKeys.contains("title")) {
+        settings.m_title = *response.getFileSourceSettings()->getTitle();
+    }
+    if (channelSettingsKeys.contains("streamIndex")) {
+        settings.m_streamIndex = response.getFileSourceSettings()->getStreamIndex();
+    }
+    if (channelSettingsKeys.contains("useReverseAPI")) {
+        settings.m_useReverseAPI = response.getFileSourceSettings()->getUseReverseApi() != 0;
+    }
+    if (channelSettingsKeys.contains("reverseAPIAddress")) {
+        settings.m_reverseAPIAddress = *response.getFileSourceSettings()->getReverseApiAddress();
+    }
+    if (channelSettingsKeys.contains("reverseAPIPort")) {
+        settings.m_reverseAPIPort = response.getFileSourceSettings()->getReverseApiPort();
+    }
+    if (channelSettingsKeys.contains("reverseAPIDeviceIndex")) {
+        settings.m_reverseAPIDeviceIndex = response.getFileSourceSettings()->getReverseApiDeviceIndex();
+    }
+    if (channelSettingsKeys.contains("reverseAPIChannelIndex")) {
+        settings.m_reverseAPIChannelIndex = response.getFileSourceSettings()->getReverseApiChannelIndex();
+    }
+    if (settings.m_channelMarker && channelSettingsKeys.contains("channelMarker")) {
+        settings.m_channelMarker->updateFrom(channelSettingsKeys, response.getFileSourceSettings()->getChannelMarker());
+    }
+    if (settings.m_rollupState && channelSettingsKeys.contains("rollupState")) {
+        settings.m_rollupState->updateFrom(channelSettingsKeys, response.getFileSourceSettings()->getRollupState());
+    }
+}
+
 int FileSource::webapiReportGet(
         SWGSDRangel::SWGChannelReport& response,
         QString& errorMessage)
@@ -593,8 +424,61 @@ int FileSource::webapiReportGet(
     return 200;
 }
 
+int FileSource::webapiActionsPost(
+        const QStringList& channelActionsKeys,
+        SWGSDRangel::SWGChannelActions& query,
+        QString& errorMessage)
+{
+    SWGSDRangel::SWGFileSourceActions *swgFileSourceActions = query.getFileSourceActions();
+
+    if (swgFileSourceActions)
+    {
+        if (channelActionsKeys.contains("play"))
+        {
+            bool play = swgFileSourceActions->getPlay() != 0;
+            FileSourceBaseband::MsgConfigureFileSourceWork *msg = FileSourceBaseband::MsgConfigureFileSourceWork::create(play);
+            m_basebandSource->getInputMessageQueue()->push(msg);
+
+            if (getMessageQueueToGUI())
+            {
+                MsgConfigureFileSourceWork *msgToGUI = MsgConfigureFileSourceWork::create(play);
+                getMessageQueueToGUI()->push(msgToGUI);
+            }
+        }
+
+        if (channelActionsKeys.contains("seekMillis"))
+        {
+            int seekMillis = swgFileSourceActions->getSeekMillis();
+            seekMillis = seekMillis < 0 ? 0 : seekMillis > 1000 ? 1000 : seekMillis;
+            FileSourceBaseband::MsgConfigureFileSourceSeek *msg
+                = FileSourceBaseband::MsgConfigureFileSourceSeek::create(seekMillis);
+            m_basebandSource->getInputMessageQueue()->push(msg);
+
+            if (getMessageQueueToGUI())
+            {
+        		MsgConfigureFileSourceSeek *msgToGUI = MsgConfigureFileSourceSeek::create(seekMillis);
+                getMessageQueueToGUI()->push(msgToGUI);
+            }
+        }
+
+        return 202;
+    }
+    else
+    {
+        errorMessage = "Missing FileSourceActions in query";
+        return 400;
+    }
+}
+
 void FileSource::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& response, const FileSourceSettings& settings)
 {
+    if (response.getFileSourceSettings()->getFileName()) {
+        *response.getFileSourceSettings()->getFileName() = settings.m_fileName;
+    } else {
+        response.getFileSourceSettings()->setFileName(new QString(settings.m_fileName));
+    }
+
+    response.getFileSourceSettings()->setLoop(settings.m_loop ? 1 : 0);
     response.getFileSourceSettings()->setLog2Interp(settings.m_log2Interp);
     response.getFileSourceSettings()->setFilterChainHash(settings.m_filterChainHash);
     response.getFileSourceSettings()->setGainDb(settings.m_gainDB);
@@ -617,18 +501,50 @@ void FileSource::webapiFormatChannelSettings(SWGSDRangel::SWGChannelSettings& re
     response.getFileSourceSettings()->setReverseApiPort(settings.m_reverseAPIPort);
     response.getFileSourceSettings()->setReverseApiDeviceIndex(settings.m_reverseAPIDeviceIndex);
     response.getFileSourceSettings()->setReverseApiChannelIndex(settings.m_reverseAPIChannelIndex);
+
+    if (settings.m_channelMarker)
+    {
+        if (response.getFileSourceSettings()->getChannelMarker())
+        {
+            settings.m_channelMarker->formatTo(response.getFileSourceSettings()->getChannelMarker());
+        }
+        else
+        {
+            SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+            settings.m_channelMarker->formatTo(swgChannelMarker);
+            response.getFileSourceSettings()->setChannelMarker(swgChannelMarker);
+        }
+    }
+
+    if (settings.m_rollupState)
+    {
+        if (response.getFileSourceSettings()->getRollupState())
+        {
+            settings.m_rollupState->formatTo(response.getFileSourceSettings()->getRollupState());
+        }
+        else
+        {
+            SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+            settings.m_rollupState->formatTo(swgRollupState);
+            response.getFileSourceSettings()->setRollupState(swgRollupState);
+        }
+    }
 }
 
 void FileSource::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& response)
 {
     qint64 t_sec = 0;
     qint64 t_msec = 0;
-    quint64 samplesCount = getSamplesCount();
+    quint64 samplesCount = m_basebandSource->getSamplesCount();
+    uint32_t fileSampleRate = m_basebandSource->getFileSampleRate();
+    quint64 startingTimeStamp = m_basebandSource->getStartingTimeStamp();
+    quint64 fileRecordLength = m_basebandSource->getRecordLengthMuSec() / 1000000UL;
+    quint32 fileSampleSize = m_basebandSource->getFileSampleSize();
 
-    if (m_fileSampleRate > 0)
+    if (fileSampleRate > 0)
     {
-        t_sec = samplesCount / m_fileSampleRate;
-        t_msec = (samplesCount - (t_sec * m_fileSampleRate)) * 1000 / m_fileSampleRate;
+        t_sec = samplesCount / fileSampleRate;
+        t_msec = (samplesCount - (t_sec * fileSampleRate)) * 1000 / fileSampleRate;
     }
 
     QTime t(0, 0, 0, 0);
@@ -636,30 +552,84 @@ void FileSource::webapiFormatChannelReport(SWGSDRangel::SWGChannelReport& respon
     t = t.addMSecs(t_msec);
     response.getFileSourceReport()->setElapsedTime(new QString(t.toString("HH:mm:ss.zzz")));
 
-    qint64 startingTimeStampMsec = m_startingTimeStamp * 1000LL;
+    qint64 startingTimeStampMsec = startingTimeStamp * 1000LL;
     QDateTime dt = QDateTime::fromMSecsSinceEpoch(startingTimeStampMsec);
     dt = dt.addSecs(t_sec);
     dt = dt.addMSecs(t_msec);
     response.getFileSourceReport()->setAbsoluteTime(new QString(dt.toString("yyyy-MM-dd HH:mm:ss.zzz")));
 
     QTime recordLength(0, 0, 0, 0);
-    recordLength = recordLength.addSecs(m_recordLength);
+    recordLength = recordLength.addSecs(fileRecordLength);
     response.getFileSourceReport()->setDurationTime(new QString(recordLength.toString("HH:mm:ss")));
 
     response.getFileSourceReport()->setFileName(new QString(m_settings.m_fileName));
-    response.getFileSourceReport()->setFileSampleRate(m_fileSampleRate);
-    response.getFileSourceReport()->setFileSampleSize(m_sampleSize);
-    response.getFileSourceReport()->setSampleRate(m_sampleRate);
+    response.getFileSourceReport()->setFileSampleRate(fileSampleRate);
+    response.getFileSourceReport()->setFileSampleSize(fileSampleSize);
+    response.getFileSourceReport()->setSampleRate(m_basebandSampleRate);
     response.getFileSourceReport()->setChannelPowerDb(CalcDb::dbPower(getMagSq()));
 }
 
 void FileSource::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, const FileSourceSettings& settings, bool force)
 {
     SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+    webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+
+    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
+            .arg(settings.m_reverseAPIAddress)
+            .arg(settings.m_reverseAPIPort)
+            .arg(settings.m_reverseAPIDeviceIndex)
+            .arg(settings.m_reverseAPIChannelIndex);
+    m_networkRequest.setUrl(QUrl(channelSettingsURL));
+    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QBuffer *buffer = new QBuffer();
+    buffer->open((QBuffer::ReadWrite));
+    buffer->write(swgChannelSettings->asJson().toUtf8());
+    buffer->seek(0);
+
+    // Always use PATCH to avoid passing reverse API settings
+    QNetworkReply *reply = m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
+    buffer->setParent(reply);
+
+    delete swgChannelSettings;
+}
+
+void FileSource::sendChannelSettings(
+    const QList<ObjectPipe*>& pipes,
+    QList<QString>& channelSettingsKeys,
+    const FileSourceSettings& settings,
+    bool force)
+{
+    for (const auto& pipe : pipes)
+    {
+        MessageQueue *messageQueue = qobject_cast<MessageQueue*>(pipe->m_element);
+
+        if (messageQueue)
+        {
+            SWGSDRangel::SWGChannelSettings *swgChannelSettings = new SWGSDRangel::SWGChannelSettings();
+            webapiFormatChannelSettings(channelSettingsKeys, swgChannelSettings, settings, force);
+            MainCore::MsgChannelSettings *msg = MainCore::MsgChannelSettings::create(
+                this,
+                channelSettingsKeys,
+                swgChannelSettings,
+                force
+            );
+            messageQueue->push(msg);
+        }
+    }
+}
+
+void FileSource::webapiFormatChannelSettings(
+        QList<QString>& channelSettingsKeys,
+        SWGSDRangel::SWGChannelSettings *swgChannelSettings,
+        const FileSourceSettings& settings,
+        bool force
+)
+{
     swgChannelSettings->setDirection(1); // single source (Tx)
     swgChannelSettings->setOriginatorChannelIndex(getIndexInDeviceSet());
     swgChannelSettings->setOriginatorDeviceSetIndex(getDeviceSetIndex());
-    swgChannelSettings->setChannelType(new QString("FileSource"));
+    swgChannelSettings->setChannelType(new QString(m_channelId));
     swgChannelSettings->setFileSourceSettings(new SWGSDRangel::SWGFileSourceSettings());
     SWGSDRangel::SWGFileSourceSettings *swgFileSourceSettings = swgChannelSettings->getFileSourceSettings();
 
@@ -680,24 +650,23 @@ void FileSource::webapiReverseSendSettings(QList<QString>& channelSettingsKeys, 
     if (channelSettingsKeys.contains("title") || force) {
         swgFileSourceSettings->setTitle(new QString(settings.m_title));
     }
+    if (channelSettingsKeys.contains("streamIndex") || force) {
+        swgFileSourceSettings->setStreamIndex(settings.m_streamIndex);
+    }
 
-    QString channelSettingsURL = QString("http://%1:%2/sdrangel/deviceset/%3/channel/%4/settings")
-            .arg(settings.m_reverseAPIAddress)
-            .arg(settings.m_reverseAPIPort)
-            .arg(settings.m_reverseAPIDeviceIndex)
-            .arg(settings.m_reverseAPIChannelIndex);
-    m_networkRequest.setUrl(QUrl(channelSettingsURL));
-    m_networkRequest.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    if (settings.m_channelMarker && (channelSettingsKeys.contains("channelMarker") || force))
+    {
+        SWGSDRangel::SWGChannelMarker *swgChannelMarker = new SWGSDRangel::SWGChannelMarker();
+        settings.m_channelMarker->formatTo(swgChannelMarker);
+        swgFileSourceSettings->setChannelMarker(swgChannelMarker);
+    }
 
-    QBuffer *buffer=new QBuffer();
-    buffer->open((QBuffer::ReadWrite));
-    buffer->write(swgChannelSettings->asJson().toUtf8());
-    buffer->seek(0);
-
-    // Always use PATCH to avoid passing reverse API settings
-    m_networkManager->sendCustomRequest(m_networkRequest, "PATCH", buffer);
-
-    delete swgChannelSettings;
+    if (settings.m_rollupState && (channelSettingsKeys.contains("rollupState") || force))
+    {
+        SWGSDRangel::SWGRollupState *swgRollupState = new SWGSDRangel::SWGRollupState();
+        settings.m_rollupState->formatTo(swgRollupState);
+        swgFileSourceSettings->setRollupState(swgRollupState);
+    }
 }
 
 void FileSource::networkManagerFinished(QNetworkReply *reply)
@@ -710,10 +679,33 @@ void FileSource::networkManagerFinished(QNetworkReply *reply)
                 << " error(" << (int) replyError
                 << "): " << replyError
                 << ": " << reply->errorString();
-        return;
+    }
+    else
+    {
+        QString answer = reply->readAll();
+        answer.chop(1); // remove last \n
+        qDebug("FileSource::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
     }
 
-    QString answer = reply->readAll();
-    answer.chop(1); // remove last \n
-    qDebug("FileSource::networkManagerFinished: reply:\n%s", answer.toStdString().c_str());
+    reply->deleteLater();
+}
+
+void FileSource::getMagSqLevels(double& avg, double& peak, int& nbSamples) const
+{
+    m_basebandSource->getMagSqLevels(avg, peak, nbSamples);
+}
+
+void FileSource::setMessageQueueToGUI(MessageQueue* queue) {
+    ChannelAPI::setMessageQueueToGUI(queue);
+    m_basebandSource->setMessageQueueToGUI(queue);
+}
+
+double FileSource::getMagSq() const
+{
+    return m_basebandSource->getMagSq();
+}
+
+uint32_t FileSource::getNumberOfDeviceStreams() const
+{
+    return m_deviceAPI->getNbSinkStreams();
 }

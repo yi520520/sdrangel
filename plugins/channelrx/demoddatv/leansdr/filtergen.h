@@ -1,18 +1,21 @@
-// This file is part of LeanSDR Copyright (C) 2016-2018 <pabr@pabr.org>.
-// See the toplevel README for more information.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2018-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>              //
+//                                                                                   //
+// This file is part of LeanSDR Copyright (C) 2016-2019 <pabr@pabr.org>.             //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 
 #ifndef LEANSDR_FILTERGEN_H
 #define LEANSDR_FILTERGEN_H
@@ -30,34 +33,50 @@ template <typename T>
 void normalize_power(int n, T *coeffs, float gain = 1)
 {
     float s2 = 0;
-    for (int i = 0; i < n; ++i)
-        s2 = s2 + coeffs[i] * coeffs[i]; // TBD complex
-    if (s2)
+
+    for (int i = 0; i < n; ++i) {
+        s2 = s2 + coeffs[i] * coeffs[i]; // TBD std::complex
+    }
+
+    if (s2) {
         gain /= gen_sqrt(s2);
-    for (int i = 0; i < n; ++i)
+    }
+
+    for (int i = 0; i < n; ++i) {
         coeffs[i] = coeffs[i] * gain;
+    }
 }
 
 template <typename T>
 void normalize_dcgain(int n, T *coeffs, float gain = 1)
 {
     float s = 0;
-    for (int i = 0; i < n; ++i)
+
+    for (int i = 0; i < n; ++i) {
         s = s + coeffs[i];
-    if (s)
+    }
+
+    if (s) {
         gain /= s;
-    for (int i = 0; i < n; ++i)
+    }
+
+    for (int i = 0; i < n; ++i) {
         coeffs[i] = coeffs[i] * gain;
+    }
 }
 
 template <typename T>
 void cancel_dcgain(int n, T *coeffs)
 {
     float s = 0;
-    for (int i = 0; i < n; ++i)
+
+    for (int i = 0; i < n; ++i) {
         s = s + coeffs[i];
-    for (int i = 0; i < n; ++i)
+    }
+
+    for (int i = 0; i < n; ++i) {
         coeffs[i] -= s / n;
+    }
 }
 
 // Generate coefficients for a sinc filter.
@@ -68,6 +87,7 @@ int lowpass(int order, float Fcut, T **coeffs, float gain = 1)
 {
     int ncoeffs = order + 1;
     *coeffs = new T[ncoeffs];
+
     for (int i = 0; i < ncoeffs; ++i)
     {
         float t = i - (ncoeffs - 1) * 0.5;
@@ -80,6 +100,7 @@ int lowpass(int order, float Fcut, T **coeffs, float gain = 1)
 #endif
         (*coeffs)[i] = sinc * window;
     }
+
     normalize_dcgain(ncoeffs, *coeffs, gain);
     return ncoeffs;
 }
@@ -88,29 +109,36 @@ int lowpass(int order, float Fcut, T **coeffs, float gain = 1)
 // https://en.wikipedia.org/wiki/Root-raised-cosine_filter
 
 template <typename T>
-int root_raised_cosine(int order, float Fs, float rolloff, T **coeffs)
+int root_raised_cosine(int order, float Fs, float rolloff, T **coeffs, float gain=1)
 {
     float B = rolloff, pi = M_PI;
     int ncoeffs = (order + 1) | 1;
     *coeffs = new T[ncoeffs];
+
     for (int i = 0; i < ncoeffs; ++i)
     {
         int t = i - ncoeffs / 2;
         float c;
+
         if (t == 0)
-            c = sqrt(Fs) * (1 - B + 4 * B / pi);
+        {
+            c = (1 - B + 4*B/pi);
+        }
         else
         {
             float tT = t * Fs;
             float den = pi * tT * (1 - (4 * B * tT) * (4 * B * tT));
-            if (!den)
-                c = B * sqrt(Fs / 2) * ((1 + 2 / pi) * sin(pi / (4 * B)) + (1 - 2 / pi) * cos(pi / (4 * B)));
-            else
-                c = sqrt(Fs) * (sin(pi * tT * (1 - B)) + 4 * B * tT * cos(pi * tT * (1 + B))) / den;
+
+            if (!den) {
+                c = B/sqrtf(2) * ( (1+2/pi)*sinf(pi/(4*B)) + (1-2/pi)*cosf(pi/(4*B)) );
+            } else {
+                c = ( sinf(pi*tT*(1-B)) + 4*B*tT*cosf(pi*tT*(1+B)) ) / den;
+            }
         }
-        (*coeffs)[i] = c;
+
+        (*coeffs)[i] = Fs * c * gain;
     }
-    normalize_dcgain(ncoeffs, *coeffs);
+
     return ncoeffs;
 }
 

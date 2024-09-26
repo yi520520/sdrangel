@@ -6,18 +6,16 @@ This plugin is designed to enable connection to publicly available [KiwiSDR](htt
 
 <h2>Interface</h2>
 
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
+
 ![KiwiSDR input plugin GUI](../../../doc/img/KiwiSDRInput_plugin.png)
 
 <h3>1: Start/Stop</h3>
 
-This button is used to start the "device" i.e connect to the remote and start stream or stop the "device" i.e. stop stream and disconnect from the remote. The button shows the following faces:
+This button is used to start the "device" i.e. connect to the remote and start stream or stop the "device" i.e. stop stream and disconnect from the remote. The button shows the following faces:
 
   - Blue triangle icon: device is ready and can be started
   - Green square icon: device is running and can be stopped
-
-<h3>2: Record</h3>
-
-Record baseband I/Q stream toggle button
 
 <h3>3: Frequency</h3>
 

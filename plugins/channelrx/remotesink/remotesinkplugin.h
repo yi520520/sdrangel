@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -36,9 +39,9 @@ public:
     const PluginDescriptor& getPluginDescriptor() const;
     void initPlugin(PluginAPI* pluginAPI);
 
-    virtual PluginInstanceGUI* createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel);
-    virtual BasebandSampleSink* createRxChannelBS(DeviceAPI *deviceAPI);
-    virtual ChannelAPI* createRxChannelCS(DeviceAPI *deviceAPI);
+    virtual void createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const;
+    virtual ChannelGUI* createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const;
+    virtual ChannelWebAPIAdapter* createChannelWebAPIAdapter() const;
 
 private:
     static const PluginDescriptor m_pluginDescriptor;

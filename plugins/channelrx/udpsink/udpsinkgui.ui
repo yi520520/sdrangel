@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
  <class>UDPSinkGUI</class>
- <widget class="RollupWidget" name="UDPSinkGUI">
+ <widget class="RollupContents" name="UDPSinkGUI">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -10,16 +10,16 @@
     <height>355</height>
    </rect>
   </property>
+  <property name="sizePolicy">
+   <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+    <horstretch>0</horstretch>
+    <verstretch>0</verstretch>
+   </sizepolicy>
+  </property>
   <property name="minimumSize">
    <size>
-    <width>342</width>
+    <width>382</width>
     <height>0</height>
-   </size>
-  </property>
-  <property name="maximumSize">
-   <size>
-    <width>400</width>
-    <height>16777215</height>
    </size>
   </property>
   <property name="font">
@@ -29,9 +29,6 @@
    </font>
   </property>
   <property name="windowTitle">
-   <string>UDP Sample Sink</string>
-  </property>
-  <property name="statusTip">
    <string>UDP Sample Sink</string>
   </property>
   <widget class="QWidget" name="widget" native="true">
@@ -186,6 +183,15 @@
              </color>
             </brush>
            </colorrole>
+           <colorrole role="PlaceholderText">
+            <brush brushstyle="NoBrush">
+             <color alpha="128">
+              <red>26</red>
+              <green>26</green>
+              <blue>26</blue>
+             </color>
+            </brush>
+           </colorrole>
           </active>
           <inactive>
            <colorrole role="Text">
@@ -203,6 +209,15 @@
               <red>255</red>
               <green>255</green>
               <blue>255</blue>
+             </color>
+            </brush>
+           </colorrole>
+           <colorrole role="PlaceholderText">
+            <brush brushstyle="NoBrush">
+             <color alpha="128">
+              <red>26</red>
+              <green>26</green>
+              <blue>26</blue>
              </color>
             </brush>
            </colorrole>
@@ -226,11 +241,21 @@
              </color>
             </brush>
            </colorrole>
+           <colorrole role="PlaceholderText">
+            <brush brushstyle="NoBrush">
+             <color alpha="128">
+              <red>26</red>
+              <green>26</green>
+              <blue>26</blue>
+             </color>
+            </brush>
+           </colorrole>
           </disabled>
          </palette>
         </property>
         <property name="font">
          <font>
+          <family>Liberation Sans</family>
           <pointsize>8</pointsize>
          </font>
         </property>
@@ -824,9 +849,15 @@
     <rect>
      <x>15</x>
      <y>160</y>
-     <width>231</width>
+     <width>361</width>
      <height>156</height>
     </rect>
+   </property>
+   <property name="sizePolicy">
+    <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+     <horstretch>0</horstretch>
+     <verstretch>0</verstretch>
+    </sizepolicy>
    </property>
    <property name="windowTitle">
     <string>Channel Spectrum</string>
@@ -849,6 +880,18 @@
     </property>
     <item>
      <widget class="GLSpectrum" name="glSpectrum" native="true">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
+      <property name="minimumSize">
+       <size>
+        <width>300</width>
+        <height>300</height>
+       </size>
+      </property>
       <property name="font">
        <font>
         <family>Liberation Mono</family>
@@ -865,9 +908,9 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>RollupWidget</class>
+   <class>RollupContents</class>
    <extends>QWidget</extends>
-   <header>gui/rollupwidget.h</header>
+   <header>gui/rollupcontents.h</header>
    <container>1</container>
   </customwidget>
   <customwidget>

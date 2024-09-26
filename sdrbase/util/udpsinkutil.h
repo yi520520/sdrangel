@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,8 +25,6 @@
 #include <QUdpSocket>
 #include <QHostAddress>
 
-#include <cassert>
-
 template<typename T>
 class UDPSinkUtil
 {
@@ -37,7 +36,6 @@ public:
 		m_port(9999),
 		m_sampleBufferIndex(0)
 	{
-        assert(m_udpSamples > 0);
 		m_sampleBuffer = new T[m_udpSamples];
 		m_socket = new QUdpSocket(parent);
 	}
@@ -49,7 +47,6 @@ public:
         m_port(port),
         m_sampleBufferIndex(0)
     {
-        assert(m_udpSamples > 0);
         m_sampleBuffer = new T[m_udpSamples];
         m_socket = new QUdpSocket(parent);
     }
@@ -61,7 +58,6 @@ public:
 		m_port(port),
 		m_sampleBufferIndex(0)
 	{
-		assert(m_udpSamples > 0);
 		m_sampleBuffer = new T[m_udpSamples];
 		m_socket = new QUdpSocket(parent);
 	}
@@ -77,7 +73,7 @@ public:
 	    m_socket->moveToThread(thread);
 	}
 
-	void setAddress(QString& address) { m_address.setAddress(address); }
+	void setAddress(const QString& address) { m_address.setAddress(address); }
 	void setPort(unsigned int port) { m_port = port; }
 
 	void setDestination(const QString& address, int port)
@@ -128,6 +124,14 @@ public:
 	    }
 
 	    memcpy(&m_sampleBuffer[m_sampleBufferIndex], &samples[samplesIndex], nbSamples*sizeof(T)); // copy remainder of input to buffer
+	}
+
+	/**
+	 * Write a bunch of samples unbuffered
+	 */
+	void writeUnbuffered(const T *samples, int nbSamples)
+	{
+		m_socket->writeDatagram((const char*)samples, (qint64 ) nbSamples, m_address, m_port); // send given samples
 	}
 
 private:

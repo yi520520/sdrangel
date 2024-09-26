@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,9 +22,7 @@
 MESSAGE_CLASS_DEFINITION(DeviceSoapySDRShared::MsgReportBuddyChange, Message)
 MESSAGE_CLASS_DEFINITION(DeviceSoapySDRShared::MsgReportDeviceArgsChange, Message)
 
-const float  DeviceSoapySDRShared::m_sampleFifoLengthInSeconds = 0.25;
-const int    DeviceSoapySDRShared::m_sampleFifoMinSize = 75000; // 300 kS/s knee
-const int    DeviceSoapySDRShared::m_sampleFifoMinSize32 = 150000; // Fixed for interpolation by 32
+const unsigned int DeviceSoapySDRShared::m_sampleFifoMinRate = 48000;
 
 DeviceSoapySDRShared::DeviceSoapySDRShared() :
     m_device(0),

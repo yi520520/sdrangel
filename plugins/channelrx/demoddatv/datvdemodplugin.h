@@ -1,4 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 // Copyright (C) 2018 F4HKW                                                      //
 // for F4EXB / SDRAngel                                                          //
 // using LeanSDR Framework (C) 2016 F4DAV                                        //
@@ -38,10 +42,9 @@ public:
 	const PluginDescriptor& getPluginDescriptor() const;
     void initPlugin(PluginAPI* ptrPluginAPI);
 
-    virtual PluginInstanceGUI* createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel);
-    virtual BasebandSampleSink* createRxChannelBS(DeviceAPI *deviceAPI);
-    virtual ChannelAPI* createRxChannelCS(DeviceAPI *deviceAPI);
-
+    virtual void createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const;
+    virtual ChannelGUI* createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const;
+    virtual ChannelWebAPIAdapter* createChannelWebAPIAdapter() const;
 
 private:
     static const PluginDescriptor m_ptrPluginDescriptor;

@@ -1,8 +1,6 @@
 TestMISettings:
   description: TestMISettings
   properties:
-    fileRecordName:
-      type: string
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -27,7 +25,7 @@ definitions:
         type: integer
       centerFrequency:
         type: integer
-        format: uint64
+        format: int64
       frequencyShift:
         type: integer
       sampleRate:

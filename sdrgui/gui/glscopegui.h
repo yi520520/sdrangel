@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2023 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,10 +25,10 @@
 #include <QWidget>
 #include <QComboBox>
 
-#include "dsp/dsptypes.h"
 #include "export.h"
 #include "util/message.h"
 #include "dsp/scopevis.h"
+#include "dsp/glscopesettings.h"
 #include "settings/serializable.h"
 
 namespace Ui {
@@ -39,14 +42,6 @@ class SDRGUI_API GLScopeGUI : public QWidget, public Serializable {
     Q_OBJECT
 
 public:
-    enum DisplayMode {
-        DisplayXYH,
-        DisplayXYV,
-        DisplayX,
-        DisplayY,
-        DisplayPol
-    };
-
     explicit GLScopeGUI(QWidget* parent = 0);
     ~GLScopeGUI();
 
@@ -56,12 +51,19 @@ public:
     void resetToDefaults();
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
+    virtual void formatTo(SWGSDRangel::SWGObject *swgObject) const;
+    virtual void updateFrom(const QStringList& keys, const SWGSDRangel::SWGObject *swgObject);
+    void updateSettings();
 
     bool handleMessage(Message* message);
+    unsigned int getNbTraces() const { return m_settings.m_tracesData.size(); }
+    unsigned int getNbTriggers() const { return m_settings.m_triggersData.size(); }
+    void setNbStreams(unsigned int nbStreams); //!< Set number of streams with default names (indexes)
+    void setStreams(const QStringList& streamNames); //!< Give streans by their names in a list
 
     // preconfiguration methods
     // global (first line):
-    void setDisplayMode(DisplayMode displayMode);
+    void setDisplayMode(GLScopeSettings::DisplayMode displayMode);
     void setTraceIntensity(int value);
     void setGridIntensity(int value);
     void setTimeBase(int step);
@@ -69,13 +71,14 @@ public:
     void setTraceLength(int step);
     void setPreTrigger(int step);
     // trace (second line):
-    void changeTrace(int traceIndex, const ScopeVis::TraceData& traceData);
-    void addTrace(const ScopeVis::TraceData& traceData);
+    void changeTrace(int traceIndex, const GLScopeSettings::TraceData& traceData);
+    void addTrace(const GLScopeSettings::TraceData& traceData);
     void focusOnTrace(int traceIndex);
     // trigger (third line):
-    void changeTrigger(int triggerIndex, const ScopeVis::TriggerData& triggerData);
-    void addTrigger(const ScopeVis::TriggerData& triggerData);
+    void changeTrigger(int triggerIndex, const GLScopeSettings::TriggerData& triggerData);
+    void addTrigger(const GLScopeSettings::TriggerData& triggerData);
     void focusOnTrigger(int triggerIndex);
+    void traceLengthChange();
 
 private:
     class TrigUIBlocker
@@ -88,6 +91,7 @@ private:
 
     private:
         Ui::GLScopeGUI *m_ui;
+        bool m_oldStateTrigStream;
         bool m_oldStateTrigMode;
         bool m_oldStateTrigCount;
         bool m_oldStateTrigPos;
@@ -97,6 +101,7 @@ private:
         bool m_oldStateTrigLevelFine;
         bool m_oldStateTrigDelayCoarse;
         bool m_oldStateTrigDelayFine;
+        bool m_oldStateTrigColor;
     };
 
     class TraceUIBlocker
@@ -109,16 +114,21 @@ private:
 
     private:
         Ui::GLScopeGUI *m_ui;
+        bool m_oldStateTraceStream;
         bool m_oldStateTrace;
         bool m_oldStateTraceAdd;
         bool m_oldStateTraceDel;
         bool m_oldStateTraceMode;
         bool m_oldStateAmp;
+        bool m_oldStateAmpCoarse;
+        bool m_oldStateAmpExp;
         bool m_oldStateOfsCoarse;
         bool m_oldStateOfsFine;
+        bool m_oldStateOfsExp;
         bool m_oldStateTraceDelayCoarse;
         bool m_oldStateTraceDelayFine;
         bool m_oldStateTraceColor;
+        bool m_oldStateTraceView;
     };
 
     class MainUIBlocker
@@ -146,17 +156,18 @@ private:
     MessageQueue* m_messageQueue;
     ScopeVis* m_scopeVis;
     GLScope* m_glScope;
+    GLScopeSettings m_settings;
 
     int m_sampleRate;
     int m_timeBase;
     int m_timeOffset;
-    int m_traceLenMult;
     QColor m_focusedTraceColor;
     QColor m_focusedTriggerColor;
+    int m_ctlTraceIndex;    //!< controlled trace index
+    int m_ctlTriggerIndex;  //!< controlled trigger index
 
-    static const double amps[27];
-
-    void applySettings();
+    void applySettings(const GLScopeSettings& settings, bool force = false);
+    void displaySettings();
     // First row
     void setTraceIndexDisplay();
     void setTimeScaleDisplay();
@@ -176,18 +187,28 @@ private:
     void changeCurrentTrace();
     void changeCurrentTrigger();
 
-    void fillTraceData(ScopeVis::TraceData& traceData);
-    void fillTriggerData(ScopeVis::TriggerData& triggerData);
-    void setTriggerUI(const ScopeVis::TriggerData& triggerData);
-    void setTraceUI(const ScopeVis::TraceData& traceData);
+    void fillTraceData(GLScopeSettings::TraceData& traceData);
+    void fillTriggerData(GLScopeSettings::TriggerData& triggerData);
+    void setTriggerUI(const GLScopeSettings::TriggerData& triggerData);
+    void setTraceUI(const GLScopeSettings::TraceData& traceData);
 
     void fillProjectionCombo(QComboBox* comboBox);
     void disableLiveMode(bool disable);
 
+    void settingsTraceAdd(const GLScopeSettings::TraceData& traceData);
+    void settingsTraceChange(const GLScopeSettings::TraceData& traceData, uint32_t traceIndex);
+    void settingsTraceDel(uint32_t traceIndex);
+    void settingsTraceMove(uint32_t traceIndex, bool upElseDown);
+
+    void settingsTriggerAdd(const GLScopeSettings::TriggerData& triggerData);
+    void settingsTriggerChange(const GLScopeSettings::TriggerData& triggerData, uint32_t triggerIndex);
+    void settingsTriggerDel(uint32_t triggerIndex);
+    void settingsTriggerMove(uint32_t triggerIndex, bool upElseDown);
+
 private slots:
-    void on_scope_sampleRateChanged(int value);
-    void on_scope_traceSizeChanged(uint32_t value);
-    void on_scope_preTriggerChanged(uint32_t value);
+    void onScopeSampleRateChanged(int value);
+    void onScopeTraceSizeChanged(uint32_t value);
+    void onScopePreTriggerChanged(uint32_t value);
     // First row
     void on_onlyX_toggled(bool checked);
     void on_onlyY_toggled(bool checked);
@@ -195,6 +216,7 @@ private slots:
     void on_verticalXY_toggled(bool checked);
     void on_polar_toggled(bool checked);
     void on_polarPoints_toggled(bool checked);
+    void on_polarGrid_toggled(bool checked);
     void on_traceIntensity_valueChanged(int value);
     void on_gridIntensity_valueChanged(int value);
     void on_time_valueChanged(int value);
@@ -206,10 +228,16 @@ private slots:
     void on_traceDel_clicked(bool checked);
     void on_traceUp_clicked(bool checked);
     void on_traceDown_clicked(bool checked);
+    void on_traceStream_currentIndexChanged(int index);
     void on_traceMode_currentIndexChanged(int index);
+    void on_ampReset_clicked(bool checked);
     void on_amp_valueChanged(int value);
+    void on_ampCoarse_valueChanged(int value);
+    void on_ampExp_valueChanged(int value);
+    void on_ofsReset_clicked(bool checked);
     void on_ofsCoarse_valueChanged(int value);
     void on_ofsFine_valueChanged(int value);
+    void on_ofsExp_valueChanged(int value);
     void on_traceDelayCoarse_valueChanged(int value);
     void on_traceDelayFine_valueChanged(int value);
     void on_traceView_toggled(bool checked);
@@ -223,6 +251,7 @@ private slots:
     void on_trigDel_clicked(bool checked);
     void on_trigUp_clicked(bool checked);
     void on_trigDown_clicked(bool checked);
+    void on_trigStream_currentIndexChanged(int index);
     void on_trigMode_currentIndexChanged(int index);
     void on_trigCount_valueChanged(int value);
     void on_trigPos_toggled(bool checked);

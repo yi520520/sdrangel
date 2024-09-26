@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2016, 2018-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,23 +22,27 @@
 
 #include "dsp/basebandsamplesink.h"
 #include "export.h"
-#include "util/message.h"
+#include "util/messagequeue.h"
 
+#include <QObject>
 #include <QColor>
 #include <vector>
 #include <complex>
 
 class TVScreen;
 
-class SDRGUI_API ScopeVisXY : public BasebandSampleSink {
+class SDRGUI_API ScopeVisXY : public QObject, public BasebandSampleSink {
+	Q_OBJECT
 public:
 	ScopeVisXY(TVScreen *tvScreen);
 	virtual ~ScopeVisXY();
 
+	using BasebandSampleSink::feed;
 	virtual void feed(const SampleVector::const_iterator& begin, const SampleVector::const_iterator& end, bool positiveOnly);
 	virtual void start();
 	virtual void stop();
-	virtual bool handleMessage(const Message& message);
+    virtual void pushMessage(Message *msg) { m_inputMessageQueue.push(msg); }
+    virtual QString getSinkName() { return objectName(); }
 
 	void setScale(float scale) { m_scale = scale; }
 	void setStroke(int stroke) { m_alphaTrace = stroke; }
@@ -52,6 +57,7 @@ public:
 	void clearGraticule();
 
 private:
+	virtual bool handleMessage(const Message& message);
 	void drawGraticule();
 
 	TVScreen *m_tvScreen;
@@ -67,6 +73,10 @@ private:
 	std::vector<std::complex<float> > m_graticule;
 	std::vector<int> m_graticuleRows;
 	std::vector<int> m_graticuleCols;
+	MessageQueue m_inputMessageQueue;
+
+private slots:
+	void handleInputMessages();
 };
 
 

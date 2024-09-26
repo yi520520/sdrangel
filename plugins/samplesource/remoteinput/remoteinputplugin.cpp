@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,6 @@
 #include <QtPlugin>
 
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 
 #ifdef SERVER_MODE
 #include "remoteinput.h"
@@ -26,18 +27,20 @@
 #include "remoteinputgui.h"
 #endif
 #include "remoteinputplugin.h"
+#include "remoteinputwebapiadapter.h"
 
 const PluginDescriptor RemoteInputPlugin::m_pluginDescriptor = {
-	QString("Remote device input"),
-	QString("4.5.6"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("RemoteInput"),
+	QStringLiteral("Remote device input"),
+    QStringLiteral("7.22.0"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString RemoteInputPlugin::m_hardwareID = "RemoteInput";
-const QString RemoteInputPlugin::m_deviceTypeID = REMOTEINPUT_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "RemoteInput";
+static constexpr const char* const m_deviceTypeID = REMOTEINPUT_DEVICE_TYPE_ID;
 
 RemoteInputPlugin::RemoteInputPlugin(QObject* parent) :
 	QObject(parent)
@@ -54,26 +57,51 @@ void RemoteInputPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleSource(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices RemoteInputPlugin::enumSampleSources()
+void RemoteInputPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
+{
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+    originDevices.append(OriginDevice(
+        "RemoteInput",
+        m_hardwareID,
+        QString(),
+        0,
+        1, // nb Rx
+        0  // nb Tx
+    ));
+
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices RemoteInputPlugin::enumSampleSources(const OriginDevices& originDevices)
 {
 	SamplingDevices result;
 
-    result.append(SamplingDevice(
-            "RemoteInput",
-            m_hardwareID,
-            m_deviceTypeID,
-            QString::null,
-            0,
-            PluginInterface::SamplingDevice::BuiltInDevice,
-            PluginInterface::SamplingDevice::StreamSingleRx,
-            1,
-            0));
+	for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == m_hardwareID)
+        {
+            result.append(SamplingDevice(
+                it->displayableName,
+                m_hardwareID,
+                m_deviceTypeID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::BuiltInDevice,
+                PluginInterface::SamplingDevice::StreamSingleRx,
+                1,
+                0
+            ));
+        }
+    }
 
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* RemoteInputPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* RemoteInputPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -84,7 +112,7 @@ PluginInstanceGUI* RemoteInputPlugin::createSampleSourcePluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* RemoteInputPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* RemoteInputPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -113,4 +141,9 @@ DeviceSampleSource *RemoteInputPlugin::createSampleSourcePluginInstance(const QS
     {
         return 0;
     }
+}
+
+DeviceWebAPIAdapter *RemoteInputPlugin::createDeviceWebAPIAdapter() const
+{
+    return new RemoteInputWebAPIAdapter();
 }

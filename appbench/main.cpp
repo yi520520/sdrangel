@@ -1,5 +1,10 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
+// Copyright (C) 2023 Daniele Forsi <iu5hkx@gmail.com>                           //
 //                                                                               //
 // Swagger server adapter interface                                              //
 //                                                                               //
@@ -21,20 +26,22 @@
 #include <QSysInfo>
 #include <QTimer>
 
-#include <signal.h>
-#include <unistd.h>
 #include <vector>
 
 #include "loggerwithfile.h"
 #include "mainbench.h"
 #include "dsp/dsptypes.h"
 
+#ifndef _WIN32
+
+#include <signal.h>
+#include <unistd.h>
+
 void handler(int sig) {
     fprintf(stderr, "quit the application by signal(%d).\n", sig);
     QCoreApplication::quit();
 }
 
-#ifndef _WIN32
 void catchUnixSignals(const std::vector<int>& quitSignals) {
     sigset_t blocking_mask;
     sigemptyset(&blocking_mask);
@@ -71,7 +78,7 @@ static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *lo
     ParserBench parser;
     parser.parse(a);
 
-#if QT_VERSION >= 0x050400
+#if QT_VERSION >= QT_VERSION_CHECK(5, 4, 0)
     qInfo("%s %s Qt %s %db %s %s DSP Rx:%db Tx:%db PID %lld",
           qPrintable(QCoreApplication::applicationName()),
           qPrintable(QCoreApplication::applicationVersion()),
@@ -85,7 +92,7 @@ static int runQtApplication(int argc, char* argv[], qtwebapp::LoggerWithFile *lo
 #else
     qInfo("%s %s Qt %s %db DSP Rx:%db Tx:%db PID %lld",
           qPrintable(QCoreApplication::applicationName()),
-          qPrintable((QCoreApplication::>applicationVersion()),
+          qPrintable(QCoreApplication::>applicationVersion()),
                      qPrintable(QString(QT_VERSION_STR)),
                      QT_POINTER_SIZE*8,
                      SDR_RX_SAMP_SZ,

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -28,12 +29,12 @@ struct ATVModSettings
 {
     typedef enum
     {
-        ATVStdPAL625,
-        ATVStdPAL525,
-        ATVStd405,
-        ATVStdShortInterleaved,
-        ATVStdShort,
-        ATVStdHSkip,
+        ATVStdPAL625,          //!< standard 625 lines B, D, G, H, I, K, K1 and N
+        ATVStdPAL525,          //!< standard 525 lines M
+        ATVStd819,             //!< standard 819 lines F (Belgium)
+        ATVStdShortInterlaced, //!< non-standard with minimal vertical sync sequences permitted by SDR technology
+        ATVStdShort,           //!< same as above
+        ATVStdHSkip            //!< first introduced vertical sync by skipping horizontal sync to indicate start of image
     } ATVStd;
 
     typedef enum
@@ -44,6 +45,7 @@ struct ATVModSettings
         ATVModInputChessboard,
         ATVModInputHGradient,
         ATVModInputVGradient,
+        ATVModInputDiagonal,
         ATVModInputImage,
         ATVModInputVideo,
         ATVModInputCamera
@@ -80,17 +82,25 @@ struct ATVModSettings
     QString       m_overlayText;
     quint32       m_rgbColor;
     QString       m_title;
+    QString       m_imageFileName;
+    QString       m_videoFileName;
+    int           m_streamIndex;
     bool          m_useReverseAPI;
     QString       m_reverseAPIAddress;
     uint16_t      m_reverseAPIPort;
     uint16_t      m_reverseAPIDeviceIndex;
     uint16_t      m_reverseAPIChannelIndex;
+    int m_workspaceIndex;
+    QByteArray m_geometryBytes;
+    bool m_hidden;
 
     Serializable *m_channelMarker;
+    Serializable *m_rollupState;
 
     ATVModSettings();
     void resetToDefaults();
     void setChannelMarker(Serializable *channelMarker) { m_channelMarker = channelMarker; }
+    void setRollupState(Serializable *rollupState) { m_rollupState = rollupState; }
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
 };

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Robin Getz <robin.getz@analog.com>                         //
+// Copyright (C) 2020 Felix Schneider <felix@fx-schneider.de>                    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,14 +23,19 @@
 #include <sstream>
 #include <stdint.h>
 #include <sys/types.h>
-#include "deviceplutosdrscan.h"
 
+#include <QList>
+#include <QString>
+
+#include "deviceplutosdrscan.h"
 #include "export.h"
 
 #if defined(_MSC_VER)
 #include <BaseTsd.h>
 typedef SSIZE_T ssize_t;
 #endif
+
+struct iio_channel;
 
 class DEVICES_API DevicePlutoSDRBox
 {
@@ -75,19 +82,24 @@ public:
 
     void set_params(DeviceType devType, const std::vector<std::string> &params);
     bool get_param(DeviceType devType, const std::string &param, std::string &value);
-    bool openRx();
-    bool openTx();
-    void closeRx();
-    void closeTx();
+    bool openRx();        //!< Open first Rx (Rx0)
+    bool openTx();        //!< Open first Tx (Tx0)
+    bool openSecondRx();  //!< Open second Rx (Rx1)
+    bool openSecondTx();  //!< Open second Tx (Tx1)
+    void closeRx();       //!< Close first Rx (Rx0)
+    void closeTx();       //!< Close first Tx (Tx0)
+    void closeSecondRx(); //!< Close second Rx (Rx1)
+    void closeSecondTx(); //!< Close second Tx (Tx1)
+    int getNbRx() const { return m_rxChannels.size() / 2; }
+    int getNbTx() const { return m_txChannels.size() / 2; }
+    int getRxSampleBytes() const { return m_rxSampleBytes; }
+    int getTxSampleBytes() const { return m_txSampleBytes; }
     struct iio_buffer *createRxBuffer(unsigned int size, bool cyclic);
     struct iio_buffer *createTxBuffer(unsigned int size, bool cyclic);
     void deleteRxBuffer();
     void deleteTxBuffer();
     ssize_t getRxSampleSize();
     ssize_t getTxSampleSize();
-    struct iio_channel *getRxChannel0() { return m_chnRx0; }
-    struct iio_channel *getTxChannel0I() { return m_chnTx0i; }
-    struct iio_channel *getTxChannel0Q() { return m_chnTx0q; }
     ssize_t rxBufferRefill();
     ssize_t txBufferPush();
     std::ptrdiff_t rxBufferStep();
@@ -97,6 +109,7 @@ public:
     char* txBufferEnd();
     char* txBufferFirst();
     void txChannelConvert(int16_t *dst, int16_t *src);
+    void txChannelConvert(int chanIndex, int16_t *dst, int16_t *src);
     bool getRxSampleRates(SampleRates& sampleRates);
     bool getTxSampleRates(SampleRates& sampleRates);
     void setSampleRate(uint32_t sampleRate);
@@ -119,14 +132,17 @@ private:
     struct iio_device  *m_devPhy;
     struct iio_device  *m_devRx;
     struct iio_device  *m_devTx;
-    struct iio_channel *m_chnRx0;
-    struct iio_channel *m_chnTx0i;
-    struct iio_channel *m_chnTx0q;
     struct iio_buffer  *m_rxBuf;
     struct iio_buffer  *m_txBuf;
     bool m_valid;
     int64_t m_xoInitial;
     float m_temp;
+    int m_rxSampleBytes; //!< size in bytes of a Rx I or Q sample. Rx must be opened.
+    int m_txSampleBytes; //!< size in bytes of a Tx I or Q sample. Tx must be opened.
+    QList<QString> m_rxChannelIds;
+    QList<iio_channel*> m_rxChannels;
+    QList<QString> m_txChannelIds;
+    QList<iio_channel*> m_txChannels;
 
     bool parseSampleRates(const std::string& rateStr, SampleRates& sampleRates);
     void setFilter(const std::string& filterConfigStr);

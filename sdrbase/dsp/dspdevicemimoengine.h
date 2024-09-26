@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2019-2020, 2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,118 +19,86 @@
 #ifndef SDRBASE_DSP_DSPDEVICEMIMOENGINE_H_
 #define SDRBASE_DSP_DSPDEVICEMIMOENGINE_H_
 
-#include <QThread>
+#include <QObject>
 
 #include "dsp/dsptypes.h"
 #include "util/message.h"
 #include "util/messagequeue.h"
-#include "util/syncmessenger.h"
 #include "util/movingaverage.h"
+#include "util/incrementalvector.h"
 #include "export.h"
 
 class DeviceSampleMIMO;
-class ThreadedBasebandSampleSource;
-class ThreadedBasebandSampleSink;
 class BasebandSampleSink;
+class BasebandSampleSource;
+class MIMOChannel;
 
-class SDRBASE_API DSPDeviceMIMOEngine : public QThread {
+class SDRBASE_API DSPDeviceMIMOEngine : public QObject {
 	Q_OBJECT
 
 public:
     class SetSampleMIMO : public Message {
         MESSAGE_CLASS_DECLARATION
     public:
-        SetSampleMIMO(DeviceSampleMIMO* sampleMIMO) : Message(), m_sampleMIMO(sampleMIMO) { }
+        explicit SetSampleMIMO(DeviceSampleMIMO* sampleMIMO) : Message(), m_sampleMIMO(sampleMIMO) { }
         DeviceSampleMIMO* getSampleMIMO() const { return m_sampleMIMO; }
     private:
         DeviceSampleMIMO* m_sampleMIMO;
     };
 
-    class AddThreadedBasebandSampleSource : public Message {
+    class AddBasebandSampleSource : public Message {
         MESSAGE_CLASS_DECLARATION
     public:
-        AddThreadedBasebandSampleSource(ThreadedBasebandSampleSource* threadedSampleSource, unsigned int index) :
+        AddBasebandSampleSource(BasebandSampleSource* sampleSource, unsigned int index) :
             Message(),
-            m_threadedSampleSource(threadedSampleSource),
+            m_sampleSource(sampleSource),
             m_index(index)
         { }
-        ThreadedBasebandSampleSource* getThreadedSampleSource() const { return m_threadedSampleSource; }
+        BasebandSampleSource* getSampleSource() const { return m_sampleSource; }
         unsigned int getIndex() const { return m_index; }
     private:
-        ThreadedBasebandSampleSource* m_threadedSampleSource;
+        BasebandSampleSource* m_sampleSource;
         unsigned int m_index;
     };
 
-    class AddSourceStream : public Message {
-        MESSAGE_CLASS_DECLARATION
-    public:
-        AddSourceStream(bool connect) : Message(), m_connect(connect) { }
-        bool getConnect() const { return m_connect; }
-    private:
-        bool m_connect;
-    };
-
-    class RemoveLastSourceStream : public Message {
-        MESSAGE_CLASS_DECLARATION
-    };
-
-    class AddSinkStream : public Message {
-        MESSAGE_CLASS_DECLARATION
-    public:
-        AddSinkStream(bool connect) : Message(), m_connect(connect) { }
-        bool getConnect() const { return m_connect; }
-    private:
-        bool m_connect;
-    };
-
-    class RemoveLastSinkStream : public Message {
-        MESSAGE_CLASS_DECLARATION
-    };
-
-    class RemoveThreadedBasebandSampleSource : public Message {
+    class RemoveBasebandSampleSource : public Message {
 	    MESSAGE_CLASS_DECLARATION
 
     public:
-        RemoveThreadedBasebandSampleSource(ThreadedBasebandSampleSource* threadedSampleSource, unsigned int index) :
+        RemoveBasebandSampleSource(BasebandSampleSource* sampleSource, unsigned int index) :
             Message(),
-            m_threadedSampleSource(threadedSampleSource),
+            m_sampleSource(sampleSource),
             m_index(index)
         { }
-        ThreadedBasebandSampleSource* getThreadedSampleSource() const { return m_threadedSampleSource; }
+        BasebandSampleSource* getSampleSource() const { return m_sampleSource; }
         unsigned int getIndex() const { return m_index; }
     private:
-        ThreadedBasebandSampleSource* m_threadedSampleSource;
+        BasebandSampleSource* m_sampleSource;
         unsigned int m_index;
     };
 
-    class AddThreadedBasebandSampleSink : public Message {
+    class AddMIMOChannel : public Message {
         MESSAGE_CLASS_DECLARATION
     public:
-        AddThreadedBasebandSampleSink(ThreadedBasebandSampleSink* threadedSampleSink, unsigned int index) :
+        explicit AddMIMOChannel(MIMOChannel* channel) :
             Message(),
-            m_threadedSampleSink(threadedSampleSink),
-            m_index(index)
+            m_channel(channel)
         { }
-        ThreadedBasebandSampleSink* getThreadedSampleSink() const { return m_threadedSampleSink; }
-        unsigned int getIndex() const { return m_index; }
+        MIMOChannel* getChannel() const { return m_channel; }
     private:
-        ThreadedBasebandSampleSink* m_threadedSampleSink;
-        unsigned int m_index;
+        MIMOChannel* m_channel;
     };
 
-    class RemoveThreadedBasebandSampleSink : public Message {
+    class RemoveMIMOChannel : public Message {
         MESSAGE_CLASS_DECLARATION
     public:
-        RemoveThreadedBasebandSampleSink(ThreadedBasebandSampleSink* threadedSampleSink, unsigned int index) :
+        explicit RemoveMIMOChannel(MIMOChannel* channel) :
             Message(),
-            m_threadedSampleSink(threadedSampleSink),
-            m_index(index)
+            m_channel(channel)
         { }
-        ThreadedBasebandSampleSink* getThreadedSampleSink() const { return m_threadedSampleSink; }
-        unsigned int getIndex() const { return m_index; }
+        MIMOChannel* getChannel() const { return m_channel; }
     private:
-        ThreadedBasebandSampleSink* m_threadedSampleSink;
-        unsigned int m_index;
+        MIMOChannel* m_channel;
     };
 
     class AddBasebandSampleSink : public Message {
@@ -166,7 +134,7 @@ public:
     class AddSpectrumSink : public Message {
         MESSAGE_CLASS_DECLARATION
     public:
-        AddSpectrumSink(BasebandSampleSink* sampleSink) : Message(), m_sampleSink(sampleSink) { }
+        explicit AddSpectrumSink(BasebandSampleSink* sampleSink) : Message(), m_sampleSink(sampleSink) { }
         BasebandSampleSink* getSampleSink() const { return m_sampleSink; }
     private:
         BasebandSampleSink* m_sampleSink;
@@ -175,7 +143,7 @@ public:
     class RemoveSpectrumSink : public Message {
         MESSAGE_CLASS_DECLARATION
     public:
-        RemoveSpectrumSink(BasebandSampleSink* sampleSink) : Message(), m_sampleSink(sampleSink) { }
+        explicit RemoveSpectrumSink(BasebandSampleSink* sampleSink) : Message(), m_sampleSink(sampleSink) { }
         BasebandSampleSink* getSampleSink() const { return m_sampleSink; }
     private:
         BasebandSampleSink* m_sampleSink;
@@ -184,9 +152,14 @@ public:
     class GetErrorMessage : public Message {
         MESSAGE_CLASS_DECLARATION
     public:
+        explicit GetErrorMessage(unsigned int subsystemIndex) :
+            m_subsystemIndex(subsystemIndex)
+        {}
         void setErrorMessage(const QString& text) { m_errorMessage = text; }
+        int getSubsystemIndex() const { return m_subsystemIndex; }
         const QString& getErrorMessage() const { return m_errorMessage; }
     private:
+        int m_subsystemIndex;
         QString m_errorMessage;
     };
 
@@ -231,7 +204,7 @@ public:
         int m_index;
     };
 
-	enum State {
+	enum class State {
 		StNotStarted,  //!< engine is before initialization
 		StIdle,        //!< engine is idle
 		StReady,       //!< engine is ready to run
@@ -240,56 +213,56 @@ public:
 	};
 
 	DSPDeviceMIMOEngine(uint32_t uid, QObject* parent = nullptr);
-	~DSPDeviceMIMOEngine();
+	~DSPDeviceMIMOEngine() override;
 
 	MessageQueue* getInputMessageQueue() { return &m_inputMessageQueue; }
 
-	void start(); //!< This thread start
-	void stop();  //!< This thread stop
-
-	bool initProcess();  //!< Initialize process sequence
-	bool startProcess(); //!< Start process sequence
-	void stopProcess();  //!< Stop process sequence
+	bool initProcess(int subsystemIndex);  //!< Initialize process sequence
+	bool startProcess(int subsystemIndex); //!< Start process sequence
+	void stopProcess(int subsystemIndex);  //!< Stop process sequence
 
 	void setMIMO(DeviceSampleMIMO* mimo); //!< Set the sample MIMO type
 	DeviceSampleMIMO *getMIMO() { return m_deviceSampleMIMO; }
 	void setMIMOSequence(int sequence); //!< Set the sample MIMO sequence in type
     uint getUID() const { return m_uid; }
 
-    void addSourceStream(bool connect);
-    void removeLastSourceStream();
-    void addSinkStream(bool connect);
-    void removeLastSinkStream();
-
-	void addChannelSource(ThreadedBasebandSampleSource* source, int index = 0);    //!< Add a channel source that will run on its own thread
-	void removeChannelSource(ThreadedBasebandSampleSource* source, int index = 0); //!< Remove a channel source that runs on its own thread
-	void addChannelSink(ThreadedBasebandSampleSink* sink, int index = 0);          //!< Add a channel sink that will run on its own thread
-	void removeChannelSink(ThreadedBasebandSampleSink* sink, int index = 0);       //!< Remove a channel sink that runs on its own thread
-
-	void addAncillarySink(BasebandSampleSink* sink, int index = 0);    //!< Add an ancillary sink like a I/Q recorder
-	void removeAncillarySink(BasebandSampleSink* sink, int index = 0); //!< Remove an ancillary sample sink
+	void addChannelSource(BasebandSampleSource* source, int index = 0);            //!< Add a channel source
+	void removeChannelSource(BasebandSampleSource* source, int index = 0);         //!< Remove a channel source
+	void addChannelSink(BasebandSampleSink* sink, int index = 0);                  //!< Add a channel sink
+	void removeChannelSink(BasebandSampleSink* sink, int index = 0);               //!< Remove a channel sink
+    void addMIMOChannel(MIMOChannel *channel);                                     //!< Add a MIMO channel
+    void removeMIMOChannel(MIMOChannel *channel);                                  //!< Remove a MIMO channel
 
 	void addSpectrumSink(BasebandSampleSink* spectrumSink);    //!< Add a spectrum vis baseband sample sink
 	void removeSpectrumSink(BasebandSampleSink* spectrumSink); //!< Add a spectrum vis baseband sample sink
     void setSpectrumSinkInput(bool sourceElseSink, int index);
 
-	State state() const { return m_state; } //!< Return DSP engine current state
+	State state(int subsystemIndex) const //!< Return DSP engine current state
+    {
+        if (subsystemIndex == 0) {
+            return m_stateRx;
+        } else if (subsystemIndex == 1) {
+            return m_stateTx;
+        } else {
+            return State::StNotStarted;
+        }
+    }
 
-	QString errorMessage(); //!< Return the current error message
-	QString deviceDescription(); //!< Return the device description
+	QString errorMessage(int subsystemIndex) const; //!< Return the current error message
+	QString deviceDescription() const; //!< Return the device description
 
    	void configureCorrections(bool dcOffsetCorrection, bool iqImbalanceCorrection, int isource); //!< Configure source DSP corrections
 
 private:
     struct SourceCorrection
     {
-        bool m_dcOffsetCorrection;
-        bool m_iqImbalanceCorrection;
-        double m_iOffset;
-        double m_qOffset;
-        int m_iRange;
-        int m_qRange;
-        int m_imbalance;
+        bool m_dcOffsetCorrection = false;
+        bool m_iqImbalanceCorrection = false;
+        double m_iOffset = 0;
+        double m_qOffset = 0;
+        int m_iRange = 1 << 16;
+        int m_qRange = 1 << 16;
+        int m_imbalance = 65536;
         MovingAverageUtil<int32_t, int64_t, 1024> m_iBeta;
         MovingAverageUtil<int32_t, int64_t, 1024> m_qBeta;
 #if IMBALANCE_INT
@@ -311,13 +284,6 @@ private:
 #endif
         SourceCorrection()
         {
-            m_dcOffsetCorrection = false;
-            m_iqImbalanceCorrection = false;
-            m_iOffset = 0;
-            m_qOffset = 0;
-            m_iRange = 1 << 16;
-            m_qRange = 1 << 16;
-            m_imbalance = 65536;
             m_iBeta.reset();
             m_qBeta.reset();
             m_avgAmp.reset();
@@ -332,27 +298,30 @@ private:
     };
 
 	uint32_t m_uid; //!< unique ID
-    State m_state;
+    State m_stateRx;
+    State m_stateTx;
 
-    QString m_errorMessage;
+    QString m_errorMessageRx;
+    QString m_errorMessageTx;
 	QString m_deviceDescription;
 
 	DeviceSampleMIMO* m_deviceSampleMIMO;
 	int m_sampleMIMOSequence;
 
     MessageQueue m_inputMessageQueue;  //<! Input message queue. Post here.
-	SyncMessenger m_syncMessenger;     //!< Used to process messages synchronously with the thread
 
-	typedef std::list<BasebandSampleSink*> BasebandSampleSinks;
+	using BasebandSampleSinks = std::list<BasebandSampleSink *>;
 	std::vector<BasebandSampleSinks> m_basebandSampleSinks; //!< ancillary sample sinks on main thread (per input stream)
+    std::map<int, bool> m_rxRealElseComplex; //!< map of real else complex indicators for device sources (by input stream)
+	using BasebandSampleSources = std::list<BasebandSampleSource *>;
+	std::vector<BasebandSampleSources> m_basebandSampleSources; //!< channel sample sources (per output stream)
+    std::map<int, bool> m_txRealElseComplex; //!< map of real else complex indicators for device sinks (by input stream)
+    std::vector<IncrementalVector<Sample>> m_sourceSampleBuffers;
+    std::vector<IncrementalVector<Sample>> m_sourceZeroBuffers;
+    unsigned int m_sumIndex;            //!< channel index when summing channels
 
-	typedef std::list<ThreadedBasebandSampleSink*> ThreadedBasebandSampleSinks;
-	std::vector<ThreadedBasebandSampleSinks> m_threadedBasebandSampleSinks; //!< channel sample sinks on their own thread (per input stream)
-    std::vector<int> m_sampleSinkConnectionIndexes;
-
-	typedef std::list<ThreadedBasebandSampleSource*> ThreadedBasebandSampleSources;
-	std::vector<ThreadedBasebandSampleSources> m_threadedBasebandSampleSources; //!< channel sample sources on their own threads (per output stream)
-    std::vector<int> m_sampleSourceConnectionIndexes;
+    using MIMOChannels = std::list<MIMOChannel *>;
+    MIMOChannels m_mimoChannels; //!< MIMO channels
 
     std::vector<SourceCorrection> m_sourcesCorrections;
 
@@ -360,23 +329,33 @@ private:
     bool m_spectrumInputSourceElseSink; //!< Source else sink stream to be used as spectrum sink input
     unsigned int m_spectrumInputIndex;  //!< Index of the stream to be used as spectrum sink input
 
-  	void run();
-	void work(int nbWriteSamples); //!< transfer samples if in running state
+    void workSampleSinkFifos(); //!< transfer samples of all sink streams (sync mode)
+    void workSampleSinkFifo(unsigned int streamIndex); //!< transfer samples of one sink stream (async mode)
+    void workSamplesSink(const SampleVector::const_iterator& vbegin, const SampleVector::const_iterator& vend, unsigned int streamIndex);
+    void workSampleSourceFifos(); //!< transfer samples of all source streams (sync mode)
+    void workSampleSourceFifo(unsigned int streamIndex); //!< transfer samples of one source stream (async mode)
+    void workSamplesSource(SampleVector& data, unsigned int iBegin, unsigned int iEnd, unsigned int streamIndex);
 
-	State gotoIdle();     //!< Go to the idle state
-	State gotoInit();     //!< Go to the acquisition init state from idle
-	State gotoRunning();  //!< Go to the running state from ready state
-	State gotoError(const QString& errorMsg); //!< Go to an error state
+	State gotoIdle(int subsystemIndex);     //!< Go to the idle state
+	State gotoInit(int subsystemIndex);     //!< Go to the acquisition init state from idle
+	State gotoRunning(int subsystemIndex);  //!< Go to the running state from ready state
+	State gotoError(int subsystemIndex, const QString& errorMsg); //!< Go to an error state
+	void setStateRx(State state);
+	void setStateTx(State state);
 
     void handleSetMIMO(DeviceSampleMIMO* mimo); //!< Manage MIMO device setting
-   	void iqCorrections(SampleVector::iterator begin, SampleVector::iterator end, int isource, bool imbalanceCorrection);
+    void iqCorrections(SampleVector::iterator begin, SampleVector::iterator end, int isource, bool imbalanceCorrection);
+    bool handleMessage(const Message& cmd);
 
 private slots:
-	void handleData();                 //!< Handle data when samples have to be processed
-    void workSampleSink(unsigned int sinkIndex);
-	void handleSynchronousMessages();  //!< Handle synchronous messages with the thread
+	void handleDataRxSync();           //!< Handle data when Rx samples have to be processed synchronously
+	void handleDataRxAsync(int streamIndex); //!< Handle data when Rx samples have to be processed asynchronously
+	void handleDataTxSync();           //!< Handle data when Tx samples have to be processed synchronously
+	void handleDataTxAsync(int streamIndex); //!< Handle data when Tx samples have to be processed asynchronously
 	void handleInputMessages();        //!< Handle input message queue
-	void handleForwardToSpectrumSink(int nbSamples);
+
+signals:
+	void stateChanged();
 };
 
 #endif // SDRBASE_DSP_DSPDEVICEMIMOENGINE_H_

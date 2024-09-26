@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef PLUGINS_SAMPLESOURCE_SDRPLAY_SDRPLAYGUI_H_
 #define PLUGINS_SAMPLESOURCE_SDRPLAY_SDRPLAYGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 #include <vector>
@@ -34,7 +35,7 @@ namespace Ui {
     class SDRPlayGui;
 }
 
-class SDRPlayGui : public QWidget, public PluginInstanceGUI {
+class SDRPlayGui : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -42,24 +43,18 @@ public:
     virtual ~SDRPlayGui();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     virtual void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
 
 private:
     Ui::SDRPlayGui* ui;
 
-    DeviceUISet* m_deviceUISet;
     bool m_doApplySettings;
     bool m_forceSettings;
     SDRPlaySettings m_settings;
+    QList<QString> m_settingsKeys;
     QTimer m_updateTimer;
     QTimer m_statusTimer;
     DeviceSampleSource* m_sampleSource;
@@ -72,6 +67,8 @@ private:
     void displaySettings();
     void sendSettings();
     void updateSampleRateAndFrequency();
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void updateHardware();
@@ -94,7 +91,6 @@ private slots:
     void on_gainMixer_toggled(bool checked);
     void on_gainBaseband_valueChanged(int value);
     void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void openDeviceSettingsDialog(const QPoint& p);
 };
 

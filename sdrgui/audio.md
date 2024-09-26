@@ -17,7 +17,7 @@ Each device is represented by a row in the list. Move the cursor with the mouse 
 In this column there are two indicators:
 
   - `S`: for system default device. This is the device that is defined as system default. You may configure it directly or via the ` System default device` entry. <br/>&#9758; Note that (at least in Linux) you may affect different parameters to one or the other.
-  - `D`: the device is unregistered so if you associate an output stream to it it will be registered with default values. Default values are:
+  - `D`: the device is unregistered so if you associate an output stream to it, it will be registered with default values. Default values are:
     - Sample rate: 48000 S/s
     - UDP address: 127.0.0.1
     - UDP port: 9998
@@ -49,12 +49,12 @@ This is the device sample rate in samples per second (S/s).
 
 By pushing this button the values are reset to the defaults (see 1.1 for actual default values)
 
-<h3>1.7 UDP copy channel mode</h3>
+<h3>1.7 UDP copy or recording channel mode</h3>
 
-  - `Left`: UDP stream is mono (1 channel) and the left audio channel is copied
-  - `Right`: UDP stream is mono (1 channel) and the right audio channel is copied
-  - `Mixed`: UDP stream is mono (1 channel) and the mix of left and right audio channels is copied
-  - `Stereo`:  UDP stream is stereo (2 channels) and audio channels are copied to their respective targets
+  - `Left`: stream is mono (1 channel) and the left audio channel is used
+  - `Right`: stream is mono (1 channel) and the right audio channel is used
+  - `Mixed`: stream is mono (1 channel) and the mix of left and right audio channels is used
+  - `Stereo`:  stream is stereo (2 channels) and both audio channels are used
 
 <h3>1.8 Decimation factor</h3>
 
@@ -73,7 +73,7 @@ This is the codec applied before sending the stream via UDP. The following are a
 
 <h3>1.10 SDP string</h3>
 
-This is the SDP string representatiopn of the stream sent via UDP (RTP). In SDP files it is used on the `a=rtpmap`line (See 1.14). It can be used to check the effect of settings 1.5, 1.8 and 1.9.
+This is the SDP string representation of the stream sent via UDP (RTP). In SDP files it is used on the `a=rtpmap`line (See 1.14). It can be used to check the effect of settings 1.5, 1.8 and 1.9.
 
 <h3>1.11 UDP address</h3>
 
@@ -107,7 +107,7 @@ Check this box to activate the RTP protocol over UDP. RTP parameters are as foll
   - Channels: 1 for mono (Left, Right and Mixed copy channels mode); 2 for stereo (Stereo copy channels mode)
   - Address and port: destination address and port (local on the client machine)
 
-You may read the RTP stream using a SDP file (extension `.sdp`) that can be read with any program supporting SDP files (VLC, MX player, ffmpeg, ...). For a mono 48000 S/s stream at address `192.168.0.34:9998 and L16 codec the contents of the file would be as follows:
+You may read the RTP stream using a SDP file (extension `.sdp`) that can be read with any program supporting SDP files (VLC, MX player, ffmpeg, ...). For a mono 48000 S/s stream at address `192.168.0.34:9998` and L16 codec the contents of the file would be as follows:
 
 ```
 c=IN IP4 192.168.0.34
@@ -144,19 +144,44 @@ a=fmtp:96 cbr=1
 
 &#9758; With PCMA and PCMU and more recently G722 codecs it is possible to listen to the RTP stream directly in the browser using a [Janus WebRTC server](https://janus.conf.meetecho.com/). Please refer to the Wiki page "Networking audio" for detailed instructions.
 
-<h3>1.15 Cleanup registrations not in the list</h3>
+<h3>1.15 Record audio</h3>
+
+Use this button to toggle audio recording. Start or stop recording becomes effective only when the dialog is closed with the "OK" button.
+
+Format is always 16 bit little-endian and can be mono (1 channel) or stereo (2 channels) depending on the selected channel mode (1.7)
+
+<h3>1.16 Select recording output file</h3>
+
+Click on the open file icon to open a file selection dialog that lets you specify the location and name of the output files.
+
+Each recording is written in a new file with the starting timestamp before the `.wav` extension in `yyyy-MM-ddTHH_mm_ss_zzz` format. It keeps the first dot limited groups of the filename before the `.wav` extension if there are two such groups or before the two last groups if there are more than two groups. Examples:
+
+  - Given file name: `test.wav` then a recording file will be like: `test.2020-08-05T21_39_07_974.wav`
+  - Given file name: `test.2020-08-05T20_36_15_974.wav` then a recording file will be like (with timestamp updated): `test.2020-08-05T21_41_21_173.wav`
+  - Given file name: `test.first.wav` then a recording file will be like: `test.2020-08-05T22_00_07_974.wav`
+  - Given file name: `record.test.first.wav` then a recording file will be like: `record.test.2020-08-05T21_39_52_974.wav`
+
+If a filename is given without `.wav` extension then the `.wav` extension is appended automatically before the above algorithm is applied. If a filename is given with an extension different of `.wav` then the extension is replaced by `.wav` automatically before the above algorithm is applied.
+
+The file path currently being written (or last closed) appears at the right of the button.
+
+<h3>1.17 Record silence time</h3>
+
+This is the time in seconds (between 0.1 and 10.0) of silence (null samples) before recording stops. When non null samples come again this will start a new recording. Set the value to 0 to record continuously.
+
+<h3>1.18 Cleanup registrations not in the list</h3>
 
 Use this button to keep only the visible devices in the devices registrations. The devices registrations with custom parameters are kept in the preferences using the device names. This button makes some tidying up when devices are permanently removed.
 
-<h3>1.16 Unregister device</h3>
+<h3>1.19 Unregister device</h3>
 
 Use this button to remove the device from the devices registrations returning it to the unregistered state. Therefore when associated to an output stream or selected it will initially take default values and appear with the `D` indicator in the list.
 
-<h3>1.17 OK button</h3>
+<h3>1.20 OK button</h3>
 
 Use this button to confirm your changes and close dialog. Note that you can change parameters of only one device at a time.
 
-<h3>1.18 Cancel button</h3>
+<h3>1.21 Cancel button</h3>
 
 Use this button to dismiss your changes and close dialog.
 
@@ -174,7 +199,7 @@ Each device is represented by a row in the list. Move the cursor with the mouse 
 In this column there are two indicators:
 
   - `S`: for system default device. This is the device that is defined as system default. You may configure it directly or via the ` System default device` entry. <br/>&#9758; Note that (at least in Linux) you may affect different parameters to one or the other.
-  - `D`: the device is unregistered so if you associate an input stream to it it will be registered with default values. Default values are:
+  - `D`: the device is unregistered so if you associate an input stream to it, it will be registered with default values. Default values are:
     - Sample rate: 48000 S/s
     - Volume: 0.15
 
@@ -234,7 +259,7 @@ The dialog for input or output is similar. The screenshot below is taken from an
 In this column there are two indicators:
 
   - `S`: for system default device. This is the device that is defined as system default. You may configure it directly or via the ` System default device` entry. <br/>&#9758; Note that (at least in Linux) you may affect different parameters to one or the other.
-  - `D`: the device is unregistered so if you associate an input stream to it it will be registered with default values. Default values depend on the input or output nature and are listed in the 2.1 and 1.1 sections respectively.
+  - `D`: the device is unregistered so if you associate an input stream to it, it will be registered with default values. Default values depend on the input or output nature and are listed in the 2.1 and 1.1 sections respectively.
 
 A unset indicator is marked with an underscore character: `_`
 

@@ -1,5 +1,23 @@
-#include "nfmdemodgui.h"
-
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany     //
+// written by Christian Daniel                                                       //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>              //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                                  //
+// Copyright (C) 2021-2023 Jon Beniston, M7RCE <jon@beniston.com>                    //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 #include "device/deviceuiset.h"
 #include <QDockWidget>
 #include <QMainWindow>
@@ -7,14 +25,20 @@
 
 #include "ui_nfmdemodgui.h"
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 #include "util/db.h"
 #include "gui/basicchannelsettingsdialog.h"
 #include "gui/crightclickenabler.h"
 #include "gui/audioselectdialog.h"
+#include "gui/dialpopup.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspengine.h"
-#include "mainwindow.h"
+#include "dsp/dcscodes.h"
+#include "dsp/dspcommands.h"
+#include "maincore.h"
+
+#include "nfmdemodreport.h"
 #include "nfmdemod.h"
+#include "nfmdemodgui.h"
 
 NFMDemodGUI* NFMDemodGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
 {
@@ -25,27 +49,6 @@ NFMDemodGUI* NFMDemodGUI::create(PluginAPI* pluginAPI, DeviceUISet *deviceUISet,
 void NFMDemodGUI::destroy()
 {
 	delete this;
-}
-
-void NFMDemodGUI::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString NFMDemodGUI::getName() const
-{
-	return objectName();
-}
-
-qint64 NFMDemodGUI::getCenterFrequency() const
-{
-	return m_channelMarker.getCenterFrequency();
-}
-
-void NFMDemodGUI::setCenterFrequency(qint64 centerFrequency)
-{
-	m_channelMarker.setCenterFrequency(centerFrequency);
-	applySettings();
 }
 
 void NFMDemodGUI::resetToDefaults()
@@ -74,12 +77,17 @@ bool NFMDemodGUI::deserialize(const QByteArray& data)
 
 bool NFMDemodGUI::handleMessage(const Message& message)
 {
-    if (NFMDemod::MsgReportCTCSSFreq::match(message))
+    if (NFMDemodReport::MsgReportCTCSSFreq::match(message))
     {
-        //qDebug("NFMDemodGUI::handleMessage: NFMDemod::MsgReportCTCSSFreq");
-        NFMDemod::MsgReportCTCSSFreq& report = (NFMDemod::MsgReportCTCSSFreq&) message;
+        NFMDemodReport::MsgReportCTCSSFreq& report = (NFMDemodReport::MsgReportCTCSSFreq&) message;
         setCtcssFreq(report.getFrequency());
-        //qDebug("NFMDemodGUI::handleMessage: MsgReportCTCSSFreq: %f", report.getFrequency());
+        return true;
+    }
+    else if (NFMDemodReport::MsgReportDCSCode::match(message))
+    {
+        NFMDemodReport::MsgReportDCSCode& report = (NFMDemodReport::MsgReportDCSCode&) message;
+        m_reportedDcsCode = report.getCode();
+        setDcsCode(report.getCode());
         return true;
     }
     else if (NFMDemod::MsgConfigureNFMDemod::match(message))
@@ -88,8 +96,19 @@ bool NFMDemodGUI::handleMessage(const Message& message)
         const NFMDemod::MsgConfigureNFMDemod& cfg = (NFMDemod::MsgConfigureNFMDemod&) message;
         m_settings = cfg.getSettings();
         blockApplySettings(true);
+        m_channelMarker.updateSettings(static_cast<const ChannelMarker*>(m_settings.m_channelMarker));
         displaySettings();
         blockApplySettings(false);
+        return true;
+    }
+    else if (DSPSignalNotification::match(message))
+    {
+        DSPSignalNotification& notif = (DSPSignalNotification&) message;
+        m_deviceCenterFrequency = notif.getCenterFrequency();
+        m_basebandSampleRate = notif.getSampleRate();
+        ui->deltaFrequency->setValueRange(false, 7, -m_basebandSampleRate/2, m_basebandSampleRate/2);
+        ui->deltaFrequencyLabel->setToolTip(tr("Range %1 %L2 Hz").arg(QChar(0xB1)).arg(m_basebandSampleRate/2));
+        updateAbsoluteCenterFrequency();
         return true;
     }
 
@@ -125,30 +144,65 @@ void NFMDemodGUI::on_deltaFrequency_changed(qint64 value)
 {
     m_channelMarker.setCenterFrequency(value);
     m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
+    updateAbsoluteCenterFrequency();
     applySettings();
 }
 
-void NFMDemodGUI::on_rfBW_currentIndexChanged(int index)
+void NFMDemodGUI::on_channelSpacingApply_clicked()
 {
-	qDebug() << "NFMDemodGUI::on_rfBW_currentIndexChanged" << index;
-	//ui->rfBWText->setText(QString("%1 k").arg(m_rfBW[value] / 1000.0));
-	m_channelMarker.setBandwidth(NFMDemodSettings::getRFBW(index));
+    int index = ui->channelSpacing->currentIndex();
+    qDebug("NFMDemodGUI::on_channelSpacing_currentIndexChanged: %d", index);
 	m_settings.m_rfBandwidth = NFMDemodSettings::getRFBW(index);
-	m_settings.m_fmDeviation = NFMDemodSettings::getFMDev(index);
+    m_settings.m_afBandwidth = NFMDemodSettings::getAFBW(index);
+    m_settings.m_fmDeviation = 2.0 * NFMDemodSettings::getFMDev(index);
+    m_channelMarker.setBandwidth(m_settings.m_rfBandwidth);
+    ui->rfBW->blockSignals(true);
+    ui->afBW->blockSignals(true);
+    ui->fmDev->blockSignals(true);
+    ui->rfBWText->setText(QString("%1k").arg(m_settings.m_rfBandwidth / 1000.0, 0, 'f', 1));
+    ui->rfBW->setValue(m_settings.m_rfBandwidth / 100.0);
+    ui->afBWText->setText(QString("%1k").arg(m_settings.m_afBandwidth / 1000.0, 0, 'f', 1));
+    ui->afBW->setValue(m_settings.m_afBandwidth / 100.0);
+    ui->fmDevText->setText(QString("%1%2k").arg(QChar(0xB1, 0x00)).arg(m_settings.m_fmDeviation / 2000.0, 0, 'f', 1));
+    ui->fmDev->setValue(m_settings.m_fmDeviation / 200.0);
+    ui->rfBW->blockSignals(false);
+    ui->afBW->blockSignals(false);
+    ui->fmDev->blockSignals(false);
+	applySettings();
+}
+
+void NFMDemodGUI::on_rfBW_valueChanged(int value)
+{
+	ui->rfBWText->setText(QString("%1k").arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_rfBandwidth = value * 100.0;
+	m_channelMarker.setBandwidth(m_settings.m_rfBandwidth);
+
+    ui->channelSpacing->blockSignals(true);
+    ui->channelSpacing->setCurrentIndex(NFMDemodSettings::getChannelSpacingIndex(m_settings.m_rfBandwidth));
+    ui->channelSpacing->update();
+    ui->channelSpacing->blockSignals(false);
+
 	applySettings();
 }
 
 void NFMDemodGUI::on_afBW_valueChanged(int value)
 {
-	ui->afBWText->setText(QString("%1 k").arg(value));
-	m_settings.m_afBandwidth = value * 1000.0;
+	ui->afBWText->setText(QString("%1k").arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_afBandwidth = value * 100.0;
+	applySettings();
+}
+
+void NFMDemodGUI::on_fmDev_valueChanged(int value)
+{
+	ui->fmDevText->setText(QString("%1%2k").arg(QChar(0xB1, 0x00)).arg(value / 10.0, 0, 'f', 1));
+	m_settings.m_fmDeviation = value * 200.0;
 	applySettings();
 }
 
 void NFMDemodGUI::on_volume_valueChanged(int value)
 {
-	ui->volumeText->setText(QString("%1").arg(value / 10.0, 0, 'f', 1));
-	m_settings.m_volume = value / 10.0;
+	ui->volumeText->setText(QString("%1").arg(value));
+	m_settings.m_volume = value / 100.0;
 	applySettings();
 }
 
@@ -201,6 +255,36 @@ void NFMDemodGUI::on_ctcssOn_toggled(bool checked)
 	applySettings();
 }
 
+void NFMDemodGUI::on_dcsOn_toggled(bool checked)
+{
+    m_settings.m_dcsOn = checked;
+    applySettings();
+}
+
+void NFMDemodGUI::on_dcsCode_currentIndexChanged(int index)
+{
+    if (index == 0)
+    {
+        m_settings.m_dcsCode = 0;
+        applySettings();
+    }
+    else
+    {
+        QString dcsText = ui->dcsCode->currentText();
+        bool positive = (dcsText[3] == 'P');
+        dcsText.chop(1);
+        bool ok;
+        int dcsCode = dcsText.toInt(&ok, 8);
+
+        if (ok)
+        {
+            m_settings.m_dcsCode = dcsCode;
+            m_settings.m_dcsPositive = positive;
+            applySettings();
+        }
+    }
+}
+
 void NFMDemodGUI::on_highPassFilter_toggled(bool checked)
 {
     m_settings.m_highPass = checked;
@@ -227,11 +311,14 @@ void NFMDemodGUI::onWidgetRolled(QWidget* widget, bool rollDown)
 	if((widget == ui->spectrumContainer) && (m_nfmDemod != NULL))
 		m_nfmDemod->setSpectrum(m_threadedSampleSink->getMessageQueue(), rollDown);
 	*/
+
+    getRollupContents()->saveState(m_rollupState);
+    applySettings();
 }
 
 void NFMDemodGUI::onMenuDialogCalled(const QPoint &p)
 {
-    if (m_contextMenuType == ContextMenuChannelSettings)
+    if (m_contextMenuType == ContextMenuType::ContextMenuChannelSettings)
     {
         BasicChannelSettingsDialog dialog(&m_channelMarker, this);
         dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
@@ -239,10 +326,18 @@ void NFMDemodGUI::onMenuDialogCalled(const QPoint &p)
         dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
         dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
         dialog.setReverseAPIChannelIndex(m_settings.m_reverseAPIChannelIndex);
+        dialog.setDefaultTitle(m_displayedName);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            dialog.setNumberOfStreams(m_nfmDemod->getNumberOfDeviceStreams());
+            dialog.setStreamIndex(m_settings.m_streamIndex);
+        }
+
         dialog.move(p);
+        new DialogPositioner(&dialog, false);
         dialog.exec();
 
-        m_settings.m_inputFrequencyOffset = m_channelMarker.getCenterFrequency();
         m_settings.m_rgbColor = m_channelMarker.getColor().rgb();
         m_settings.m_title = m_channelMarker.getTitle();
         m_settings.m_useReverseAPI = dialog.useReverseAPI();
@@ -252,7 +347,16 @@ void NFMDemodGUI::onMenuDialogCalled(const QPoint &p)
         m_settings.m_reverseAPIChannelIndex = dialog.getReverseAPIChannelIndex();
 
         setWindowTitle(m_settings.m_title);
+        setTitle(m_channelMarker.getTitle());
         setTitleColor(m_settings.m_rgbColor);
+
+        if (m_deviceUISet->m_deviceMIMOEngine)
+        {
+            m_settings.m_streamIndex = dialog.getSelectedStreamIndex();
+            m_channelMarker.clearStreamIndexes();
+            m_channelMarker.addStreamIndex(m_settings.m_streamIndex);
+            updateIndexLabel();
+        }
 
         applySettings();
     }
@@ -261,46 +365,69 @@ void NFMDemodGUI::onMenuDialogCalled(const QPoint &p)
 }
 
 NFMDemodGUI::NFMDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel, QWidget* parent) :
-	RollupWidget(parent),
+	ChannelGUI(parent),
 	ui(new Ui::NFMDemodGUI),
 	m_pluginAPI(pluginAPI),
 	m_deviceUISet(deviceUISet),
 	m_channelMarker(this),
+    m_deviceCenterFrequency(0),
+    m_basebandSampleRate(1),
 	m_basicSettingsShown(false),
 	m_doApplySettings(true),
 	m_squelchOpen(false),
+    m_audioSampleRate(-1),
+    m_reportedDcsCode(0),
+    m_dcsShowPositive(false),
 	m_tickCount(0)
 {
-	ui->setupUi(this);
 	setAttribute(Qt::WA_DeleteOnClose, true);
-
-	connect(this, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
+    m_helpURL = "plugins/channelrx/demodnfm/readme.md";
+    RollupContents *rollupContents = getRollupContents();
+	ui->setupUi(rollupContents);
+    setSizePolicy(rollupContents->sizePolicy());
+    rollupContents->arrangeRollups();
+	connect(rollupContents, SIGNAL(widgetRolled(QWidget*,bool)), this, SLOT(onWidgetRolled(QWidget*,bool)));
     connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(onMenuDialogCalled(const QPoint &)));
 
-	m_nfmDemod = reinterpret_cast<NFMDemod*>(rxChannel); //new NFMDemod(m_deviceUISet->m_deviceSourceAPI);
+	m_nfmDemod = reinterpret_cast<NFMDemod*>(rxChannel);
 	m_nfmDemod->setMessageQueueToGUI(getInputMessageQueue());
 
-	connect(&MainWindow::getInstance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
+	connect(&MainCore::instance()->getMasterTimer(), SIGNAL(timeout()), this, SLOT(tick()));
 
     CRightClickEnabler *audioMuteRightClickEnabler = new CRightClickEnabler(ui->audioMute);
-    connect(audioMuteRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(audioSelect()));
+    connect(audioMuteRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(audioSelect(const QPoint &)));
 
     blockApplySettings(true);
 
-    ui->rfBW->clear();
+    ui->channelSpacing->clear();
 
-    for (int i = 0; i < NFMDemodSettings::m_nbRfBW; i++) {
-        ui->rfBW->addItem(QString("%1").arg(NFMDemodSettings::getRFBW(i) / 1000.0, 0, 'f', 2));
+    for (int i = 0; i < NFMDemodSettings::m_nbChannelSpacings; i++) {
+        ui->channelSpacing->addItem(QString("%1").arg(NFMDemodSettings::getChannelSpacing(i) / 1000.0, 0, 'f', 2));
     }
 
-    int ctcss_nbTones;
-    const Real *ctcss_tones = m_nfmDemod->getCtcssToneSet(ctcss_nbTones);
+    ui->channelSpacing->setCurrentIndex(NFMDemodSettings::getChannelSpacingIndex(12500));
+
+    int ctcss_nbTones = CTCSSDetector::getNTones();
+    const Real *ctcss_tones = CTCSSDetector::getToneSet();
 
     ui->ctcss->addItem("--");
 
-    for (int i=0; i<ctcss_nbTones; i++)
+    if (ctcss_tones)
     {
-        ui->ctcss->addItem(QString("%1").arg(ctcss_tones[i]));
+        for (int i=0; i<ctcss_nbTones; i++) {
+            ui->ctcss->addItem(QString("%1").arg(ctcss_tones[i]));
+        }
+    }
+
+    ui->dcsOn->setChecked(m_settings.m_dcsOn);
+    QList<unsigned int> dcsCodes;
+    DCSCodes::getCanonicalCodes(dcsCodes);
+    ui->dcsCode->addItem("--");
+
+    for (auto dcsCode : dcsCodes)
+    {
+        ui->dcsCode->addItem(QString("%1P").arg(dcsCode, 3, 8, QLatin1Char('0')));
+        ui->dcsCode->addItem(QString("%1N").arg(dcsCode, 3, 8, QLatin1Char('0')));
     }
 
     blockApplySettings(false);
@@ -321,10 +448,9 @@ NFMDemodGUI::NFMDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, Baseban
     m_channelMarker.setVisible(true); // activate signal on the last setting only
 
     m_settings.setChannelMarker(&m_channelMarker);
+    m_settings.setRollupState(&m_rollupState);
 
-    m_deviceUISet->registerRxChannelInstance(NFMDemod::m_channelIdURI, this);
 	m_deviceUISet->addChannelMarker(&m_channelMarker);
-	m_deviceUISet->addRollupWidget(this);
 
 	connect(&m_channelMarker, SIGNAL(changedByCursor()), this, SLOT(channelMarkerChangedByCursor()));
     connect(&m_channelMarker, SIGNAL(highlightedByCursor()), this, SLOT(channelMarkerHighlightedByCursor()));
@@ -335,13 +461,14 @@ NFMDemodGUI::NFMDemodGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, Baseban
 	connect(getInputMessageQueue(), SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()));
 
 	displaySettings();
+    makeUIConnections();
 	applySettings(true);
+    DialPopup::addPopupsToChildDials(this);
+    m_resizer.enableChildMouseTracking();
 }
 
 NFMDemodGUI::~NFMDemodGUI()
 {
-    m_deviceUISet->removeRxChannelInstance(this);
-	delete m_nfmDemod; // TODO: check this: when the GUI closes it has to delete the demodulator
 	delete ui;
 }
 
@@ -350,10 +477,6 @@ void NFMDemodGUI::applySettings(bool force)
 	if (m_doApplySettings)
 	{
 		qDebug() << "NFMDemodGUI::applySettings";
-
-        NFMDemod::MsgConfigureChannelizer* channelConfigMsg = NFMDemod::MsgConfigureChannelizer::create(
-                48000, m_channelMarker.getCenterFrequency());
-        m_nfmDemod->getInputMessageQueue()->push(channelConfigMsg);
 
         NFMDemod::MsgConfigureNFMDemod* message = NFMDemod::MsgConfigureNFMDemod::create( m_settings, force);
         m_nfmDemod->getInputMessageQueue()->push(message);
@@ -371,18 +494,27 @@ void NFMDemodGUI::displaySettings()
 
     setTitleColor(m_settings.m_rgbColor);
     setWindowTitle(m_channelMarker.getTitle());
+    setTitle(m_channelMarker.getTitle());
 
     blockApplySettings(true);
 
     ui->deltaFrequency->setValue(m_channelMarker.getCenterFrequency());
 
-    ui->rfBW->setCurrentIndex(NFMDemodSettings::getRFBWIndex(m_settings.m_rfBandwidth));
+    ui->rfBWText->setText(QString("%1k").arg(m_settings.m_rfBandwidth / 1000.0, 0, 'f', 1));
+    ui->rfBW->setValue(m_settings.m_rfBandwidth / 100.0);
 
-    ui->afBWText->setText(QString("%1 k").arg(m_settings.m_afBandwidth / 1000.0));
-    ui->afBW->setValue(m_settings.m_afBandwidth / 1000.0);
+    ui->afBWText->setText(QString("%1k").arg(m_settings.m_afBandwidth / 1000.0, 0, 'f', 1));
+    ui->afBW->setValue(m_settings.m_afBandwidth / 100.0);
 
-    ui->volumeText->setText(QString("%1").arg(m_settings.m_volume, 0, 'f', 1));
-    ui->volume->setValue(m_settings.m_volume * 10.0);
+    ui->fmDevText->setText(QString("%1%2k").arg(QChar(0xB1, 0x00)).arg(m_settings.m_fmDeviation / 2000.0, 0, 'f', 1));
+    ui->fmDev->setValue(m_settings.m_fmDeviation / 200.0);
+
+    ui->channelSpacing->blockSignals(true);
+    ui->channelSpacing->setCurrentIndex(NFMDemodSettings::getChannelSpacingIndex(m_settings.m_rfBandwidth));
+    ui->channelSpacing->blockSignals(false);
+
+    ui->volumeText->setText(QString("%1").arg(m_settings.m_volume*100.0, 0, 'f', 0));
+    ui->volume->setValue(m_settings.m_volume * 100.0);
 
     ui->squelchGateText->setText(QString("%1").arg(m_settings.m_squelchGate * 10.0f, 0, 'f', 0));
     ui->squelchGate->setValue(m_settings.m_squelchGate);
@@ -408,29 +540,59 @@ void NFMDemodGUI::displaySettings()
     ui->audioMute->setChecked(m_settings.m_audioMute);
 
     ui->ctcss->setCurrentIndex(m_settings.m_ctcssIndex);
+    ui->dcsOn->setChecked(m_settings.m_dcsOn);
 
+    if (m_settings.m_dcsCode == 0) {
+        ui->dcsCode->setCurrentText(tr("--"));
+    } else {
+        ui->dcsCode->setCurrentText(tr("%1%2")
+            .arg(m_settings.m_dcsCode, 3, 8, QLatin1Char('0'))
+            .arg(m_settings.m_dcsPositive ? "P" : "N")
+        );
+    }
+
+    setDcsCode(m_reportedDcsCode);
+    updateIndexLabel();
+
+    getRollupContents()->restoreState(m_rollupState);
+    updateAbsoluteCenterFrequency();
     blockApplySettings(false);
 }
 
-void NFMDemodGUI::leaveEvent(QEvent*)
+void NFMDemodGUI::leaveEvent(QEvent* event)
 {
 	m_channelMarker.setHighlighted(false);
+    ChannelGUI::leaveEvent(event);
 }
 
-void NFMDemodGUI::enterEvent(QEvent*)
+void NFMDemodGUI::enterEvent(EnterEventType* event)
 {
 	m_channelMarker.setHighlighted(true);
+    ChannelGUI::enterEvent(event);
 }
 
 void NFMDemodGUI::setCtcssFreq(Real ctcssFreq)
 {
-	if (ctcssFreq == 0)
-	{
+	if (ctcssFreq == 0) {
 		ui->ctcssText->setText("--");
-	}
-	else
-	{
+	} else {
 		ui->ctcssText->setText(QString("%1").arg(ctcssFreq));
+	}
+}
+
+void NFMDemodGUI::setDcsCode(unsigned int dcsCode)
+{
+	if (dcsCode == 0)
+    {
+		ui->dcsText->setText("--");
+	}
+    else
+    {
+        unsigned int normalizedCode;
+        bool showPositive = ui->dcsPositive->isChecked();
+        normalizedCode = DCSCodes::m_toCanonicalCode[dcsCode];
+        normalizedCode = showPositive ? normalizedCode : DCSCodes::m_signFlip[normalizedCode];
+		ui->dcsText->setText(tr("%1").arg(normalizedCode, 3, 8, QLatin1Char('0')));
 	}
 }
 
@@ -439,10 +601,12 @@ void NFMDemodGUI::blockApplySettings(bool block)
 	m_doApplySettings = !block;
 }
 
-void NFMDemodGUI::audioSelect()
+void NFMDemodGUI::audioSelect(const QPoint& p)
 {
     qDebug("NFMDemodGUI::audioSelect");
     AudioSelectDialog audioSelect(DSPEngine::instance()->getAudioDeviceManager(), m_settings.m_audioDeviceName);
+    audioSelect.move(p);
+    new DialogPositioner(&audioSelect, false);
     audioSelect.exec();
 
     if (audioSelect.m_selected)
@@ -469,18 +633,46 @@ void NFMDemodGUI::tick()
         ui->channelPower->setText(tr("%1 dB").arg(powDbAvg, 0, 'f', 1));
     }
 
+    int audioSampleRate = m_nfmDemod->getAudioSampleRate();
     bool squelchOpen = m_nfmDemod->getSquelchOpen();
 
-	if (squelchOpen != m_squelchOpen)
+	if ((audioSampleRate != m_audioSampleRate) || (squelchOpen != m_squelchOpen))
 	{
-		if (squelchOpen) {
+        if (audioSampleRate < 0) {
+            ui->audioMute->setStyleSheet("QToolButton { background-color : red; }");
+        } else if (squelchOpen) {
 			ui->audioMute->setStyleSheet("QToolButton { background-color : green; }");
 		} else {
 			ui->audioMute->setStyleSheet("QToolButton { background:rgb(79,79,79); }");
 		}
 
+        m_audioSampleRate = audioSampleRate;
         m_squelchOpen = squelchOpen;
 	}
 
 	m_tickCount++;
+}
+
+void NFMDemodGUI::makeUIConnections()
+{
+    QObject::connect(ui->deltaFrequency, &ValueDialZ::changed, this, &NFMDemodGUI::on_deltaFrequency_changed);
+    QObject::connect(ui->channelSpacingApply, &QPushButton::clicked, this, &NFMDemodGUI::on_channelSpacingApply_clicked);
+    QObject::connect(ui->rfBW, &QSlider::valueChanged, this, &NFMDemodGUI::on_rfBW_valueChanged);
+    QObject::connect(ui->afBW, &QSlider::valueChanged, this, &NFMDemodGUI::on_afBW_valueChanged);
+    QObject::connect(ui->fmDev, &QSlider::valueChanged, this, &NFMDemodGUI::on_fmDev_valueChanged);
+    QObject::connect(ui->volume, &QDial::valueChanged, this, &NFMDemodGUI::on_volume_valueChanged);
+    QObject::connect(ui->squelchGate, &QDial::valueChanged, this, &NFMDemodGUI::on_squelchGate_valueChanged);
+    QObject::connect(ui->deltaSquelch, &ButtonSwitch::toggled, this, &NFMDemodGUI::on_deltaSquelch_toggled);
+    QObject::connect(ui->squelch, &QDial::valueChanged, this, &NFMDemodGUI::on_squelch_valueChanged);
+    QObject::connect(ui->ctcss, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &NFMDemodGUI::on_ctcss_currentIndexChanged);
+    QObject::connect(ui->ctcssOn, &QCheckBox::toggled, this, &NFMDemodGUI::on_ctcssOn_toggled);
+    QObject::connect(ui->dcsOn, &QCheckBox::toggled, this, &NFMDemodGUI::on_dcsOn_toggled);
+    QObject::connect(ui->dcsCode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &NFMDemodGUI::on_dcsCode_currentIndexChanged);
+    QObject::connect(ui->highPassFilter, &ButtonSwitch::toggled, this, &NFMDemodGUI::on_highPassFilter_toggled);
+    QObject::connect(ui->audioMute, &QToolButton::toggled, this, &NFMDemodGUI::on_audioMute_toggled);
+}
+
+void NFMDemodGUI::updateAbsoluteCenterFrequency()
+{
+    setStatusFrequency(m_deviceCenterFrequency + m_settings.m_inputFrequencyOffset);
 }

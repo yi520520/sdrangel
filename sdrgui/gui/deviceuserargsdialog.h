@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -58,6 +61,8 @@ private:
     DeviceUserArgs& m_hardwareDeviceUserArgs;
     std::vector<HWDeviceReference> m_availableHWDevices;
     DeviceUserArgs m_deviceUserArgsCopy;
+    QString m_xDeviceHardwareId;
+    unsigned int m_xDeviceSequence;
 
     void pushHWDeviceReference(const PluginInterface::SamplingDevice *samplingDevice);
     void displayArgsByDevice();
@@ -65,10 +70,13 @@ private:
 private slots:
 	void accept();
 	void reject();
-    void on_importDevice_clicked(bool checked);
-    void on_deleteArgs_clicked(bool checked);
+    void on_importDevice_clicked();
+    void on_deleteArgs_clicked();
     void on_argsTree_currentItemChanged(QTreeWidgetItem* currentItem, QTreeWidgetItem* previousItem);
     void on_argStringEdit_editingFinished();
+    void on_addDeviceHwIDEdit_editingFinished();
+    void on_addDeviceSeqEdit_editingFinished();
+    void on_addDevice_clicked();
 };
 
 #endif // SDRGUI_GUI_DEVICEUSERARGSDIALOG_H

@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,6 +24,7 @@
 #include <vector>
 
 #include <QNetworkRequest>
+#include <QMutex>
 
 #include "perseus-sdr.h"
 #include "dsp/devicesamplesource.h"
@@ -29,9 +33,9 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 class DeviceAPI;
-class FileRecord;
-class PerseusThread;
+class PerseusWorker;
 
 class PerseusInput : public DeviceSampleSource {
     Q_OBJECT
@@ -41,40 +45,24 @@ public:
 
     public:
         const PerseusSettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
         bool getForce() const { return m_force; }
 
-        static MsgConfigurePerseus* create(const PerseusSettings& settings, bool force)
+        static MsgConfigurePerseus* create(const PerseusSettings& settings, const QList<QString>& settingsKeys, bool force)
         {
-            return new MsgConfigurePerseus(settings, force);
+            return new MsgConfigurePerseus(settings, settingsKeys, force);
         }
 
     private:
         PerseusSettings m_settings;
+        QList<QString> m_settingsKeys;
         bool m_force;
 
-        MsgConfigurePerseus(const PerseusSettings& settings, bool force) :
+        MsgConfigurePerseus(const PerseusSettings& settings, const QList<QString>& settingsKeys, bool force) :
             Message(),
             m_settings(settings),
+            m_settingsKeys(settingsKeys),
             m_force(force)
-        { }
-    };
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
         { }
     };
 
@@ -140,15 +128,25 @@ public:
             SWGSDRangel::SWGDeviceState& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+            SWGSDRangel::SWGDeviceSettings& response,
+            const PerseusSettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            PerseusSettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     const std::vector<uint32_t>& getSampleRates() const { return m_sampleRates; }
 
 private:
     DeviceAPI *m_deviceAPI;
-    FileRecord *m_fileSink;
     QString m_deviceDescription;
     PerseusSettings m_settings;
+    QMutex m_mutex;
     bool m_running;
-    PerseusThread *m_perseusThread;
+    PerseusWorker *m_perseusWorker;
+    QThread *m_perseusWorkerThread;
     perseus_descr *m_perseusDescriptor;
     std::vector<uint32_t> m_sampleRates;
     QNetworkAccessManager *m_networkManager;
@@ -157,10 +155,9 @@ private:
     bool openDevice();
     void closeDevice();
     void setDeviceCenterFrequency(quint64 freq, const PerseusSettings& settings);
-    bool applySettings(const PerseusSettings& settings, bool force = false);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const PerseusSettings& settings);
+    bool applySettings(const PerseusSettings& settings, const QList<QString>& settingsKeys, bool force = false);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const PerseusSettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const PerseusSettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

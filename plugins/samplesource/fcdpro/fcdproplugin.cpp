@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,8 +19,8 @@
 
 #include <QtPlugin>
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 #include "fcdproplugin.h"
+#include "fcdprowebapiadapter.h"
 
 #ifdef SERVER_MODE
 #include "fcdproinput.h"
@@ -28,12 +30,13 @@
 #include "fcdtraits.h"
 
 const PluginDescriptor FCDProPlugin::m_pluginDescriptor = {
-	QString(fcd_traits<Pro>::pluginDisplayedName),
-	QString(fcd_traits<Pro>::pluginVersion),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("FCDPro"),
+	fcd_traits<Pro>::pluginDisplayedName,
+	fcd_traits<Pro>::pluginVersion,
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 FCDProPlugin::FCDProPlugin(QObject* parent) :
@@ -51,9 +54,11 @@ void FCDProPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleSource(fcd_traits<Pro>::interfaceIID, this);
 }
 
-PluginInterface::SamplingDevices FCDProPlugin::enumSampleSources()
+void FCDProPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
 {
-	SamplingDevices result;
+    if (listedHwIds.contains(fcd_traits<Pro>::hardwareID)) { // check if it was done
+        return;
+    }
 
 	int i = 0;
 	struct hid_device_info *device_info = hid_enumerate(fcd_traits<Pro>::vendorId, fcd_traits<Pro>::productId);
@@ -61,27 +66,50 @@ PluginInterface::SamplingDevices FCDProPlugin::enumSampleSources()
 	while (device_info != 0)
 	{
 		QString serialNumber = QString::fromWCharArray(device_info->serial_number);
-		QString displayedName(QString("%1[%2] %3").arg(fcd_traits<Pro>::displayedName).arg(i).arg(serialNumber));
+		QString displayableName(QString("%1[%2] %3").arg(fcd_traits<Pro>::displayedName).arg(i).arg(serialNumber));
 
-		result.append(SamplingDevice(displayedName,
-		        fcd_traits<Pro>::hardwareID,
-		        fcd_traits<Pro>::interfaceIID,
-				serialNumber,
-				i,
-				PluginInterface::SamplingDevice::PhysicalDevice,
-				PluginInterface::SamplingDevice::StreamSingleRx,
-				1,
-				0));
+        originDevices.append(OriginDevice(
+            displayableName,
+            fcd_traits<Pro>::hardwareID,
+            serialNumber,
+            i,
+            1, // nb Rx
+            0  // nb Tx
+        ));
 
 		device_info = device_info->next;
 		i++;
 	}
 
+    listedHwIds.append(fcd_traits<Pro>::hardwareID);
+}
+
+PluginInterface::SamplingDevices FCDProPlugin::enumSampleSources(const OriginDevices& originDevices)
+{
+	SamplingDevices result;
+
+	for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == fcd_traits<Pro>::hardwareID)
+        {
+            result.append(SamplingDevice(
+                it->displayableName,
+                fcd_traits<Pro>::hardwareID,
+                fcd_traits<Pro>::interfaceIID,
+                it->serial,
+                it->sequence,
+                PluginInterface::SamplingDevice::PhysicalDevice,
+                PluginInterface::SamplingDevice::StreamSingleRx,
+                1,
+                0));
+        }
+    }
+
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* FCDProPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* FCDProPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -92,7 +120,7 @@ PluginInstanceGUI* FCDProPlugin::createSampleSourcePluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* FCDProPlugin::createSampleSourcePluginInstanceGUI(
+DeviceGUI* FCDProPlugin::createSampleSourcePluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -121,4 +149,9 @@ DeviceSampleSource *FCDProPlugin::createSampleSourcePluginInstance(const QString
     {
         return 0;
     }
+}
+
+DeviceWebAPIAdapter *FCDProPlugin::createDeviceWebAPIAdapter() const
+{
+    return new FCDProWebAPIAdapter();
 }

@@ -8,7 +8,7 @@ set(logging_SOURCES
    logmessage.cpp
 )
 
-set(httpserver_HEADERS
+set(logging_HEADERS
    dualfilelogger.h
    loggerwithfile.h
    filelogger.h
@@ -21,13 +21,13 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/exports
 )
 
-add_library(logging SHARED
+add_library(logging
     ${logging_SOURCES}
 )
 
 target_link_libraries(logging
-    Qt5::Core
-    Qt5::Network
+    Qt::Core
+    Qt::Network
 )
 
 install(TARGETS logging DESTINATION ${INSTALL_LIB_DIR})

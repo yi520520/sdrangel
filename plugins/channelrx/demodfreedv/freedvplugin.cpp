@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,15 +24,17 @@
 #include "freedvdemodgui.h"
 #endif
 #include "freedvdemod.h"
+#include "freedvdemodwebapiadapter.h"
 #include "freedvplugin.h"
 
 const PluginDescriptor FreeDVPlugin::m_pluginDescriptor = {
-	QString("FreeDV Demodulator"),
-	QString("4.5.5"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    FreeDVDemod::m_channelId,
+	QStringLiteral("FreeDV Demodulator"),
+    QStringLiteral("7.21.3"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 FreeDVPlugin::FreeDVPlugin(QObject* parent) :
@@ -52,27 +56,39 @@ void FreeDVPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI->registerRxChannel(FreeDVDemod::m_channelIdURI, FreeDVDemod::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* FreeDVPlugin::createRxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSink *rxChannel)
+void FreeDVPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		FreeDVDemod *instance = new FreeDVDemod(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* FreeDVPlugin::createRxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSink *rxChannel) const
+{
+	(void) deviceUISet;
+	(void) rxChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* FreeDVPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+ChannelGUI* FreeDVPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
 	return FreeDVDemodGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 }
 #endif
 
-BasebandSampleSink* FreeDVPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* FreeDVPlugin::createChannelWebAPIAdapter() const
 {
-    return new FreeDVDemod(deviceAPI);
+	return new FreeDVDemodWebAPIAdapter();
 }
-
-ChannelAPI* FreeDVPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new FreeDVDemod(deviceAPI);
-}
-

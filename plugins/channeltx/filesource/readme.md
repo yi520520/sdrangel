@@ -2,7 +2,9 @@
 
 <h2>Introduction</h2>
 
-This plugin reads a file of I/Q samples that have been previously saved with the file record button of other sampling source devices. The file starts with a 32 byte header of all unsigned integer of various sizes containing meta data:
+This plugin reads a file of I/Q samples that have been previously saved with the file record button of other sampling source devices. File formats supported include SDRangel's `.sdriq` and signed 16-bit PCM `.wav` files.
+
+`.sqriq` files start with a 32 byte header of all unsigned integer of various sizes containing meta data:
 
 <table>
   <tr>
@@ -47,6 +49,8 @@ The header takes an integer number of 16 (4 bytes) or 24 (8 bytes) bits samples.
 The I/Q samples are copied to the baseband to be transmitted by the sink output device with possibly a chain of half-band interpolators for upsampling and shift of bandwidth.
 
 <h2>Interface</h2>
+
+The top and bottom bars of the channel window are described [here](../../../sdrgui/channel/readme.md)
 
 ![File source channel plugin GUI](../../../doc/img/FileSource_plugin.png)
 

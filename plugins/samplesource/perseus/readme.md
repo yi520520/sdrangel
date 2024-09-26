@@ -2,7 +2,7 @@
 
 <h2>Introduction</h2>
 
-This input sample source plugin gets its samples from a [Perseus device](http://microtelecom.it/perseus/). 
+This input sample source plugin gets its samples from a [Perseus device](http://microtelecom.it/perseus/).
 
 <h2>Build</h2>
 
@@ -16,6 +16,8 @@ If you build it from source and install it in a custom location say: `/opt/insta
 &#9758; From version 3.12.0 the Linux binaries are built with the 24 bit Rx option and Perseus input plugin.
 
 <h2>Interface</h2>
+
+The top and bottom bars of the device window are described [here](../../../sdrgui/device/readme.md)
 
 It has a limited number of controls compared to other source interfaces. This is because a lot of things are handled automatically within the Perseus:
 
@@ -35,15 +37,11 @@ This is the center frequency of reception in kHz.
 
 <h4>1.2: Start/Stop</h4>
 
-Device start / stop button. 
+Device start / stop button.
 
   - Blue triangle icon: device is ready and can be started
   - Green square icon: device is running and can be stopped
   - Magenta (or pink) square icon: an error occurred. In the case the device was accidentally disconnected you may click on the icon, plug back in and start again.
-  
-<h4>1.3: Record</h4>
-
-Record baseband I/Q stream toggle button
 
 <h4>1.4: Stream sample rate</h4>
 
@@ -61,7 +59,7 @@ This resets the LO ppm correction (zero the value).
 
 This is the device to host sample rate in kilo samples per second (kS/s). The sample rate can be as low as 48 kS/s so there is no need for software decimation. Note that at 48 kS/s some slight rate mismatch can appear with the audio that has the same nominal rate. This may cause some occasional audio samples drops however hardly noticeable.
 
-<h3>5: Wideband mode</h5>
+<h3>5: Wideband mode</h3>
 
 Switch on this button to disable the preselection filters. The corresponding LED on the Perseus front panel will be lit accordingly.
 
@@ -71,33 +69,7 @@ The I/Q stream from the Perseus to host is downsampled by a power of two before 
 
 <h3>7: Transverter mode open dialog</h3>
 
-This button opens a dialog to set the transverter mode frequency translation options:
-
-![Perseus source input stream transverter dialog](../../../doc/img/RTLSDR_plugin_xvrt.png)
-
-Note that if you mouse over the button a tooltip appears that displays the translating frequency and if translation is enabled or disabled. When the frequency translation is enabled the button is lit.
-
-<h4>7a.1: Translating frequency</h4>
-
-You can set the translating frequency in Hz with this dial. Use the wheels to adjust the sample rate. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
-
-The frequency set in the device is the frequency on the main dial (1) minus this frequency. Thus it is positive for down converters and negative for up converters. 
-
-For example with the DX Patrol that has a mixer at 120 MHz for HF operation you would set the value to -120,000,000 Hz so that if the main dial frequency is set at 7,130 kHz the RTLSDR of the DX Patrol will be set to 127.130 MHz.
-
-If you use a down converter to receive the 6 cm band narrowband center frequency of 5670 MHz at 432 MHz you would set the translating frequency to 5760 - 432 = 5328 MHz thus dial +5,328,000,000 Hz.
-
-For bands even higher in the frequency spectrum the GHz digits are not really significant so you can have them set at 1 GHz. Thus to receive the 10368 MHz frequency at 432 MHz you would set the translating frequency to 1368 - 432 = 936 MHz. Note that in this case the frequency of the LO used in the mixer of the transverter is set at 9936 MHz.
-
-The Hz precision allows a fine tuning of the transverter LO offset
-
-<h4>7a.2: Translating frequency enable/disable</h4>
-
-Use this toggle button to activate or deactivate the frequency translation
-
-<h4>7a.3: Confirmation buttons</h4>
-
-Use these buttons to confirm ("OK") or dismiss ("Cancel") your changes. 
+This button opens a dialog to set the transverter mode frequency translation options. The details about this dialog can be found [here](../../../sdrgui/gui/transverterdialog.md)
 
 <h3>8: Attenuators control</h3>
 
@@ -107,14 +79,14 @@ Use this combo box to control the attenuators inside the Perseus:
   - 10 dB: 10 dB attenuator engaged
   - 20 dB: 20 dB attenuator engaged
   - 30 dB: 10 and 20 dB attenuators engaged
-  
+
 The LEDs on the Perseus front panel corresponding to each attenuator are lit accordingly.
 
 <h3>9: ADC dither</h3>
 
-Use this button to turn on or off the Perseus ADC dithering 
+Use this button to turn on or off the Perseus ADC dithering
 
 <h3>10: ADC preamplifier</h3>
 
-Use this button to turn on or off the Perseus ADC preamplifier 
-  
+Use this button to turn on or off the Perseus ADC preamplifier
+

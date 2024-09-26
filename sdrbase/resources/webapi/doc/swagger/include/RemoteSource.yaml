@@ -8,9 +8,16 @@ RemoteSourceSettings:
       description: "Remote USB data port"
       type: integer
     rgbColor:
-      type: integer                  
+      type: integer
     title:
-      type: string      
+      type: string
+    log2Interp:
+      type: integer
+    filterChainHash:
+      type: integer
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -19,10 +26,14 @@ RemoteSourceSettings:
     reverseAPIPort:
       type: integer
     reverseAPIDeviceIndex:
-      type: integer      
+      type: integer
     reverseAPIChannelIndex:
-      type: integer 
-      
+      type: integer
+    channelMarker:
+      $ref: "/doc/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "/doc/swagger/include/RollupState.yaml#/RollupState"
+
 RemoteSourceReport:
   description: "Remote channel source report"
   properties:
@@ -46,7 +57,7 @@ RemoteSourceReport:
       type: integer
     tvUSec:
       description: "Counts timestamp microseconds"
-      type: integer     
+      type: integer
     nbOriginalBlocks:
       description: "Number of original blocks per frame"
       type: integer
@@ -56,13 +67,13 @@ RemoteSourceReport:
     centerFreq:
       description: "Stream center frequency setting in kHz"
       type: integer
+      format: int64
     sampleRate:
       description: "Stream nominal sample rate in S/s"
-      type: integer     
+      type: integer
     deviceCenterFreq:
       description: "Device center frequency in kHz"
       type: integer
     deviceSampleRate:
       description: "Device baseband sample rate in S/s"
-      type: integer     
-      
+      type: integer

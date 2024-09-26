@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -42,6 +45,7 @@ struct BladeRF1InputSettings {
 	bladerf_xb200_filter m_xb200Filter;
 	bool m_dcBlock;
 	bool m_iqCorrection;
+    bool m_iqOrder;
 	QString m_fileRecordName;
     bool     m_useReverseAPI;
     QString  m_reverseAPIAddress;
@@ -52,6 +56,8 @@ struct BladeRF1InputSettings {
 	void resetToDefaults();
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
+    void applySettings(const QStringList& settingsKeys, const BladeRF1InputSettings& settings);
+    QString getDebugString(const QStringList& settingsKeys, bool force=false) const;
 };
 
 #endif /* _BLADERF_BLADERFINPUTSETTINGS_H_ */

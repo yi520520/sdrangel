@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2016, 2018-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -37,7 +38,34 @@ public:
     /**
      * Reconfigure filter with new time constant
      */
-    void configure(Real timeout);
+    void configure(Real timeconst);
+
+    /** Process samples. */
+    void process(const Real& sample_in, Real& sample_out);
+
+private:
+    Real m_timeconst;
+    Real m_y1;
+    Real m_a1;
+    Real m_b0;
+};
+
+/** First order high-pass IIR filter for real-valued signals. */
+class SDRBASE_API HighPassFilterRC
+{
+public:
+
+    /**
+     * Construct 1st order high-pass IIR filter.
+     *
+     * timeconst :: RC time constant in seconds (1 / (2 * PI * cutoff_freq)
+     */
+    HighPassFilterRC(Real timeconst);
+
+    /**
+     * Reconfigure filter with new time constant
+     */
+    void configure(Real timeconst);
 
     /** Process samples. */
     void process(const Real& sample_in, Real& sample_out);

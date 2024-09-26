@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>758</width>
-    <height>121</height>
+    <height>180</height>
    </rect>
   </property>
   <property name="minimumSize">
@@ -193,7 +193,7 @@
         </size>
        </property>
        <property name="toolTip">
-        <string>Display X and Y trances on top of each other</string>
+        <string>Display X and Y traces on top of each other</string>
        </property>
        <property name="text">
         <string>...</string>
@@ -277,6 +277,21 @@
        <property name="icon">
         <iconset resource="../resources/res.qrc">
          <normaloff>:/constellation.png</normaloff>:/constellation.png</iconset>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="ButtonSwitch" name="polarGrid">
+       <property name="toolTip">
+        <string>Toggle between polar and rectangular grid for XY display</string>
+       </property>
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../resources/res.qrc">
+         <normaloff>:/gridrect.png</normaloff>
+         <normalon>:/gridpolar.png</normalon>:/gridrect.png</iconset>
        </property>
       </widget>
      </item>
@@ -627,6 +642,7 @@ kS/s</string>
          </property>
          <property name="font">
           <font>
+           <family>Liberation Sans</family>
            <pointsize>10</pointsize>
           </font>
          </property>
@@ -685,6 +701,7 @@ kS/s</string>
          </property>
          <property name="font">
           <font>
+           <family>Liberation Sans</family>
            <pointsize>10</pointsize>
           </font>
          </property>
@@ -758,64 +775,47 @@ kS/s</string>
       </layout>
      </item>
      <item>
-      <widget class="Line" name="line_4">
-       <property name="orientation">
-        <enum>Qt::Vertical</enum>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="traceMode">
-       <property name="maximumSize">
-        <size>
-         <width>65</width>
-         <height>16777215</height>
-        </size>
-       </property>
-       <property name="toolTip">
-        <string>Trace mode</string>
-       </property>
-       <item>
-        <property name="text">
-         <string>TBD</string>
-        </property>
-       </item>
-      </widget>
-     </item>
-     <item>
-      <widget class="QDial" name="sourcePort">
-       <property name="maximumSize">
-        <size>
-         <width>24</width>
-         <height>24</height>
-        </size>
-       </property>
-       <property name="toolTip">
-        <string>Source port selection</string>
-       </property>
-       <property name="maximum">
+      <layout class="QVBoxLayout" name="traceModeLayout">
+       <property name="spacing">
         <number>0</number>
        </property>
-       <property name="pageStep">
-        <number>1</number>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLabel" name="sourcePortText">
-       <property name="minimumSize">
-        <size>
-         <width>12</width>
-         <height>0</height>
-        </size>
-       </property>
-       <property name="toolTip">
-        <string>Source port number</string>
-       </property>
-       <property name="text">
-        <string>0</string>
-       </property>
-      </widget>
+       <item>
+        <widget class="QComboBox" name="traceStream">
+         <property name="maximumSize">
+          <size>
+           <width>65</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Trace stream source</string>
+         </property>
+         <item>
+          <property name="text">
+           <string>0</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="traceMode">
+         <property name="maximumSize">
+          <size>
+           <width>65</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Trace mode</string>
+         </property>
+         <item>
+          <property name="text">
+           <string>TBD</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+      </layout>
      </item>
      <item>
       <widget class="Line" name="line_16">
@@ -825,49 +825,152 @@ kS/s</string>
       </widget>
      </item>
      <item>
-      <widget class="QLabel" name="ampLabel">
-       <property name="toolTip">
-        <string>Vertical range</string>
-       </property>
-       <property name="text">
-        <string>A:</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLabel" name="ampText">
-       <property name="minimumSize">
+      <widget class="QPushButton" name="ampReset">
+       <property name="maximumSize">
         <size>
-         <width>36</width>
-         <height>0</height>
+         <width>22</width>
+         <height>22</height>
         </size>
        </property>
        <property name="toolTip">
-        <string>Vertical range value</string>
+        <string>Vertical range reset</string>
        </property>
        <property name="text">
-        <string>000</string>
-       </property>
-       <property name="alignment">
-        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+        <string>A</string>
        </property>
       </widget>
      </item>
      <item>
-      <widget class="QSlider" name="amp">
-       <property name="toolTip">
-        <string>Vertical range</string>
+      <layout class="QVBoxLayout" name="ampLayout">
+       <property name="spacing">
+        <number>2</number>
        </property>
-       <property name="maximum">
-        <number>26</number>
-       </property>
-       <property name="pageStep">
-        <number>1</number>
-       </property>
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-      </widget>
+       <item>
+        <layout class="QHBoxLayout" name="ampMantissaLayout">
+         <item>
+          <widget class="QLabel" name="ampText">
+           <property name="minimumSize">
+            <size>
+             <width>36</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical range value</string>
+           </property>
+           <property name="text">
+            <string>1.000</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="amp">
+           <property name="toolTip">
+            <string>Vertical range (fine)</string>
+           </property>
+           <property name="minimum">
+            <number>0</number>
+           </property>
+           <property name="maximum">
+            <number>999</number>
+           </property>
+           <property name="pageStep">
+            <number>1</number>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QDial" name="ampCoarse">
+           <property name="maximumSize">
+            <size>
+             <width>24</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical range (coarse)</string>
+           </property>
+           <property name="minimum">
+            <number>1</number>
+           </property>
+           <property name="maximum">
+            <number>9</number>
+           </property>
+           <property name="pageStep">
+            <number>1</number>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="ampExponentLayout">
+         <item>
+          <widget class="QLabel" name="ampExpText">
+           <property name="minimumSize">
+            <size>
+             <width>36</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical range value</string>
+           </property>
+           <property name="text">
+            <string>e+0</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="ampExp">
+           <property name="toolTip">
+            <string>Vertical range exponent</string>
+           </property>
+           <property name="minimum">
+            <number>-10</number>
+           </property>
+           <property name="maximum">
+            <number>10</number>
+           </property>
+           <property name="pageStep">
+            <number>1</number>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QLabel" name="ampMultiplierText">
+           <property name="minimumSize">
+            <size>
+             <width>20</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Unit multiplier on vertical scale</string>
+           </property>
+           <property name="text">
+            <string>-</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+      </layout>
      </item>
      <item>
       <widget class="Line" name="line_8">
@@ -877,31 +980,18 @@ kS/s</string>
       </widget>
      </item>
      <item>
-      <widget class="QLabel" name="ofsLabel">
-       <property name="toolTip">
-        <string>Vertical offset</string>
-       </property>
-       <property name="text">
-        <string>O:</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QLabel" name="ofsText">
-       <property name="minimumSize">
+      <widget class="QPushButton" name="ofsReset">
+       <property name="maximumSize">
         <size>
-         <width>36</width>
-         <height>0</height>
+         <width>22</width>
+         <height>22</height>
         </size>
        </property>
        <property name="toolTip">
-        <string>Vertical offset value</string>
+        <string>Vertical offset reset</string>
        </property>
        <property name="text">
-        <string>0</string>
-       </property>
-       <property name="alignment">
-        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+        <string>O</string>
        </property>
       </widget>
      </item>
@@ -911,48 +1001,137 @@ kS/s</string>
         <number>2</number>
        </property>
        <item>
-        <widget class="QSlider" name="ofsCoarse">
-         <property name="maximumSize">
-          <size>
-           <width>16777215</width>
-           <height>14</height>
-          </size>
-         </property>
-         <property name="toolTip">
-          <string>Vertical offset coarse</string>
-         </property>
-         <property name="minimum">
-          <number>-100</number>
-         </property>
-         <property name="pageStep">
-          <number>1</number>
-         </property>
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-        </widget>
+        <layout class="QHBoxLayout" name="ofsMantissaLayout">
+         <item>
+          <widget class="QLabel" name="ofsText">
+           <property name="minimumSize">
+            <size>
+             <width>36</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical offset value</string>
+           </property>
+           <property name="text">
+            <string>0.000</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="ofsFine">
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>14</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical offset (fine)</string>
+           </property>
+           <property name="minimum">
+            <number>0</number>
+           </property>
+           <property name="maximum">
+            <number>1000</number>
+           </property>
+           <property name="pageStep">
+            <number>1</number>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QDial" name="ofsCoarse">
+           <property name="maximumSize">
+            <size>
+             <width>24</width>
+             <height>24</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical offset (coarse)</string>
+           </property>
+           <property name="minimum">
+            <number>-5</number>
+           </property>
+           <property name="maximum">
+            <number>4</number>
+           </property>
+           <property name="pageStep">
+            <number>1</number>
+           </property>
+           <property name="value">
+            <number>0</number>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
        <item>
-        <widget class="QSlider" name="ofsFine">
-         <property name="maximumSize">
-          <size>
-           <width>16777215</width>
-           <height>14</height>
-          </size>
+        <layout class="QHBoxLayout" name="ofsExponentLayout">
+         <property name="leftMargin">
+          <number>6</number>
          </property>
-         <property name="toolTip">
-          <string>Vertical offset fine</string>
+         <property name="topMargin">
+          <number>6</number>
          </property>
-         <property name="maximum">
-          <number>200</number>
+         <property name="rightMargin">
+          <number>6</number>
          </property>
-         <property name="pageStep">
-          <number>1</number>
+         <property name="bottomMargin">
+          <number>6</number>
          </property>
-         <property name="orientation">
-          <enum>Qt::Horizontal</enum>
-         </property>
-        </widget>
+         <item>
+          <widget class="QLabel" name="ofsExpText">
+           <property name="minimumSize">
+            <size>
+             <width>36</width>
+             <height>0</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical range value</string>
+           </property>
+           <property name="text">
+            <string>e+0</string>
+           </property>
+           <property name="alignment">
+            <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSlider" name="ofsExp">
+           <property name="maximumSize">
+            <size>
+             <width>16777215</width>
+             <height>14</height>
+            </size>
+           </property>
+           <property name="toolTip">
+            <string>Vertical offset exponent</string>
+           </property>
+           <property name="minimum">
+            <number>-10</number>
+           </property>
+           <property name="maximum">
+            <number>10</number>
+           </property>
+           <property name="pageStep">
+            <number>1</number>
+           </property>
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+          </widget>
+         </item>
+        </layout>
        </item>
       </layout>
      </item>
@@ -1317,6 +1496,7 @@ kS/s</string>
          </property>
          <property name="font">
           <font>
+           <family>Liberation Sans</family>
            <pointsize>10</pointsize>
           </font>
          </property>
@@ -1375,6 +1555,7 @@ kS/s</string>
          </property>
          <property name="font">
           <font>
+           <family>Liberation Sans</family>
            <pointsize>10</pointsize>
           </font>
          </property>
@@ -1448,28 +1629,53 @@ kS/s</string>
       </layout>
      </item>
      <item>
+      <layout class="QVBoxLayout" name="trigModeLayout">
+       <property name="spacing">
+        <number>0</number>
+       </property>
+       <item>
+        <widget class="QComboBox" name="trigStream">
+         <property name="maximumSize">
+          <size>
+           <width>65</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Trigger stream source</string>
+         </property>
+         <item>
+          <property name="text">
+           <string>0</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="trigMode">
+         <property name="maximumSize">
+          <size>
+           <width>65</width>
+           <height>16777215</height>
+          </size>
+         </property>
+         <property name="toolTip">
+          <string>Trigger mode</string>
+         </property>
+         <item>
+          <property name="text">
+           <string>TBD</string>
+          </property>
+         </item>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
       <widget class="Line" name="line_10">
        <property name="orientation">
         <enum>Qt::Vertical</enum>
        </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QComboBox" name="trigMode">
-       <property name="maximumSize">
-        <size>
-         <width>65</width>
-         <height>16777215</height>
-        </size>
-       </property>
-       <property name="toolTip">
-        <string>Trigger mode</string>
-       </property>
-       <item>
-        <property name="text">
-         <string>TBD</string>
-        </property>
-       </item>
       </widget>
      </item>
      <item>

@@ -1,6 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // Same as ValueDial but handles optionally positive and negative numbers with   //
 // sign display.                                                                 //
@@ -31,7 +33,7 @@ public:
 	ValueDialZ(bool positiveOnly = true, QWidget* parent = NULL, ColorMapper colorMapper = ColorMapper(ColorMapper::Normal));
 
 	void setValue(qint64 value);
-	void setValueRange(bool positiveOnly, uint numDigits, qint64 min, qint64 max);
+	void setValueRange(bool positiveOnly, uint numDigits, qint64 min, qint64 max, int decimalPos = 0);
 	void setFont(const QFont& font);
 	void setBold(bool bold);
 	void setColorMapper(ColorMapper colorMapper);
@@ -44,7 +46,7 @@ signals:
 private:
 	QLinearGradient m_background;
 	int m_numDigits;
-	int m_numDecimalPoints;
+	int m_numThousandPoints;
 	int m_digitWidth;
 	int m_digitHeight;
 	int m_hightlightedDigit;
@@ -54,6 +56,7 @@ private:
 	qint64 m_valueMax;
 	qint64 m_valueMin;
 	bool m_positiveOnly;
+	int m_decimalPos; //!< for fixed point
 	QString m_text;
 
 	qint64 m_valueNew;
@@ -61,7 +64,13 @@ private:
 	int m_animationState;
 	QTimer m_animationTimer;
 	QTimer m_blinkTimer;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+	QString m_groupSeparator;
+	QString m_decSeparator;
+#else
 	QChar m_groupSeparator;
+	QChar m_decSeparator;
+#endif
 
 	ColorMapper m_colorMapper;
 
@@ -76,10 +85,14 @@ private:
 	void wheelEvent(QWheelEvent*);
 	void leaveEvent(QEvent*);
 	void keyPressEvent(QKeyEvent*);
+    void inputMethodEvent(QInputMethodEvent*);
 	void focusInEvent(QFocusEvent*);
 	void focusOutEvent(QFocusEvent*);
 
 private slots:
 	void animate();
 	void blink();
+
+        friend class AccessibleValueDialZ;
+
 };

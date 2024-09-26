@@ -29,6 +29,9 @@ AMModSettings:
       type: string
     modAFInput:
       type: integer
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -37,12 +40,16 @@ AMModSettings:
     reverseAPIPort:
       type: integer
     reverseAPIDeviceIndex:
-      type: integer      
+      type: integer
     reverseAPIChannelIndex:
-      type: integer     
+      type: integer
     cwKeyer:
-      $ref: "http://localhost:8081/api/swagger/include/CWKeyer.yaml#/CWKeyerSettings"
-           
+      $ref: "http://swgserver:8081/api/swagger/include/CWKeyer.yaml#/CWKeyerSettings"
+    channelMarker:
+      $ref: "http://swgserver:8081/api/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "http://swgserver:8081/api/swagger/include/RollupState.yaml#/RollupState"
+
 AMModReport:
   description: AMMod
   properties:
@@ -54,4 +61,3 @@ AMModReport:
       type: integer
     channelSampleRate:
       type: integer
-   

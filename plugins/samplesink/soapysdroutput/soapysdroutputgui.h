@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2016-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,7 +21,7 @@
 #include <QTimer>
 #include <QWidget>
 
-#include "plugin/plugininstancegui.h"
+#include "device/devicegui.h"
 #include "util/messagequeue.h"
 
 #include "soapysdroutput.h"
@@ -41,7 +41,7 @@ namespace Ui {
     class SoapySDROutputGui;
 }
 
-class SoapySDROutputGui : public QWidget, public PluginInstanceGUI {
+class SoapySDROutputGui : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -49,16 +49,13 @@ public:
     virtual ~SoapySDROutputGui();
     virtual void destroy();
 
-    void setName(const QString& name);
-    QString getName() const;
-
     void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
+
+protected:
+    void resizeEvent(QResizeEvent* size);
 
 private:
     void createRangesControl(
@@ -72,10 +69,10 @@ private:
     void createIndividualGainsControl(const std::vector<DeviceSoapySDRParams::GainSetting>& individualGainsList);
     void createCorrectionsControl();
     void createArgumentsControl(const SoapySDR::ArgInfoList& argInfoList, bool deviceArguments);
+    bool handleMessage(const Message& message);
 
     Ui::SoapySDROutputGui* ui;
 
-    DeviceUISet* m_deviceUISet;
     bool m_forceSettings;
     bool m_doApplySettings;
     SoapySDROutputSettings m_settings;
@@ -112,6 +109,7 @@ private:
     void updateSampleRateAndFrequency();
     void updateFrequencyLimits();
     void setCenterFrequencySetting(uint64_t kHzValue);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021-2022 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef INCLUDE_FILEINPUTGUI_H
 #define INCLUDE_FILEINPUTGUI_H
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -33,20 +34,15 @@ namespace Ui {
 	class FileInputGUI;
 }
 
-class FileInputGUI : public QWidget, public PluginInstanceGUI {
+class FileInputGUI : public DeviceGUI {
 	Q_OBJECT
 
 public:
-	explicit FileInputGUI(DeviceUISet *deviceUISet, QWidget* parent = 0);
+	explicit FileInputGUI(DeviceUISet *deviceUISet, QWidget* parent = nullptr);
 	virtual ~FileInputGUI();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
@@ -55,18 +51,17 @@ public:
 private:
 	Ui::FileInputGUI* ui;
 
-	DeviceUISet* m_deviceUISet;
 	FileInputSettings m_settings;
+    QList<QString> m_settingsKeys;
 	bool m_doApplySettings;
 	QTimer m_statusTimer;
 	std::vector<int> m_gains;
 	DeviceSampleSource* m_sampleSource;
     bool m_acquisition;
-    QString m_fileName;
 	int m_sampleRate;
 	quint32 m_sampleSize;
 	quint64 m_centerFrequency;
-    quint64 m_recordLength;
+    quint64 m_recordLengthMuSec;
     quint64 m_startingTimeStamp;
     quint64 m_samplesCount;
 	std::size_t m_tickCount;
@@ -81,12 +76,14 @@ private:
 	void displayTime();
 	void sendSettings();
     void updateSampleRateAndFrequency();
+    void checkLPF();
 	void configureFileName();
 	void updateWithAcquisition();
 	void updateWithStreamData();
 	void updateWithStreamTime();
     void setAccelerationCombo();
     void setNumberStr(int n, QString& s);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();

@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4HKW                                                      //
+// Copyright (C) 2016-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 // for F4EXB / SDRAngel                                                          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
@@ -24,15 +24,17 @@
 #include "atvdemodgui.h"
 #include "atvdemod.h"
 #include "atvdemodplugin.h"
+#include "atvdemodwebapiadapter.h"
 
 const PluginDescriptor ATVDemodPlugin::m_ptrPluginDescriptor =
 {
-	QString("ATV Demodulator"),
-	QString("4.3.0"),
-    QString("(c) F4HKW for F4EXB / SDRAngel"),
-	QString("https://github.com/f4exb/sdrangel"),
+    ATVDemod::m_channelId,
+	QStringLiteral("ATV Demodulator"),
+    QStringLiteral("7.22.0"),
+    QStringLiteral("(c) F4HKW for F4EXB / SDRAngel"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 ATVDemodPlugin::ATVDemodPlugin(QObject* ptrParent) :
@@ -55,18 +57,28 @@ void ATVDemodPlugin::initPlugin(PluginAPI* ptrPluginAPI)
     m_ptrPluginAPI->registerRxChannel(ATVDemod::m_channelIdURI, ATVDemod::m_channelId, this);
 }
 
-PluginInstanceGUI* ATVDemodPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+void ATVDemodPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
+{
+	if (bs || cs)
+	{
+		ATVDemod *instance = new ATVDemod(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+ChannelGUI* ATVDemodPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
     return ATVDemodGUI::create(m_ptrPluginAPI, deviceUISet, rxChannel);
 }
 
-BasebandSampleSink* ATVDemodPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* ATVDemodPlugin::createChannelWebAPIAdapter() const
 {
-    return new ATVDemod(deviceAPI);
+	return new ATVDemodWebAPIAdapter();
 }
-
-ChannelAPI* ATVDemodPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new ATVDemod(deviceAPI);
-}
-

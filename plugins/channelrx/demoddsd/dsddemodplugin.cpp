@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2016 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2016-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,14 +25,17 @@
 #include "dsddemodgui.h"
 #endif
 #include "dsddemod.h"
+#include "dsddemodwebapiadapter.h"
+#include "dsddemodplugin.h"
 
 const PluginDescriptor DSDDemodPlugin::m_pluginDescriptor = {
-	QString("DSD Demodulator"),
-    QString("4.5.6"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    DSDDemod::m_channelId,
+	QStringLiteral("DSD Demodulator"),
+    QStringLiteral("7.21.4"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 DSDDemodPlugin::DSDDemodPlugin(QObject* parent) :
@@ -53,27 +57,39 @@ void DSDDemodPlugin::initPlugin(PluginAPI* pluginAPI)
 	m_pluginAPI->registerRxChannel(DSDDemod::m_channelIdURI, DSDDemod::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* DSDDemodPlugin::createRxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSink *rxChannel)
+void DSDDemodPlugin::createRxChannel(DeviceAPI *deviceAPI, BasebandSampleSink **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		DSDDemod *instance = new DSDDemod(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* DSDDemodPlugin::createRxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSink *rxChannel) const
+{
+	(void) deviceUISet;
+	(void) rxChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* DSDDemodPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel)
+ChannelGUI* DSDDemodPlugin::createRxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSink *rxChannel) const
 {
 	return DSDDemodGUI::create(m_pluginAPI, deviceUISet, rxChannel);
 }
 #endif
 
-BasebandSampleSink* DSDDemodPlugin::createRxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* DSDDemodPlugin::createChannelWebAPIAdapter() const
 {
-    return new DSDDemod(deviceAPI);
+	return new DSDDemodWebAPIAdapter();
 }
-
-ChannelAPI* DSDDemodPlugin::createRxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new DSDDemod(deviceAPI);
-}
-

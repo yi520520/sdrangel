@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2015 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -23,7 +27,7 @@
 #include <QTimer>
 
 #include "util/messagequeue.h"
-#include "plugin/plugininstancegui.h"
+#include "device/devicegui.h"
 
 #include "plutosdroutput.h"
 #include "plutosdroutputsettings.h"
@@ -35,7 +39,7 @@ namespace Ui {
     class PlutoSDROutputGUI;
 }
 
-class PlutoSDROutputGUI : public QWidget, public PluginInstanceGUI {
+class PlutoSDROutputGUI : public DeviceGUI {
     Q_OBJECT
 
 public:
@@ -43,20 +47,15 @@ public:
     virtual ~PlutoSDROutputGUI();
 
     virtual void destroy();
-    virtual void setName(const QString& name);
-    virtual QString getName() const;
     virtual void resetToDefaults();
-    virtual qint64 getCenterFrequency() const;
-    virtual void setCenterFrequency(qint64 centerFrequency);
     virtual QByteArray serialize() const;
     virtual bool deserialize(const QByteArray& data);
     virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-    virtual bool handleMessage(const Message& message);
 
 private:
     Ui::PlutoSDROutputGUI* ui;
-    DeviceUISet* m_deviceUISet;
     PlutoSDROutputSettings m_settings;
+    QList<QString> m_settingsKeys;
     bool m_sampleRateMode; //!< true: device, false: base band sample rate update mode
     bool m_forceSettings;
     QTimer m_updateTimer;
@@ -77,6 +76,8 @@ private:
     void setFIRBWLimits();
     void setSampleRateLimits();
     void updateFrequencyLimits();
+    bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void on_startStop_toggled(bool checked);

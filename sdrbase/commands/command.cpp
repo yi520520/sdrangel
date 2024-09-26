@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -67,7 +70,7 @@ Command::~Command()
 {
     if (m_currentProcess)
     {
-#if QT_VERSION < 0x051000
+#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
         disconnect(m_currentProcess, SIGNAL(error(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));
 #else
         disconnect(m_currentProcess, SIGNAL(errorOccurred(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));
@@ -150,7 +153,7 @@ QString Command::getKeyLabel() const
     else if (m_keyModifiers != Qt::NoModifier)
     {
         QString altGrStr = m_keyModifiers & Qt::GroupSwitchModifier ? "Gr " : "";
-        int maskedModifiers = (m_keyModifiers & 0x3FFFFFFF) + ((m_keyModifiers & 0x40000000)>>3);
+        int maskedModifiers = ((int) m_keyModifiers & 0x3FFFFFFF) + (((int) m_keyModifiers & 0x40000000)>>3);
         return altGrStr + QKeySequence(maskedModifiers, m_key).toString();
     }
     else
@@ -193,7 +196,7 @@ void Command::run(const QString& apiAddress, int apiPort, int deviceSetIndex)
     m_isInError = false;
     m_hasExited = false;
 
-#if QT_VERSION < 0x051000
+#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
     connect(m_currentProcess, SIGNAL(error(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));
 #else
     connect(m_currentProcess, SIGNAL(errorOccurred(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));
@@ -203,7 +206,12 @@ void Command::run(const QString& apiAddress, int apiPort, int deviceSetIndex)
 
     m_currentProcess->setProcessChannelMode(QProcess::MergedChannels);
     m_currentProcessStartTimeStampms = TimeUtil::nowms();
-    m_currentProcess->start(m_currentProcessCommandLine);
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    QStringList allArgs = args.split(" ", Qt::SkipEmptyParts);
+#else
+    QStringList allArgs = args.split(" ", QString::SkipEmptyParts);
+#endif
+    m_currentProcess->start(m_command, allArgs);
 }
 
 void Command::kill()
@@ -266,7 +274,7 @@ void Command::processError(QProcess::ProcessError error)
     {
         m_log = m_currentProcess->readAllStandardOutput();
 
-#if QT_VERSION < 0x051000
+#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
         disconnect(m_currentProcess, SIGNAL(error(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));
 #else
         disconnect(m_currentProcess, SIGNAL(errorOccurred(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));
@@ -288,7 +296,7 @@ void Command::processFinished(int exitCode, QProcess::ExitStatus exitStatus)
     m_hasExited = true;
     m_log = m_currentProcess->readAllStandardOutput();
 
-#if QT_VERSION < 0x051000
+#if QT_VERSION < QT_VERSION_CHECK(5, 10, 0)
     disconnect(m_currentProcess, SIGNAL(error(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));
 #else
     disconnect(m_currentProcess, SIGNAL(errorOccurred(QProcess::ProcessError)), this, SLOT(processError(QProcess::ProcessError)));

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,16 +18,15 @@
 
 #include <QMessageBox>
 #include <QCheckBox>
+#include <QResizeEvent>
 
-#include "dsp/dspengine.h"
 #include "dsp/dspcommands.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
-#include "util/simpleserializer.h"
 #include "ui_soapysdroutputgui.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
+#include "gui/dialogpositioner.h"
 #include "soapygui/discreterangegui.h"
 #include "soapygui/intervalrangegui.h"
 #include "soapygui/stringrangegui.h"
@@ -39,9 +39,8 @@
 #include "soapysdroutputgui.h"
 
 SoapySDROutputGui::SoapySDROutputGui(DeviceUISet *deviceUISet, QWidget* parent) :
-    QWidget(parent),
+    DeviceGUI(parent),
     ui(new Ui::SoapySDROutputGui),
-    m_deviceUISet(deviceUISet),
     m_forceSettings(true),
     m_doApplySettings(true),
     m_sampleSink(0),
@@ -57,8 +56,13 @@ SoapySDROutputGui::SoapySDROutputGui(DeviceUISet *deviceUISet, QWidget* parent) 
     m_autoDCCorrection(0),
     m_autoIQCorrection(0)
 {
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
     m_sampleSink = (SoapySDROutput*) m_deviceUISet->m_deviceAPI->getSampleSink();
-    ui->setupUi(this);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#SoapySDROutputGui { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesink/soapysdroutput/readme.md";
 
     ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
     uint64_t f_min, f_max;
@@ -90,8 +94,7 @@ SoapySDROutputGui::SoapySDROutputGui(DeviceUISet *deviceUISet, QWidget* parent) 
     connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
     m_statusTimer.start(500);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
     displaySettings();
 
@@ -99,10 +102,14 @@ SoapySDROutputGui::SoapySDROutputGui(DeviceUISet *deviceUISet, QWidget* parent) 
     m_sampleSink->setMessageQueueToGUI(&m_inputMessageQueue);
 
     sendSettings();
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 }
 
 SoapySDROutputGui::~SoapySDROutputGui()
 {
+    m_statusTimer.stop();
+    m_updateTimer.stop();
     delete ui;
 }
 
@@ -412,31 +419,9 @@ void SoapySDROutputGui::createArgumentsControl(const SoapySDR::ArgInfoList& argI
     }
 }
 
-void SoapySDROutputGui::setName(const QString& name)
-{
-    setObjectName(name);
-}
-
-QString SoapySDROutputGui::getName() const
-{
-    return objectName();
-}
-
 void SoapySDROutputGui::resetToDefaults()
 {
     m_settings.resetToDefaults();
-    displaySettings();
-    sendSettings();
-}
-
-qint64 SoapySDROutputGui::getCenterFrequency() const
-{
-    return m_settings.m_centerFrequency;
-}
-
-void SoapySDROutputGui::setCenterFrequency(qint64 centerFrequency)
-{
-    m_settings.m_centerFrequency = centerFrequency;
     displaySettings();
     sendSettings();
 }
@@ -462,6 +447,11 @@ bool SoapySDROutputGui::deserialize(const QByteArray& data)
     }
 }
 
+void SoapySDROutputGui::resizeEvent(QResizeEvent* size)
+{
+    resize(360, height());
+    size->accept();
+}
 
 bool SoapySDROutputGui::handleMessage(const Message& message)
 {
@@ -685,6 +675,11 @@ void SoapySDROutputGui::displaySettings()
 {
     blockApplySettings(true);
 
+    ui->transverter->setDeltaFrequency(m_settings.m_transverterDeltaFrequency);
+    ui->transverter->setDeltaFrequencyActive(m_settings.m_transverterMode);
+
+    updateFrequencyLimits();
+
     ui->centerFrequency->setValue(m_settings.m_centerFrequency / 1000);
 
     if (m_antennas) {
@@ -825,12 +820,19 @@ void SoapySDROutputGui::updateFrequencyLimits()
     qint64 minLimit = f_min/1000 + deltaFrequency;
     qint64 maxLimit = f_max/1000 + deltaFrequency;
 
-    minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
-    maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
-
+    if (m_settings.m_transverterMode)
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 999999999 ? 999999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 999999999 ? 999999999 : maxLimit;
+        ui->centerFrequency->setValueRange(9, minLimit, maxLimit);
+    }
+    else
+    {
+        minLimit = minLimit < 0 ? 0 : minLimit > 9999999 ? 9999999 : minLimit;
+        maxLimit = maxLimit < 0 ? 0 : maxLimit > 9999999 ? 9999999 : maxLimit;
+        ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
+    }
     qDebug("SoapySDRInputGui::updateFrequencyLimits: delta: %lld min: %lld max: %lld", deltaFrequency, minLimit, maxLimit);
-
-    ui->centerFrequency->setValueRange(7, minLimit, maxLimit);
 }
 
 void SoapySDROutputGui::setCenterFrequencySetting(uint64_t kHzValue)
@@ -884,19 +886,34 @@ void SoapySDROutputGui::updateStatus()
 
 void SoapySDROutputGui::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void SoapySDROutputGui::makeUIConnections()
+{
+    QObject::connect(ui->centerFrequency, &ValueDial::changed, this, &SoapySDROutputGui::on_centerFrequency_changed);
+    QObject::connect(ui->LOppm, &QSlider::valueChanged, this, &SoapySDROutputGui::on_LOppm_valueChanged);
+    QObject::connect(ui->interp, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &SoapySDROutputGui::on_interp_currentIndexChanged);
+    QObject::connect(ui->transverter, &TransverterButton::clicked, this, &SoapySDROutputGui::on_transverter_clicked);
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &SoapySDROutputGui::on_startStop_toggled);
 }

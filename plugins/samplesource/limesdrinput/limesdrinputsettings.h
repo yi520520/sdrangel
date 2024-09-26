@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -66,9 +68,13 @@ struct LimeSDRInputSettings
     uint32_t m_extClockFreq; //!< Frequency (Hz) of external clock source
     bool     m_transverterMode;
     qint64   m_transverterDeltaFrequency;
-    QString  m_fileRecordName;
+    bool     m_iqOrder;
     uint8_t  m_gpioDir;      //!< GPIO pin direction LSB first; 0 input, 1 output
     uint8_t  m_gpioPins;     //!< GPIO pins to write; LSB first
+	float    m_replayOffset; //!< Replay offset in seconds
+	float    m_replayLength; //!< Replay buffer size in seconds
+	float    m_replayStep;   //!< Replay forward/back step size in seconds
+	bool     m_replayLoop;   //!< Replay buffer repeatedly without recording new data
     bool     m_useReverseAPI;
     QString  m_reverseAPIAddress;
     uint16_t m_reverseAPIPort;
@@ -78,6 +84,8 @@ struct LimeSDRInputSettings
     void resetToDefaults();
     QByteArray serialize() const;
     bool deserialize(const QByteArray& data);
+    void applySettings(const QStringList& settingsKeys, const LimeSDRInputSettings& settings);
+    QString getDebugString(const QStringList& settingsKeys, bool force=false) const;
 };
 
 #endif /* PLUGINS_SAMPLESOURCE_LIMESDRINPUT_LIMESDRINPUTSETTINGS_H_ */

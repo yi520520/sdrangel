@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -22,15 +26,17 @@
 #include "atvmodgui.h"
 #endif
 #include "atvmod.h"
+#include "atvmodwebapiadapter.h"
 #include "atvmodplugin.h"
 
 const PluginDescriptor ATVModPlugin::m_pluginDescriptor = {
-    QString("ATV Modulator"),
-    QString("4.5.2"),
-    QString("(c) Edouard Griffiths, F4EXB"),
-    QString("https://github.com/f4exb/sdrangel"),
+    ATVMod::m_channelId,
+    QStringLiteral("ATV Modulator"),
+    QStringLiteral("7.22.0"),
+    QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+    QStringLiteral("https://github.com/f4exb/sdrangel"),
     true,
-    QString("https://github.com/f4exb/sdrangel")
+    QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
 ATVModPlugin::ATVModPlugin(QObject* parent) :
@@ -52,29 +58,39 @@ void ATVModPlugin::initPlugin(PluginAPI* pluginAPI)
     m_pluginAPI->registerTxChannel(ATVMod::m_channelIdURI, ATVMod::m_channelId, this);
 }
 
-#ifdef SERVER_MODE
-PluginInstanceGUI* ATVModPlugin::createTxChannelGUI(
-        DeviceUISet *deviceUISet,
-        BasebandSampleSource *txChannel)
+void ATVModPlugin::createTxChannel(DeviceAPI *deviceAPI, BasebandSampleSource **bs, ChannelAPI **cs) const
 {
-    return 0;
+	if (bs || cs)
+	{
+		ATVMod *instance = new ATVMod(deviceAPI);
+
+		if (bs) {
+			*bs = instance;
+		}
+
+		if (cs) {
+			*cs = instance;
+		}
+	}
+}
+
+#ifdef SERVER_MODE
+ChannelGUI* ATVModPlugin::createTxChannelGUI(
+        DeviceUISet *deviceUISet,
+        BasebandSampleSource *txChannel) const
+{
+	(void) deviceUISet;
+	(void) txChannel;
+    return nullptr;
 }
 #else
-PluginInstanceGUI* ATVModPlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel)
+ChannelGUI* ATVModPlugin::createTxChannelGUI(DeviceUISet *deviceUISet, BasebandSampleSource *txChannel) const
 {
     return ATVModGUI::create(m_pluginAPI, deviceUISet, txChannel);
 }
 #endif
 
-BasebandSampleSource* ATVModPlugin::createTxChannelBS(DeviceAPI *deviceAPI)
+ChannelWebAPIAdapter* ATVModPlugin::createChannelWebAPIAdapter() const
 {
-    return new ATVMod(deviceAPI);
+	return new ATVModWebAPIAdapter();
 }
-
-ChannelAPI* ATVModPlugin::createTxChannelCS(DeviceAPI *deviceAPI)
-{
-    return new ATVMod(deviceAPI);
-}
-
-
-

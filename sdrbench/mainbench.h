@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // Swagger server adapter interface                                              //
 //                                                                               //
@@ -29,12 +32,13 @@
 #include "dsp/decimatorsfi.h"
 #include "dsp/decimatorsff.h"
 #include "parserbench.h"
+#include "export.h"
 
 namespace qtwebapp {
     class LoggerWithFile;
 }
 
-class MainBench: public QObject {
+class SDRBENCH_API MainBench: public QObject {
     Q_OBJECT
 
 public:
@@ -52,7 +56,10 @@ private:
     void testDecimateIF();
     void testDecimateFI();
     void testDecimateFF();
-    void testAMBE();
+    void testGolay2312();
+    void testFT8(const QString& wavFile, const QString& argsStr); //!< use with sdrbench/samples/ft8/230105_091630.wav in -f option
+    void testFT8Protocols(const QString& argsStr);
+    void testCallsign(const QString& argsStr);
     void decimateII(const qint16 *buf, int len);
     void decimateInfII(const qint16 *buf, int len);
     void decimateSupII(const qint16 *buf, int len);
@@ -61,6 +68,7 @@ private:
     void decimateFF(const float *buf, int len);
     void printResults(const QString& prefix, qint64 nsecs);
 
+
     static MainBench *m_instance;
     qtwebapp::LoggerWithFile *m_logger;
     const ParserBench& m_parser;
@@ -68,10 +76,10 @@ private:
     std::uniform_real_distribution<float> m_uniform_distribution_f;
     std::uniform_int_distribution<qint16> m_uniform_distribution_s16;
 
-	Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12> m_decimatorsII;
-	DecimatorsIF<qint16, 12> m_decimatorsIF;
-	DecimatorsFI m_decimatorsFI;
-    DecimatorsFF m_decimatorsFF;
+	Decimators<qint32, qint16, SDR_RX_SAMP_SZ, 12, true> m_decimatorsII;
+	DecimatorsIF<qint16, 12, true> m_decimatorsIF;
+	DecimatorsFI<true> m_decimatorsFI;
+    DecimatorsFF<true> m_decimatorsFF;
 
     SampleVector m_convertBuffer;
     FSampleVector m_convertBufferF;

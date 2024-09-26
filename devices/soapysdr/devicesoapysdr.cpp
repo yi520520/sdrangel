@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2018-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -91,5 +91,27 @@ SoapySDR::Device *DeviceSoapySDR::openopenSoapySDRFromSequence(uint32_t sequence
                     deviceEnum.m_label.toStdString().c_str(), ex.what());
             return 0;
         }
+    }
+}
+
+void DeviceSoapySDR::enumOriginDevices(const QString& hardwareId, PluginInterface::OriginDevices& originDevices)
+{
+    const std::vector<DeviceSoapySDRScan::SoapySDRDeviceEnum>& devicesEnumeration = getDevicesEnumeration();
+    qDebug("SoapySDROutputPlugin::enumOriginDevices: %lu SoapySDR devices", devicesEnumeration.size());
+    std::vector<DeviceSoapySDRScan::SoapySDRDeviceEnum>::const_iterator it = devicesEnumeration.begin();
+
+    for (int idev = 0; it != devicesEnumeration.end(); ++it, idev++)
+    {
+        QString displayedName(QString("SoapySDR[%1:$1] %2").arg(idev).arg(it->m_label));
+        QString serial(QString("%1-%2").arg(it->m_driverName).arg(it->m_sequence));
+
+        originDevices.append(PluginInterface::OriginDevice(
+            displayedName,
+            hardwareId,
+            serial,
+            idev, // Sequence
+            it->m_nbRx, // nb Rx
+            it->m_nbTx  // nb Tx
+        ));
     }
 }

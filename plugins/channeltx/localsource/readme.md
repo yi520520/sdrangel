@@ -4,11 +4,13 @@
 
 This plugin draws I/Q samples from a Local Output plugin device sink in another device set into the baseband. It is basically the same as the Remote Source channel plugin but pipes the samples internally instead of receiving them over the network.
 
-It may be used when you want to use a particular sub area of the baseband for madulation.
+It may be used when you want to use a particular sub area of the baseband for modulation.
 
 Note that because it uses only the channelizer half band filter chain to achieve interpolation and center frequency shift you have a limited choice on the center frequencies that may be used (similarly to the Remote Source). The available center frequencies depend on the baseband sample rate, the channel interpolation and the filter chain that is used so you have to play with these parameters to obtain a suitable center frequency and pass band.
 
 <h2>Interface</h2>
+
+The top and bottom bars of the channel window are described [here](../../../sdrgui/channel/readme.md)
 
 ![Local source channel plugin GUI](../../../doc/img/LocalSource.png)
 
@@ -40,10 +42,10 @@ The slider moves the channel center frequency roughly from the lower to the high
   - **1**: centered
   - **2**: higher half-band
 
-<h3>6: Local Output source index</h2>
+<h3>6: Local Output source index</h3>
 
 This selects the index of the Local Output device sink from which to pull the I/Q samples. The list can be refreshed with the next button (7)
 
-<h3>7: Refresh local output devices list</h2>
+<h3>7: Refresh local output devices list</h3>
 
 Use this button to refresh the list of Local Output device sinks indexes.

@@ -1,21 +1,27 @@
-// This file is part of LeanSDR Copyright (C) 2018 <pabr@pabr.org>.
-// See the toplevel README for more information.
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+///////////////////////////////////////////////////////////////////////////////////////
+// Copyright (C) 2019-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com>              //
+// Copyright (C) 2019 Martin Hauke <mardnh@gmx.de>                                   //
+//                                                                                   //
+// This file is part of LeanSDR Copyright (C) 2016-2018 <pabr@pabr.org>.             //
+//                                                                                   //
+// This program is free software; you can redistribute it and/or modify              //
+// it under the terms of the GNU General Public License as published by              //
+// the Free Software Foundation as version 3 of the License, or                      //
+// (at your option) any later version.                                               //
+//                                                                                   //
+// This program is distributed in the hope that it will be useful,                   //
+// but WITHOUT ANY WARRANTY; without even the implied warranty of                    //
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the                      //
+// GNU General Public License V3 for more details.                                   //
+//                                                                                   //
+// You should have received a copy of the GNU General Public License                 //
+// along with this program. If not, see <http://www.gnu.org/licenses/>.              //
+///////////////////////////////////////////////////////////////////////////////////////
 
 #ifndef LEANSDR_DISCRMATH_H
 #define LEANSDR_DISCRMATH_H
+
+#pragma GCC diagnostic ignored "-Wshift-negative-value"
 
 #include  <cstddef>
 
@@ -40,7 +46,7 @@ struct bitvect
     bitvect(T val)
     {
         v[0] = val;
-        for (int i = 1; i < NW; ++i)
+        for (unsigned int i = 1; i < NW; ++i)
             v[i] = 0;
     }
 
@@ -52,7 +58,7 @@ struct bitvect
         for (int i = 0; i < nw; ++i)
             v[i] = a.v[i];
         if (M < N)
-            for (int i = a.NW; i < NW; ++i)
+            for (size_t i = a.NW; i < NW; ++i)
                 v[i] = 0;
         if (M > N)
             truncate_to_N();
@@ -139,7 +145,7 @@ bitvect<T, N> shiftdivmod(const Tm *m, size_t nm, const bitvect<T, N> &p,
                           T init = 0)
 {
     bitvect<T, N> res;
-    for (int i = 0; i < res.NW; ++i)
+    for (unsigned int i = 0; i < res.NW; ++i)
         res.v[i] = init;
     const Tm bitmask = (Tm)1 << (sizeof(Tm) * 8 - 1);
     for (; nm--; ++m)
@@ -231,7 +237,7 @@ struct gf2n
             lut_exp[((1 << N) - 1) + i] = alpha_i; // Wrap to avoid modulo 2^N-1
             lut_log[alpha_i] = i;
             bool overflow = alpha_i & (1 << (N - 1));
-            alpha_i <<= 1;               // Multiply by alpha=[X] i.e. increase degrees
+            alpha_i *= 2;                // Multiply by alpha=[X] i.e. increase degrees
             alpha_i &= ~((~(Te)0) << N); // In case Te is wider than N bits
             if (overflow)
                 alpha_i ^= TRUNCP; // Modulo P iteratively

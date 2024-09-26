@@ -1,6 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -19,10 +22,10 @@
 #ifndef INCLUDE_BFMDEMODGUI_H
 #define INCLUDE_BFMDEMODGUI_H
 
-#include <plugin/plugininstancegui.h>
-#include "gui/rollupwidget.h"
+#include "channel/channelgui.h"
 #include "dsp/channelmarker.h"
 #include "util/messagequeue.h"
+#include "settings/rollupstate.h"
 #include "bfmdemodsettings.h"
 
 class PluginAPI;
@@ -37,23 +40,28 @@ namespace Ui {
 	class BFMDemodGUI;
 }
 
-class BFMDemodGUI : public RollupWidget, public PluginInstanceGUI {
+class BFMDemodGUI : public ChannelGUI {
 	Q_OBJECT
 
 public:
 	static BFMDemodGUI* create(PluginAPI* pluginAPI, DeviceUISet *deviceAPI, BasebandSampleSink *rxChannel);
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
-
 	void resetToDefaults();
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
+    virtual void setWorkspaceIndex(int index) { m_settings.m_workspaceIndex = index; };
+    virtual int getWorkspaceIndex() const { return m_settings.m_workspaceIndex; };
+    virtual void setGeometryBytes(const QByteArray& blob) { m_settings.m_geometryBytes = blob; };
+    virtual QByteArray getGeometryBytes() const { return m_settings.m_geometryBytes; };
+    virtual QString getTitle() const { return m_settings.m_title; };
+    virtual QColor getTitleColor() const  { return m_settings.m_rgbColor; };
+    virtual void zetHidden(bool hidden) { m_settings.m_hidden = hidden; }
+    virtual bool getHidden() const { return m_settings.m_hidden; }
+    virtual ChannelMarker& getChannelMarker() { return m_channelMarker; }
+    virtual int getStreamIndex() const { return m_settings.m_streamIndex; }
+    virtual void setStreamIndex(int streamIndex) { m_settings.m_streamIndex = streamIndex; }
 
 public slots:
     void channelMarkerChangedByCursor();
@@ -64,9 +72,13 @@ private:
 	PluginAPI* m_pluginAPI;
 	DeviceUISet* m_deviceUISet;
 	ChannelMarker m_channelMarker;
+	RollupState m_rollupState;
 	BFMDemodSettings m_settings;
+    qint64 m_deviceCenterFrequency;
+    int m_basebandSampleRate;
 	bool m_doApplySettings;
 	int m_rdsTimerCount;
+    bool m_radiotext_AB_flag;
 
 	SpectrumVis* m_spectrumVis;
 
@@ -83,9 +95,12 @@ private:
     void displaySettings();
 	void rdsUpdate(bool force);
 	void rdsUpdateFixedFields();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
+    void updateAbsoluteCenterFrequency();
 
 	void leaveEvent(QEvent*);
-	void enterEvent(QEvent*);
+	void enterEvent(EnterEventType*);
 
 	void changeFrequency(qint64 f);
 
@@ -102,12 +117,13 @@ private slots:
 	void on_g14ProgServiceNames_currentIndexChanged(int index);
 	void on_clearData_clicked(bool checked);
 	void on_g00AltFrequenciesBox_activated(int index);
+	void on_go2ClearPrevText_clicked();
 	void on_g14MappedFrequencies_activated(int index);
 	void on_g14AltFrequencies_activated(int index);
 	void onWidgetRolled(QWidget* widget, bool rollDown);
     void onMenuDialogCalled(const QPoint& p);
     void handleInputMessages();
-    void audioSelect();
+    void audioSelect(const QPoint &);
 	void tick();
 };
 

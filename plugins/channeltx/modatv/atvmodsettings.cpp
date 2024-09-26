@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2017-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,13 +18,13 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "atvmodsettings.h"
 
 ATVModSettings::ATVModSettings() :
-    m_channelMarker(0)
+    m_channelMarker(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -51,11 +52,14 @@ void ATVModSettings::resetToDefaults()
     m_overlayText = "ATV";
     m_rgbColor = QColor(255, 255, 255).rgb();
     m_title = "ATV Modulator";
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray ATVModSettings::serialize() const
@@ -87,6 +91,17 @@ QByteArray ATVModSettings::serialize() const
     s.writeU32(19, m_reverseAPIPort);
     s.writeU32(20, m_reverseAPIDeviceIndex);
     s.writeU32(21, m_reverseAPIChannelIndex);
+    s.writeString(22, m_imageFileName);
+    s.writeString(23, m_videoFileName);
+    s.writeS32(24, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(25, m_rollupState->serialize());
+    }
+
+    s.writeS32(26, m_workspaceIndex);
+    s.writeBlob(27, m_geometryBytes);
+    s.writeBool(28, m_hidden);
 
     return s.final();
 }
@@ -150,6 +165,20 @@ bool ATVModSettings::deserialize(const QByteArray& data)
         m_reverseAPIDeviceIndex = utmp > 99 ? 99 : utmp;
         d.readU32(21, &utmp, 0);
         m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
+        d.readString(22, &m_imageFileName);
+        d.readString(23, &m_videoFileName);
+        d.readS32(24, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(25, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(26, &m_workspaceIndex, 0);
+        d.readBlob(27, &m_geometryBytes);
+        d.readBool(28, &m_hidden, false);
+
         return true;
     }
     else

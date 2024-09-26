@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2017-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // Object unique id calculator loosely inspired by MongoDB object id             //
 //                                                                               //
@@ -35,7 +35,7 @@
 uint64_t UidCalculator::getNewObjectId()
 {
     QDateTime currentDateTime = QDateTime::currentDateTime();
-    uint64_t uid = currentDateTime.toTime_t();
+    uint64_t uid = currentDateTime.toSecsSinceEpoch();
     uid *= 1000000UL; // make room for microseconds
 
 // Fallback to milliseconds:

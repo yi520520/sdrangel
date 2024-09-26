@@ -1,6 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2015-2016, 2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -80,6 +79,7 @@ public:
 	bool           m_g2_updated;
 	unsigned int   m_g2_count;
 	char           m_g2_radiotext[64+1];
+	bool           m_radiotext_AB_flag;
 
 	// G3 data
 	bool           m_g3_updated;
@@ -193,7 +193,6 @@ private:
 	unsigned char  pi_country_identification;
 	unsigned char  pi_program_reference_number;
 
-	bool           radiotext_AB_flag;
 	bool           debug;
 	bool           log;
 

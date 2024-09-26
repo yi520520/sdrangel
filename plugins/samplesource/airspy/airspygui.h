@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef INCLUDE_AIRSPYGUI_H
 #define INCLUDE_AIRSPYGUI_H
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -32,7 +33,7 @@ namespace Ui {
 	class AirspySampleRates;
 }
 
-class AirspyGui : public QWidget, public PluginInstanceGUI {
+class AirspyGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -40,26 +41,21 @@ public:
 	virtual ~AirspyGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue* getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
+
 	uint32_t getDevSampleRate(unsigned int index);
 	int getDevSampleRateIndex(uint32_t sampleRate);
 
 private:
 	Ui::AirspyGui* ui;
 
-	DeviceUISet* m_deviceUISet;
 	bool m_doApplySettings;
 	bool m_forceSettings;
 	AirspySettings m_settings;
+    QList<QString> m_settingsKeys;
 	QTimer m_updateTimer;
 	QTimer m_statusTimer;
 	std::vector<uint32_t> m_rates;
@@ -75,6 +71,8 @@ private:
 	void sendSettings();
     void updateSampleRateAndFrequency();
     void updateFrequencyLimits();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
 	void on_centerFrequency_changed(quint64 value);
@@ -91,7 +89,6 @@ private slots:
 	void on_lnaAGC_stateChanged(int state);
 	void on_mixAGC_stateChanged(int state);
 	void on_startStop_toggled(bool checked);
-    void on_record_toggled(bool checked);
     void on_transverter_clicked();
 	void updateHardware();
     void updateStatus();

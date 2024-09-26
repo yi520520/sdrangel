@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2018 beta-tester <alpha-beta-release@gmx.net>                   //
+// Copyright (C) 2018 Jason Gerecke <killertofu@gmail.com>                       //
+// Copyright (C) 2021-2023 Jon Beniston, M7RCE <jon@beniston.com>                //
+// Copyright (C) 2021 Andreas Baulig <free.geronimo@hotmail.de>                  //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -24,50 +28,44 @@
 #include <QMessageBox>
 
 #include "ui_fileinputgui.h"
-#include "plugin/pluginapi.h"
-#include "gui/colormapper.h"
 #include "gui/glspectrum.h"
-#include "gui/crightclickenabler.h"
 #include "gui/basicdevicesettingsdialog.h"
-#include "dsp/dspengine.h"
+#include "gui/dialogpositioner.h"
 #include "dsp/dspcommands.h"
-
-#include "mainwindow.h"
 
 #include "fileinputgui.h"
 #include "device/deviceapi.h"
 #include "device/deviceuiset.h"
 
 FileInputGUI::FileInputGUI(DeviceUISet *deviceUISet, QWidget* parent) :
-	QWidget(parent),
+	DeviceGUI(parent),
 	ui(new Ui::FileInputGUI),
-	m_deviceUISet(deviceUISet),
 	m_settings(),
 	m_doApplySettings(true),
 	m_sampleSource(0),
 	m_acquisition(false),
-	m_fileName("..."),
 	m_sampleRate(0),
 	m_centerFrequency(0),
-	m_recordLength(0),
+	m_recordLengthMuSec(0),
 	m_startingTimeStamp(0),
 	m_samplesCount(0),
 	m_tickCount(0),
 	m_enableNavTime(false),
 	m_lastEngineState(DeviceAPI::StNotStarted)
 {
-	ui->setupUi(this);
-	ui->centerFrequency->setColorMapper(ColorMapper(ColorMapper::GrayGold));
-	ui->centerFrequency->setValueRange(7, 0, pow(10,7));
-	ui->fileNameText->setText(m_fileName);
+    m_deviceUISet = deviceUISet;
+    setAttribute(Qt::WA_DeleteOnClose, true);
+    ui->setupUi(getContents());
+    sizeToContents();
+    getContents()->setStyleSheet("#FileInputGUI { background-color: rgb(64, 64, 64); }");
+    m_helpURL = "plugins/samplesource/fileinput/readme.md";
 	ui->crcLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
 
 	connect(&(m_deviceUISet->m_deviceAPI->getMasterTimer()), SIGNAL(timeout()), this, SLOT(tick()));
 	connect(&m_statusTimer, SIGNAL(timeout()), this, SLOT(updateStatus()));
 	m_statusTimer.start(500);
 
-    CRightClickEnabler *startStopRightClickEnabler = new CRightClickEnabler(ui->startStop);
-    connect(startStopRightClickEnabler, SIGNAL(rightClick(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
+    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)), this, SLOT(openDeviceSettingsDialog(const QPoint &)));
 
 	setAccelerationCombo();
 	displaySettings();
@@ -79,11 +77,17 @@ FileInputGUI::FileInputGUI(DeviceUISet *deviceUISet, QWidget* parent) :
 
     connect(&m_inputMessageQueue, SIGNAL(messageEnqueued()), this, SLOT(handleInputMessages()), Qt::QueuedConnection);
     m_sampleSource->setMessageQueueToGUI(&m_inputMessageQueue);
+
+    makeUIConnections();
+    m_resizer.enableChildMouseTracking();
 }
 
 FileInputGUI::~FileInputGUI()
 {
+    qDebug("FileInputGUI::~FileInputGUI");
+    m_statusTimer.stop();
 	delete ui;
+    qDebug("FileInputGUI::~FileInputGUI: end");
 }
 
 void FileInputGUI::destroy()
@@ -91,31 +95,9 @@ void FileInputGUI::destroy()
 	delete this;
 }
 
-void FileInputGUI::setName(const QString& name)
-{
-	setObjectName(name);
-}
-
-QString FileInputGUI::getName() const
-{
-	return objectName();
-}
-
 void FileInputGUI::resetToDefaults()
 {
 	m_settings.resetToDefaults();
-	displaySettings();
-	sendSettings();
-}
-
-qint64 FileInputGUI::getCenterFrequency() const
-{
-	return m_centerFrequency;
-}
-
-void FileInputGUI::setCenterFrequency(qint64 centerFrequency)
-{
-	m_centerFrequency = centerFrequency;
 	displaySettings();
 	sendSettings();
 }
@@ -168,7 +150,13 @@ bool FileInputGUI::handleMessage(const Message& message)
     if (FileInput::MsgConfigureFileInput::match(message))
     {
         const FileInput::MsgConfigureFileInput& cfg = (FileInput::MsgConfigureFileInput&) message;
-        m_settings = cfg.getSettings();
+
+        if (cfg.getForce()) {
+            m_settings = cfg.getSettings();
+        } else {
+            m_settings.applySettings(cfg.getSettingsKeys(), cfg.getSettings());
+        }
+
         displaySettings();
         return true;
     }
@@ -184,7 +172,7 @@ bool FileInputGUI::handleMessage(const Message& message)
 		m_sampleSize = ((FileInput::MsgReportFileInputStreamData&)message).getSampleSize();
 		m_centerFrequency = ((FileInput::MsgReportFileInputStreamData&)message).getCenterFrequency();
 		m_startingTimeStamp = ((FileInput::MsgReportFileInputStreamData&)message).getStartingTimeStamp();
-		m_recordLength = ((FileInput::MsgReportFileInputStreamData&)message).getRecordLength();
+		m_recordLengthMuSec = ((FileInput::MsgReportFileInputStreamData&)message).getRecordLengthMuSec();
 		updateWithStreamData();
 		return true;
 	}
@@ -243,6 +231,12 @@ void FileInputGUI::displaySettings()
     blockApplySettings(true);
     ui->playLoop->setChecked(m_settings.m_loop);
     ui->acceleration->setCurrentIndex(FileInputSettings::getAccelerationIndex(m_settings.m_accelerationFactor));
+    if (!m_settings.m_fileName.isEmpty() && (m_settings.m_fileName != ui->fileNameText->text()))
+    {
+	ui->crcLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
+	configureFileName();
+    }
+    ui->fileNameText->setText(m_settings.m_fileName);
     blockApplySettings(false);
 }
 
@@ -255,7 +249,7 @@ void FileInputGUI::on_playLoop_toggled(bool checked)
     if (m_doApplySettings)
     {
         m_settings.m_loop = checked;
-        FileInput::MsgConfigureFileInput *message = FileInput::MsgConfigureFileInput::create(m_settings, false);
+        FileInput::MsgConfigureFileInput *message = FileInput::MsgConfigureFileInput::create(m_settings, QList<QString>{"loop"}, false);
         m_sampleSource->getInputMessageQueue()->push(message);
     }
 }
@@ -320,12 +314,13 @@ void FileInputGUI::on_showFileDialog_clicked(bool checked)
 {
     (void) checked;
 	QString fileName = QFileDialog::getOpenFileName(this,
-	    tr("Open I/Q record file"), ".", tr("SDR I/Q Files (*.sdriq)"), 0, QFileDialog::DontUseNativeDialog);
+	    tr("Open I/Q record file"), QFileInfo(m_settings.m_fileName).dir().path(), tr("SDR I/Q Files (*.sdriq *.wav)"), 0);
+
 
 	if (fileName != "")
 	{
-		m_fileName = fileName;
-		ui->fileNameText->setText(m_fileName);
+		m_settings.m_fileName = fileName;
+		ui->fileNameText->setText(m_settings.m_fileName);
 		ui->crcLabel->setStyleSheet("QLabel { background:rgb(79,79,79); }");
 		configureFileName();
 	}
@@ -336,15 +331,15 @@ void FileInputGUI::on_acceleration_currentIndexChanged(int index)
     if (m_doApplySettings)
     {
         m_settings.m_accelerationFactor = FileInputSettings::getAccelerationValue(index);
-        FileInput::MsgConfigureFileInput *message = FileInput::MsgConfigureFileInput::create(m_settings, false);
+        FileInput::MsgConfigureFileInput *message = FileInput::MsgConfigureFileInput::create(m_settings, QList<QString>{"accelerationFactor"}, false);
         m_sampleSource->getInputMessageQueue()->push(message);
     }
 }
 
 void FileInputGUI::configureFileName()
 {
-	qDebug() << "FileInputGUI::configureFileName: " << m_fileName.toStdString().c_str();
-	FileInput::MsgConfigureFileSourceName* message = FileInput::MsgConfigureFileSourceName::create(m_fileName);
+	qDebug() << "FileInputGUI::configureFileName: " << m_settings.m_fileName.toStdString().c_str();
+	FileInput::MsgConfigureFileSourceName* message = FileInput::MsgConfigureFileSourceName::create(m_settings.m_fileName);
 	m_sampleSource->getInputMessageQueue()->push(message);
 }
 
@@ -357,13 +352,13 @@ void FileInputGUI::updateWithAcquisition()
 
 void FileInputGUI::updateWithStreamData()
 {
-	ui->centerFrequency->setValue(m_centerFrequency/1000);
+	ui->centerFrequency->setText(tr("%L1").arg(m_centerFrequency));
 	ui->sampleRateText->setText(tr("%1k").arg((float)m_sampleRate / 1000));
 	ui->sampleSizeText->setText(tr("%1b").arg(m_sampleSize));
 	ui->play->setEnabled(m_acquisition);
 	QTime recordLength(0, 0, 0, 0);
-	recordLength = recordLength.addSecs(m_recordLength);
-	QString s_time = recordLength.toString("HH:mm:ss");
+	recordLength = recordLength.addMSecs(m_recordLengthMuSec/1000UL);
+	QString s_time = recordLength.toString("HH:mm:ss.zzz");
 	ui->recordLengthText->setText(s_time);
 	updateWithStreamTime();
 }
@@ -373,7 +368,8 @@ void FileInputGUI::updateWithStreamTime()
     qint64 t_sec = 0;
     qint64 t_msec = 0;
 
-	if (m_sampleRate > 0){
+	if (m_sampleRate > 0)
+	{
 		t_sec = m_samplesCount / m_sampleRate;
         t_msec = (m_samplesCount - (t_sec * m_sampleRate)) * 1000LL / m_sampleRate;
 	}
@@ -384,8 +380,8 @@ void FileInputGUI::updateWithStreamTime()
 	QString s_timems = t.toString("HH:mm:ss.zzz");
 	ui->relTimeText->setText(s_timems);
 
-    qint64 startingTimeStampMsec = m_startingTimeStamp * 1000LL;
-	QDateTime dt = QDateTime::fromMSecsSinceEpoch(startingTimeStampMsec);
+    qint64 startingTimeStampMsec = m_startingTimeStamp;
+    QDateTime dt = QDateTime::fromMSecsSinceEpoch(startingTimeStampMsec);
     dt = dt.addSecs(t_sec);
     dt = dt.addMSecs(t_msec);
 	QString s_date = dt.toString("yyyy-MM-dd HH:mm:ss.zzz");
@@ -393,7 +389,7 @@ void FileInputGUI::updateWithStreamTime()
 
 	if (!m_enableNavTime)
 	{
-		float posRatio = (float) t_sec / (float) m_recordLength;
+		float posRatio = (float) (t_sec*1000000L + t_msec*1000L) / (float) m_recordLengthMuSec;
 		ui->navTimeSlider->setValue((int) (posRatio * 1000.0));
 	}
 }
@@ -447,19 +443,35 @@ void FileInputGUI::setNumberStr(int n, QString& s)
 
 void FileInputGUI::openDeviceSettingsDialog(const QPoint& p)
 {
-    BasicDeviceSettingsDialog dialog(this);
-    dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
-    dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
-    dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
-    dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
+    if (m_contextMenuType == ContextMenuDeviceSettings)
+    {
+        BasicDeviceSettingsDialog dialog(this);
+        dialog.setUseReverseAPI(m_settings.m_useReverseAPI);
+        dialog.setReverseAPIAddress(m_settings.m_reverseAPIAddress);
+        dialog.setReverseAPIPort(m_settings.m_reverseAPIPort);
+        dialog.setReverseAPIDeviceIndex(m_settings.m_reverseAPIDeviceIndex);
 
-    dialog.move(p);
-    dialog.exec();
+        dialog.move(p);
+        new DialogPositioner(&dialog, false);
+        dialog.exec();
 
-    m_settings.m_useReverseAPI = dialog.useReverseAPI();
-    m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
-    m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
-    m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
+        m_settings.m_useReverseAPI = dialog.useReverseAPI();
+        m_settings.m_reverseAPIAddress = dialog.getReverseAPIAddress();
+        m_settings.m_reverseAPIPort = dialog.getReverseAPIPort();
+        m_settings.m_reverseAPIDeviceIndex = dialog.getReverseAPIDeviceIndex();
 
-    sendSettings();
+        sendSettings();
+    }
+
+    resetContextMenuType();
+}
+
+void FileInputGUI::makeUIConnections()
+{
+    QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &FileInputGUI::on_startStop_toggled);
+    QObject::connect(ui->playLoop, &ButtonSwitch::toggled, this, &FileInputGUI::on_playLoop_toggled);
+    QObject::connect(ui->play, &ButtonSwitch::toggled, this, &FileInputGUI::on_play_toggled);
+    QObject::connect(ui->navTimeSlider, &QSlider::valueChanged, this, &FileInputGUI::on_navTimeSlider_valueChanged);
+    QObject::connect(ui->showFileDialog, &QPushButton::clicked, this, &FileInputGUI::on_showFileDialog_clicked);
+    QObject::connect(ui->acceleration, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FileInputGUI::on_acceleration_currentIndexChanged);
 }

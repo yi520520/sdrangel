@@ -1,5 +1,9 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2019 Vort <vvort@yandex.ru>                                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -31,17 +35,20 @@ public:
         QString m_id;
         int m_sequence;
         QString m_args;
+        bool m_nonDiscoverable;
 
         Args() :
             m_id(""),
             m_sequence(0),
-            m_args("")
+            m_args(""),
+            m_nonDiscoverable(false)
         {}
 
-        Args(const QString id, int sequence, const QString& args) :
+        Args(const QString id, int sequence, const QString& args, bool nonDiscoverable) :
             m_id(id),
             m_sequence(sequence),
-            m_args(args)
+            m_args(args),
+            m_nonDiscoverable(nonDiscoverable)
         {}
 
         friend QDataStream &operator << (QDataStream &ds, const Args &inObj);
@@ -51,9 +58,9 @@ public:
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
     QString findUserArgs(const QString& id, int sequence);
-    void addDeviceArgs(const QString& id, int sequence, const QString& args);         //!< Will not add if it exists for same reference
-    void addOrUpdateDeviceArgs(const QString& id, int sequence, const QString& args); //!< Add or update if it exists for same reference
-    void updateDeviceArgs(const QString& id, int sequence, const QString& args);      //!< Will not update if reference does not exist
+    void addDeviceArgs(const QString& id, int sequence, const QString& args, bool nonDiscoverable);         //!< Will not add if it exists for same reference
+    void addOrUpdateDeviceArgs(const QString& id, int sequence, const QString& args, bool nonDiscoverable); //!< Add or update if it exists for same reference
+    void updateDeviceArgs(const QString& id, int sequence, const QString& args, bool nonDiscoverable);      //!< Will not update if reference does not exist
     void deleteDeviceArgs(const QString& id, int sequence);
     const QList<Args>& getArgsByDevice() const { return m_argsByDevice; }
 

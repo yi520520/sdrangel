@@ -6,20 +6,26 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>320</width>
-    <height>220</height>
+    <width>360</width>
+    <height>240</height>
    </rect>
   </property>
   <property name="sizePolicy">
-   <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+   <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
     <horstretch>0</horstretch>
     <verstretch>0</verstretch>
    </sizepolicy>
   </property>
   <property name="minimumSize">
    <size>
-    <width>320</width>
-    <height>220</height>
+    <width>360</width>
+    <height>240</height>
+   </size>
+  </property>
+  <property name="maximumSize">
+   <size>
+    <width>380</width>
+    <height>240</height>
    </size>
   </property>
   <property name="font">
@@ -68,20 +74,6 @@
             <iconset resource="../../../sdrgui/resources/res.qrc">
              <normaloff>:/play.png</normaloff>
              <normalon>:/stop.png</normalon>:/play.png</iconset>
-           </property>
-          </widget>
-         </item>
-         <item>
-          <widget class="ButtonSwitch" name="record">
-           <property name="toolTip">
-            <string>Toggle record I/Q samples from device</string>
-           </property>
-           <property name="text">
-            <string/>
-           </property>
-           <property name="icon">
-            <iconset resource="../../../sdrgui/resources/res.qrc">
-             <normaloff>:/record_off.png</normaloff>:/record_off.png</iconset>
            </property>
           </widget>
          </item>
@@ -136,7 +128,7 @@
        <property name="font">
         <font>
          <family>Liberation Mono</family>
-         <pointsize>20</pointsize>
+         <pointsize>16</pointsize>
         </font>
        </property>
        <property name="cursor">
@@ -183,7 +175,10 @@
         <string>Local Oscillator ppm correction</string>
        </property>
        <property name="minimum">
-        <number>-99</number>
+        <number>-200</number>
+       </property>
+       <property name="maximum">
+        <number>200</number>
        </property>
        <property name="pageStep">
         <number>1</number>
@@ -243,7 +238,7 @@
      <item row="0" column="0">
       <widget class="QLabel" name="corrLabel">
        <property name="text">
-        <string>Auto corr</string>
+        <string>Auto</string>
        </property>
       </widget>
      </item>
@@ -260,8 +255,14 @@
        </property>
       </spacer>
      </item>
-     <item row="0" column="5">
+     <item row="0" column="6">
       <widget class="QComboBox" name="fcPos">
+       <property name="minimumSize">
+        <size>
+         <width>55</width>
+         <height>0</height>
+        </size>
+       </property>
        <property name="maximumSize">
         <size>
          <width>50</width>
@@ -291,14 +292,14 @@
        </item>
       </widget>
      </item>
-     <item row="0" column="4">
+     <item row="0" column="5">
       <widget class="QLabel" name="fcPosLabel">
        <property name="text">
         <string>Fp</string>
        </property>
       </widget>
      </item>
-     <item row="0" column="6">
+     <item row="0" column="7">
       <widget class="TransverterButton" name="transverter">
        <property name="maximumSize">
         <size>
@@ -314,6 +315,19 @@
        </property>
        <property name="checkable">
         <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="4">
+      <widget class="QCheckBox" name="biasT">
+       <property name="toolTip">
+        <string>Activate antenna bias tee</string>
+       </property>
+       <property name="layoutDirection">
+        <enum>Qt::RightToLeft</enum>
+       </property>
+       <property name="text">
+        <string>Bias T</string>
        </property>
       </widget>
      </item>
@@ -486,12 +500,12 @@
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout_direct">
      <item>
-      <widget class="QCheckBox" name="checkBox">
+      <widget class="QLabel" name="tunerType">
        <property name="toolTip">
-        <string>RTLSDR special direct sampling mode (HF Bands)</string>
+        <string>Tuner type</string>
        </property>
        <property name="text">
-        <string>No-mod DS</string>
+        <string>Tuner: Unknown</string>
        </property>
       </widget>
      </item>
@@ -507,6 +521,16 @@
         </size>
        </property>
       </spacer>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="checkBox">
+       <property name="toolTip">
+        <string>RTLSDR special direct sampling mode (HF Bands)</string>
+       </property>
+       <property name="text">
+        <string>DS</string>
+       </property>
+      </widget>
      </item>
      <item>
       <widget class="QCheckBox" name="offsetTuning">
@@ -574,29 +598,6 @@
      <property name="spacing">
       <number>3</number>
      </property>
-     <item row="0" column="3">
-      <widget class="QCheckBox" name="agc">
-       <property name="toolTip">
-        <string>Toggles RTLSDR AGC</string>
-       </property>
-       <property name="text">
-        <string>AGC</string>
-       </property>
-      </widget>
-     </item>
-     <item row="0" column="0">
-      <widget class="QLabel" name="gainLabel">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="text">
-        <string>Gain</string>
-       </property>
-      </widget>
-     </item>
      <item row="0" column="1">
       <widget class="QSlider" name="gain">
        <property name="enabled">
@@ -616,6 +617,19 @@
        </property>
       </widget>
      </item>
+     <item row="0" column="0">
+      <widget class="QLabel" name="gainLabel">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="text">
+        <string>Gain</string>
+       </property>
+      </widget>
+     </item>
      <item row="0" column="2">
       <widget class="QLabel" name="gainText">
        <property name="minimumSize">
@@ -632,29 +646,120 @@
        </property>
       </widget>
      </item>
+     <item row="0" column="3">
+      <widget class="QCheckBox" name="agc">
+       <property name="toolTip">
+        <string>Toggles RTLSDR AGC</string>
+       </property>
+       <property name="text">
+        <string>AGC</string>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
    <item>
-    <widget class="Line" name="line_2">
+    <widget class="Line" name="line">
      <property name="orientation">
       <enum>Qt::Horizontal</enum>
      </property>
     </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="fillerLayout">
+    <layout class="QHBoxLayout" name="replayLayout">
      <item>
-      <spacer name="verticalSpacer">
-       <property name="orientation">
-        <enum>Qt::Vertical</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
+      <widget class="QLabel" name="replayLabel">
+       <property name="minimumSize">
         <size>
-         <width>20</width>
-         <height>40</height>
+         <width>65</width>
+         <height>0</height>
         </size>
        </property>
-      </spacer>
+       <property name="text">
+        <string>Time Delay</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSlider" name="replayOffset">
+       <property name="toolTip">
+        <string>Replay time delay in seconds</string>
+       </property>
+       <property name="maximum">
+        <number>500</number>
+       </property>
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="replayOffsetText">
+       <property name="toolTip">
+        <string>Replay time delay in seconds</string>
+       </property>
+       <property name="text">
+        <string>0.0s</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QToolButton" name="replayNow">
+       <property name="toolTip">
+        <string>Set time delay to 0 seconds</string>
+       </property>
+       <property name="text">
+        <string>Now</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QToolButton" name="replayPlus">
+       <property name="toolTip">
+        <string>Add displayed number of seconds to time delay</string>
+       </property>
+       <property name="text">
+        <string>+5s</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QToolButton" name="replayMinus">
+       <property name="toolTip">
+        <string>Remove displayed number of seconds from time delay</string>
+       </property>
+       <property name="text">
+        <string>-5s</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="ButtonSwitch" name="replayLoop">
+       <property name="toolTip">
+        <string>Repeatedly replay data in replay buffer</string>
+       </property>
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../../../sdrgui/resources/res.qrc">
+         <normaloff>:/playloop.png</normaloff>:/playloop.png</iconset>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QToolButton" name="replaySave">
+       <property name="toolTip">
+        <string>Save replay buffer to a file</string>
+       </property>
+       <property name="text">
+        <string/>
+       </property>
+       <property name="icon">
+        <iconset resource="../../../sdrgui/resources/res.qrc">
+         <normaloff>:/save.png</normaloff>:/save.png</iconset>
+       </property>
+      </widget>
      </item>
     </layout>
    </item>

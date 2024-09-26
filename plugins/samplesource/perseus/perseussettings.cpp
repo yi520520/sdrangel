@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -32,11 +34,11 @@ void PerseusSettings::resetToDefaults()
     m_log2Decim = 0;
     m_transverterMode = false;
     m_transverterDeltaFrequency = 0;
+    m_iqOrder = true;
     m_adcDither = false;
     m_adcPreamp = false;
     m_wideBand = false;
     m_attenuator = Attenuator_None;
-    m_fileRecordName = "";
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
@@ -60,6 +62,7 @@ QByteArray PerseusSettings::serialize() const
     s.writeString(11, m_reverseAPIAddress);
     s.writeU32(12, m_reverseAPIPort);
     s.writeU32(13, m_reverseAPIDeviceIndex);
+    s.writeBool(14, m_iqOrder);
 
     return s.final();
 }
@@ -107,6 +110,7 @@ bool PerseusSettings::deserialize(const QByteArray& data)
 
         d.readU32(13, &uintval, 0);
         m_reverseAPIDeviceIndex = uintval > 99 ? 99 : uintval;
+        d.readBool(14, &m_iqOrder, true);
 
         return true;
     }
@@ -117,3 +121,104 @@ bool PerseusSettings::deserialize(const QByteArray& data)
     }
 }
 
+void PerseusSettings::applySettings(const QStringList& settingsKeys, const PerseusSettings& settings)
+{
+    if (settingsKeys.contains("centerFrequency")) {
+        m_centerFrequency = settings.m_centerFrequency;
+    }
+    if (settingsKeys.contains("LOppmTenths")) {
+        m_LOppmTenths = settings.m_LOppmTenths;
+    }
+    if (settingsKeys.contains("devSampleRateIndex")) {
+        m_devSampleRateIndex = settings.m_devSampleRateIndex;
+    }
+    if (settingsKeys.contains("log2Decim")) {
+        m_log2Decim = settings.m_log2Decim;
+    }
+    if (settingsKeys.contains("transverterMode")) {
+        m_transverterMode = settings.m_transverterMode;
+    }
+    if (settingsKeys.contains("transverterDeltaFrequency")) {
+        m_transverterDeltaFrequency = settings.m_transverterDeltaFrequency;
+    }
+    if (settingsKeys.contains("iqOrder")) {
+        m_iqOrder = settings.m_iqOrder;
+    }
+    if (settingsKeys.contains("adcDither")) {
+        m_adcDither = settings.m_adcDither;
+    }
+    if (settingsKeys.contains("adcPreamp")) {
+        m_adcPreamp = settings.m_adcPreamp;
+    }
+    if (settingsKeys.contains("wideBand")) {
+        m_wideBand = settings.m_wideBand;
+    }
+    if (settingsKeys.contains("attenuator")) {
+        m_attenuator = settings.m_attenuator;
+    }
+    if (settingsKeys.contains("useReverseAPI")) {
+        m_useReverseAPI = settings.m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress")) {
+        m_reverseAPIAddress = settings.m_reverseAPIAddress;
+    }
+    if (settingsKeys.contains("reverseAPIPort")) {
+        m_reverseAPIPort = settings.m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex")) {
+        m_reverseAPIDeviceIndex = settings.m_reverseAPIDeviceIndex;
+    }
+}
+
+QString PerseusSettings::getDebugString(const QStringList& settingsKeys, bool force) const
+{
+    std::ostringstream ostr;
+
+    if (settingsKeys.contains("centerFrequency") || force) {
+        ostr << " m_centerFrequency: " << m_centerFrequency;
+    }
+    if (settingsKeys.contains("LOppmTenths") || force) {
+        ostr << " m_LOppmTenths: " << m_LOppmTenths;
+    }
+    if (settingsKeys.contains("devSampleRateIndex") || force) {
+        ostr << " m_devSampleRateIndex: " << m_devSampleRateIndex;
+    }
+    if (settingsKeys.contains("log2Decim") || force) {
+        ostr << " m_log2Decim: " << m_log2Decim;
+    }
+    if (settingsKeys.contains("transverterMode") || force) {
+        ostr << " m_transverterMode: " << m_transverterMode;
+    }
+    if (settingsKeys.contains("transverterDeltaFrequency") || force) {
+        ostr << " m_transverterDeltaFrequency: " << m_transverterDeltaFrequency;
+    }
+    if (settingsKeys.contains("iqOrder") || force) {
+        ostr << " m_iqOrder: " << m_iqOrder;
+    }
+    if (settingsKeys.contains("adcDither") || force) {
+        ostr << " m_adcDither: " << m_adcDither;
+    }
+    if (settingsKeys.contains("adcPreamp") || force) {
+        ostr << " m_adcPreamp: " << m_adcPreamp;
+    }
+    if (settingsKeys.contains("wideBand") || force) {
+        ostr << " m_wideBand: " << m_wideBand;
+    }
+    if (settingsKeys.contains("attenuator") || force) {
+        ostr << " m_attenuator: " << m_attenuator;
+    }
+    if (settingsKeys.contains("useReverseAPI") || force) {
+        ostr << " m_useReverseAPI: " << m_useReverseAPI;
+    }
+    if (settingsKeys.contains("reverseAPIAddress") || force) {
+        ostr << " m_reverseAPIAddress: " << m_reverseAPIAddress.toStdString();
+    }
+    if (settingsKeys.contains("reverseAPIPort") || force) {
+        ostr << " m_reverseAPIPort: " << m_reverseAPIPort;
+    }
+    if (settingsKeys.contains("reverseAPIDeviceIndex") || force) {
+        ostr << " m_reverseAPIDeviceIndex: " << m_reverseAPIDeviceIndex;
+    }
+
+    return QString(ostr.str().c_str());
+}

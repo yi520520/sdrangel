@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -21,20 +22,16 @@
 #include <stdint.h>
 
 #include <QTimer>
-#include <QTime>
+#include <QElapsedTimer>
 #include <QWidget>
-#include <QNetworkRequest>
 
-#include "plugin/plugininstancegui.h"
+#include "device/devicegui.h"
 #include "util/messagequeue.h"
 #include "util/limitedcounter.h"
 
 #include "remoteoutput.h"
 #include "remoteoutputsettings.h"
 
-class QNetworkAccessManager;
-class QNetworkReply;
-class QJsonObject;
 class DeviceSampleSink;
 class DeviceUISet;
 
@@ -69,7 +66,7 @@ private:
     float m_s;
 };
 
-class RemoteOutputSinkGui : public QWidget, public PluginInstanceGUI {
+class RemoteOutputSinkGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -77,26 +74,20 @@ public:
 	virtual ~RemoteOutputSinkGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const { return m_deviceCenterFrequency; }
-	virtual void setCenterFrequency(qint64 centerFrequency) { (void) centerFrequency; }
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::RemoteOutputGui* ui;
 
-	DeviceUISet* m_deviceUISet;
 	RemoteOutputSettings m_settings;        //!< current settings
+    QList<QString> m_settingsKeys;
 	RemoteOutputSettings m_controlSettings; //!< settings last sent to device via control port
 	QTimer m_updateTimer;
     QTimer m_statusTimer;
-	DeviceSampleSink* m_deviceSampleSink;
+	DeviceSampleSink* m_remoteOutput;
     int m_sampleRate;
     quint64 m_deviceCenterFrequency; //!< Center frequency in device
 	int m_samplesCount;
@@ -105,6 +96,7 @@ private:
 	int m_lastEngineState;
     bool m_doApplySettings;
     bool m_forceSettings;
+    bool m_remoteAPIConnected;
 
     uint32_t m_countUnrecoverable;
     uint32_t m_countRecovered;
@@ -112,8 +104,7 @@ private:
     uint32_t m_lastCountRecovered;
 	uint32_t m_lastSampleCount;
 	uint64_t m_lastTimestampUs;
-    bool m_resetCounts;
-    QTime m_time;
+    QElapsedTimer m_time;
 
     QPalette m_paletteGreenText;
     QPalette m_paletteRedText;
@@ -121,28 +112,26 @@ private:
 
     MessageQueue m_inputMessageQueue;
 
-    QNetworkAccessManager *m_networkManager;
-    QNetworkRequest m_networkRequest;
-
     void blockApplySettings(bool block);
 	void displaySettings();
 	void displayTime();
+    void displayRemoteData(const RemoteOutput::MsgReportRemoteData::RemoteData& remoteData);
+    void displayRemoteFixedData(const RemoteOutput::MsgReportRemoteFixedData::RemoteData& remoteData);
     void sendControl(bool force = false);
 	void sendSettings();
 	void updateSampleRate();
-	void updateTxDelayTooltip();
 	void displayEventCounts();
 	void displayEventStatus(int recoverableCount, int unrecoverableCount);
     void displayEventTimer();
-    void analyzeApiReply(const QJsonObject& jsonObject);
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
-    void on_sampleRate_changed(quint64 value);
-    void on_txDelay_valueChanged(int value);
     void on_nbFECBlocks_valueChanged(int value);
     void on_deviceIndex_returnPressed();
     void on_channelIndex_returnPressed();
+    void on_nbTxBytes_currentIndexChanged(int index);
     void on_apiAddress_returnPressed();
     void on_apiPort_returnPressed();
     void on_dataAddress_returnPressed();
@@ -154,7 +143,6 @@ private slots:
     void updateHardware();
     void updateStatus();
 	void tick();
-	void networkManagerFinished(QNetworkReply *reply);
     void openDeviceSettingsDialog(const QPoint& p);
 };
 

@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2017, 2019-2020 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,7 +22,7 @@
 #include "deviceplutosdr.h"
 
 DevicePlutoSDRParams::DevicePlutoSDRParams() :
-    m_box(0)
+    m_box(nullptr)
 {
 }
 
@@ -31,11 +33,17 @@ DevicePlutoSDRParams::~DevicePlutoSDRParams()
 bool DevicePlutoSDRParams::open(const std::string& serial)
 {
     m_box = DevicePlutoSDR::instance().getDeviceFromSerial(serial);
-    return m_box != 0;
+    return m_box != nullptr;
+}
+
+bool DevicePlutoSDRParams::openURI(const std::string& uri)
+{
+    m_box = DevicePlutoSDR::instance().getDeviceFromURI(uri);
+    return m_box != nullptr;
 }
 
 void DevicePlutoSDRParams::close()
 {
     delete m_box;
-    m_box = 0;
+    m_box = nullptr;
 }

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -20,15 +21,13 @@
 
 #include <QTimer>
 #include <QWidget>
-#include <QNetworkRequest>
 
-#include "plugin/plugininstancegui.h"
+#include "device/devicegui.h"
 #include "util/messagequeue.h"
 
 #include "localoutput.h"
 
 class DeviceUISet;
-class QNetworkAccessManager;
 class QNetworkReply;
 class QJsonObject;
 
@@ -36,7 +35,7 @@ namespace Ui {
 	class LocalOutputGui;
 }
 
-class LocalOutputGui : public QWidget, public PluginInstanceGUI {
+class LocalOutputGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -44,22 +43,16 @@ public:
 	virtual ~LocalOutputGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::LocalOutputGui* ui;
 
-	DeviceUISet* m_deviceUISet;
     LocalOutputSettings m_settings;        //!< current settings
+    QList<QString> m_settingsKeys;
 	LocalOutput* m_sampleSink;
     bool m_acquisition;
     int m_streamSampleRate;          //!< Sample rate of received stream
@@ -78,13 +71,12 @@ private:
     QPalette m_paletteGreenText;
     QPalette m_paletteWhiteText;
 
-    QNetworkAccessManager *m_networkManager;
-    QNetworkRequest m_networkRequest;
-
     void blockApplySettings(bool block);
 	void displaySettings();
     void sendSettings();
 	void updateSampleRateAndFrequency();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();

@@ -30,6 +30,9 @@ BFMDemodSettings:
       type: string
     audioDeviceName:
       type: string
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -41,6 +44,12 @@ BFMDemodSettings:
       type: integer
     reverseAPIChannelIndex:
       type: integer
+    spectrumConfig:
+      $ref: "http://swgserver:8081/api/swagger/include/GLSpectrum.yaml#/GLSpectrum"
+    channelMarker:
+      $ref: "http://swgserver:8081/api/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "http://swgserver:8081/api/swagger/include/RollupState.yaml#/RollupState"
 
 BFMDemodReport:
   description: BFMDemod

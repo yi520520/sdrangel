@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2017 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2017-2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free som_udpCopyAudioftware; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,14 +18,14 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "dsddemodsettings.h"
 
 DSDDemodSettings::DSDDemodSettings() :
-    m_channelMarker(0),
-    m_scopeGUI(0)
+    m_channelMarker(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -53,11 +54,16 @@ void DSDDemodSettings::resetToDefaults()
     m_traceStroke = 100;
     m_traceDecay = 200;
     m_audioDeviceName = AudioDeviceManager::m_defaultDeviceName;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
+    m_ambeFeatureIndex = -1;
+    m_connectAMBE = false;
 }
 
 QByteArray DSDDemodSettings::serialize() const
@@ -72,11 +78,6 @@ QByteArray DSDDemodSettings::serialize() const
     s.writeU32(7, m_rgbColor);
     s.writeS32(8, m_squelchGate);
     s.writeS32(9, m_volume*10.0);
-
-    if (m_scopeGUI) {
-        s.writeBlob(10, m_scopeGUI->serialize());
-    }
-
     s.writeS32(11, m_baudRate);
     s.writeBool(12, m_enableCosineFiltering);
     s.writeBool(13, m_syncOrConstellation);
@@ -100,6 +101,17 @@ QByteArray DSDDemodSettings::serialize() const
     s.writeU32(27, m_reverseAPIDeviceIndex);
     s.writeU32(28, m_reverseAPIChannelIndex);
     s.writeBool(29, m_audioMute);
+    s.writeS32(30, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(31, m_rollupState->serialize());
+    }
+
+    s.writeS32(32, m_workspaceIndex);
+    s.writeBlob(33, m_geometryBytes);
+    s.writeBool(34, m_hidden);
+    s.writeS32(35, m_ambeFeatureIndex);
+    s.writeBool(36, m_connectAMBE);
 
     return s.final();
 }
@@ -121,7 +133,8 @@ bool DSDDemodSettings::deserialize(const QByteArray& data)
         qint32 tmp;
         uint32_t utmp;
 
-        if (m_channelMarker) {
+        if (m_channelMarker)
+        {
             d.readBlob(17, &bytetmp);
             m_channelMarker->deserialize(bytetmp);
         }
@@ -141,12 +154,6 @@ bool DSDDemodSettings::deserialize(const QByteArray& data)
         d.readS32(8, &m_squelchGate, 5);
         d.readS32(9, &tmp, 20);
         m_volume = tmp / 10.0;
-
-        if (m_scopeGUI) {
-            d.readBlob(10, &bytetmp);
-            m_scopeGUI->deserialize(bytetmp);
-        }
-
         d.readS32(11, &m_baudRate, 4800);
         d.readBool(12, &m_enableCosineFiltering, false);
         d.readBool(13, &m_syncOrConstellation, false);
@@ -177,6 +184,19 @@ bool DSDDemodSettings::deserialize(const QByteArray& data)
         d.readU32(28, &utmp, 0);
         m_reverseAPIChannelIndex = utmp > 99 ? 99 : utmp;
         d.readBool(29, &m_audioMute, false);
+        d.readS32(30, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(31, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(32, &m_workspaceIndex, 0);
+        d.readBlob(33, &m_geometryBytes);
+        d.readBool(34, &m_hidden, false);
+        d.readS32(35, &m_ambeFeatureIndex, -1);
+        d.readBool(36, &m_connectAMBE, false);
 
         return true;
     }

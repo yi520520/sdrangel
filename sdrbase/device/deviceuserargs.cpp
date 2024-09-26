@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -16,19 +19,20 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <QDataStream>
+#include <QIODevice>
 
 #include "util/simpleserializer.h"
 #include "deviceuserargs.h"
 
 QDataStream &operator<<(QDataStream &ds, const DeviceUserArgs::Args &inObj)
 {
-	ds << inObj.m_id << inObj.m_sequence << inObj.m_args;
+	ds << inObj.m_id << inObj.m_sequence << inObj.m_args << inObj.m_nonDiscoverable;
     return ds;
 }
 
 QDataStream &operator>>(QDataStream &ds, DeviceUserArgs::Args &outObj)
 {
-	ds >> outObj.m_id >> outObj.m_sequence >> outObj.m_args;
+	ds >> outObj.m_id >> outObj.m_sequence >> outObj.m_args >> outObj.m_nonDiscoverable;
     return ds;
 }
 
@@ -36,8 +40,8 @@ QByteArray DeviceUserArgs::serialize() const
 {
     SimpleSerializer s(1);
     QByteArray data;
-    QDataStream *stream = new QDataStream(&data, QIODevice::WriteOnly);
-    *stream << m_argsByDevice;
+    QDataStream stream(&data, QIODevice::WriteOnly);
+    stream << m_argsByDevice;
     s.writeBlob(1, data);
     return s.final();
 }
@@ -78,7 +82,7 @@ QString DeviceUserArgs::findUserArgs(const QString& id, int sequence)
     return "";
 }
 
-void DeviceUserArgs::addDeviceArgs(const QString& id, int sequence, const QString& deviceArgs)
+void DeviceUserArgs::addDeviceArgs(const QString& id, int sequence, const QString& deviceArgs, bool nonDiscoverable)
 {
     int i = 0;
 
@@ -90,11 +94,11 @@ void DeviceUserArgs::addDeviceArgs(const QString& id, int sequence, const QStrin
     }
 
     if (i == m_argsByDevice.size()) {
-        m_argsByDevice.push_back(Args(id, sequence, deviceArgs));
+        m_argsByDevice.push_back(Args(id, sequence, deviceArgs, nonDiscoverable));
     }
 }
 
-void DeviceUserArgs::addOrUpdateDeviceArgs(const QString& id, int sequence, const QString& deviceArgs)
+void DeviceUserArgs::addOrUpdateDeviceArgs(const QString& id, int sequence, const QString& deviceArgs, bool nonDiscoverable)
 {
     int i = 0;
 
@@ -106,18 +110,20 @@ void DeviceUserArgs::addOrUpdateDeviceArgs(const QString& id, int sequence, cons
     }
 
     if (i == m_argsByDevice.size()) {
-        m_argsByDevice.push_back(Args(id, sequence, deviceArgs));
+        m_argsByDevice.push_back(Args(id, sequence, deviceArgs, nonDiscoverable));
     }
 }
 
-void DeviceUserArgs::updateDeviceArgs(const QString& id, int sequence, const QString& deviceArgs)
+void DeviceUserArgs::updateDeviceArgs(const QString& id, int sequence, const QString& deviceArgs, bool nonDiscoverable)
 {
     int i = 0;
 
     for (; i < m_argsByDevice.size(); i++)
     {
-        if ((m_argsByDevice.at(i).m_id == id) && (m_argsByDevice.at(i).m_sequence == sequence)) {
+        if ((m_argsByDevice.at(i).m_id == id) && (m_argsByDevice.at(i).m_sequence == sequence))
+        {
             m_argsByDevice[i].m_args = deviceArgs;
+            m_argsByDevice[i].m_nonDiscoverable = nonDiscoverable;
         }
     }
 }

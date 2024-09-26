@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2015-2019 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -15,11 +16,12 @@
 // along with this program. If not, see <http://www.gnu.org/licenses/>.          //
 ///////////////////////////////////////////////////////////////////////////////////
 
-#include <math.h>
+#include <cmath>
+
+#include <QDebug>
+
 #include "dsp/afsquelch.h"
 
-#undef M_PI
-#define M_PI 3.14159265358979323846
 
 AFSquelch::AFSquelch() :
             m_nbAvg(128),
@@ -216,9 +218,9 @@ bool AFSquelch::evaluate()
 	}
 
 //    m_isOpen = ((minPower/maxPower < m_threshold) && (minIndex > maxIndex));
-
     if ((minPower/maxPower < m_threshold) && (minIndex > maxIndex)) // open condition
     {
+
         if (m_squelchCount < m_samplesAttack + m_samplesDecay)
         {
             m_squelchCount++;

@@ -1,6 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>          //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -26,7 +27,10 @@ DATVUDPStream::DATVUDPStream(int tsBlockSize) :
     m_address(QHostAddress::LocalHost),
     m_port(8882),
     m_tsBlockSize(tsBlockSize),
-    m_tsBlockIndex(0)
+    m_tsBlockIndex(0),
+    m_dataBytes(0),
+    m_totalBytes(0),
+    m_fifoSignalCount(0)
 {
     m_tsBuffer = new char[m_tsBlocksPerFrame*m_tsBlockSize];
 }
@@ -44,15 +48,32 @@ void DATVUDPStream::pushData(const char *chrData, int nbTSBlocks)
 
     for (int i = 0; i < nbTSBlocks; i++)
     {
-        if (m_tsBlockIndex < m_tsBlocksPerFrame)
+        std::copy(chrData + i*m_tsBlockSize, chrData + (i+1)*m_tsBlockSize, m_tsBuffer + m_tsBlockIndex*m_tsBlockSize);
+
+        if (m_tsBlockIndex < m_tsBlocksPerFrame - 1)
         {
-            std::copy(chrData + i*m_tsBlockSize, chrData + (i+1)*m_tsBlockSize, m_tsBuffer + m_tsBlockIndex*m_tsBlockSize);
             m_tsBlockIndex++;
         }
         else
         {
             m_udpSocket.writeDatagram(m_tsBuffer, m_tsBlocksPerFrame*m_tsBlockSize, m_address, m_port);
+            m_dataBytes += m_tsBlocksPerFrame*m_tsBlockSize;
+            m_totalBytes += m_tsBlocksPerFrame*m_tsBlockSize;
+
+            if (++m_fifoSignalCount == 10)
+            {
+                emit fifoData(m_dataBytes, 0, m_totalBytes);
+                m_fifoSignalCount = 0;
+            }
+
+            m_dataBytes = 0;
             m_tsBlockIndex = 0;
         }
     }
+}
+
+void DATVUDPStream::resetTotalReceived()
+{
+    m_totalBytes = 0;
+    emit fifoData(m_dataBytes, 0, m_totalBytes);
 }

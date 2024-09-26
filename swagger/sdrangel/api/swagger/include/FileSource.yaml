@@ -17,6 +17,9 @@ FileSourceSettings:
       type: integer
     title:
       type: string
+    streamIndex:
+      description: MIMO channel. Not relevant when connected to SI (single Rx).
+      type: integer
     useReverseAPI:
       description: Synchronize with reverse API (1 for yes, 0 for no)
       type: integer
@@ -28,6 +31,10 @@ FileSourceSettings:
       type: integer
     reverseAPIChannelIndex:
       type: integer
+    channelMarker:
+      $ref: "http://swgserver:8081/api/swagger/include/ChannelMarker.yaml#/ChannelMarker"
+    rollupState:
+      $ref: "http://swgserver:8081/api/swagger/include/RollupState.yaml#/RollupState"
 
 FileSourceReport:
   description: FileSource
@@ -56,3 +63,16 @@ FileSourceReport:
       description: power transmitted in channel (dB)
       type: number
       format: float
+
+FileSourceActions:
+  description: FileSource
+  properties:
+    play:
+      type: integer
+      description: >
+        Play or Pause stream
+          * 0 - Pause
+          * 1 - Play
+    seekMillis:
+      description: Move play cursor to this thousands of total time from the start
+      type: integer

@@ -3,14 +3,16 @@ project(limesdroutput)
 set(limesdroutput_SOURCES
 	limesdroutput.cpp
 	limesdroutputplugin.cpp
-	limesdroutputsettings.cpp
+    limesdroutputsettings.cpp
+    limesdroutputwebapiadapter.cpp
 	limesdroutputthread.cpp
 )
 
 set(limesdroutput_HEADERS
 	limesdroutput.h
 	limesdroutputplugin.h
-	limesdroutputsettings.h
+    limesdroutputsettings.h
+    limesdroutputwebapiadapter.h
 	limesdroutputthread.h
 )
 
@@ -32,27 +34,33 @@ if(NOT SERVER_MODE)
         limesdroutputgui.h
     )
 
-    set(TARGET_NAME outputlimesdr)
-    set(TARGET_LIB "Qt5::Widgets")
+    set(TARGET_NAME ${PLUGINS_PREFIX}outputlimesdr)
+    set(TARGET_LIB "Qt::Widgets")
     set(TARGET_LIB_GUI "sdrgui")
     set(INSTALL_FOLDER ${INSTALL_PLUGINS_DIR})
 else()
-    set(TARGET_NAME outputlimesdrsrv)
+    set(TARGET_NAME ${PLUGINSSRV_PREFIX}outputlimesdrsrv)
     set(TARGET_LIB "")
     set(TARGET_LIB_GUI "")
     set(INSTALL_FOLDER ${INSTALL_PLUGINSSRV_DIR})
 endif()
 
-add_library(${TARGET_NAME} SHARED
-	${limesdroutput_SOURCES}
-)
+if(NOT Qt6_FOUND)
+    add_library(${TARGET_NAME} ${limesdroutput_SOURCES})
+else()
+    qt_add_plugin(${TARGET_NAME} CLASS_NAME LimeSDROutputPlugin ${limesdroutput_SOURCES})
+endif()
 
-if(ENABLE_EXTERNAL_LIBRARIES)
+if(NOT BUILD_SHARED_LIBS)
+    set_property(GLOBAL APPEND PROPERTY STATIC_PLUGINS_PROPERTY ${TARGET_NAME})
+endif()
+
+if(LIMESUITE_EXTERNAL)
     add_dependencies(${TARGET_NAME} limesuite)
 endif()
 
-target_link_libraries(${TARGET_NAME}
-        Qt5::Core
+target_link_libraries(${TARGET_NAME} PRIVATE
+        Qt::Core
         ${TARGET_LIB}
 	sdrbase
 	${TARGET_LIB_GUI}
@@ -62,3 +70,8 @@ target_link_libraries(${TARGET_NAME}
 )
 
 install(TARGETS ${TARGET_NAME} DESTINATION ${INSTALL_FOLDER})
+
+# Install debug symbols
+if (WIN32)
+    install(FILES $<TARGET_PDB_FILE:${TARGET_NAME}> CONFIGURATIONS Debug RelWithDebInfo DESTINATION ${INSTALL_FOLDER} )
+endif()

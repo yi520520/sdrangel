@@ -1,5 +1,5 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2018-2019, 2021 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // Remote sink channel (Rx) data block                                           //
 //                                                                               //
@@ -38,16 +38,18 @@
 #pragma pack(push, 1)
 struct RemoteMetaDataFEC
 {
-    uint64_t m_centerFrequency;   //!<  8 center frequency in kHz
-    uint32_t m_sampleRate;        //!< 12 sample rate in Hz
-    uint8_t  m_sampleBytes;       //!< 13 4 LSB: number of bytes per sample (2 or 4)
-    uint8_t  m_sampleBits;        //!< 14 number of effective bits per sample (deprecated)
-    uint8_t  m_nbOriginalBlocks;  //!< 15 number of blocks with original (protected) data
-    uint8_t  m_nbFECBlocks;       //!< 16 number of blocks carrying FEC
+    uint64_t m_centerFrequency;       //!<  8 center frequency in kHz
+    uint32_t m_sampleRate;            //!< 12 sample rate in Hz
+    uint8_t  m_sampleBytes;           //!< 13 4 LSB: number of bytes per sample (2 or 4)
+    uint8_t  m_sampleBits;            //!< 14 number of effective bits per sample (deprecated)
+    uint8_t  m_nbOriginalBlocks;      //!< 15 number of blocks with original (protected) data
+    uint8_t  m_nbFECBlocks;           //!< 16 number of blocks carrying FEC
+    uint8_t  m_deviceIndex;           //!< 29 index of device set in instance
+    uint8_t  m_channelIndex;          //!< 30 index of channel in device set
 
-    uint32_t m_tv_sec;            //!< 20 seconds of timestamp at start time of super-frame processing
-    uint32_t m_tv_usec;           //!< 24 microseconds of timestamp at start time of super-frame processing
-    uint32_t m_crc32;             //!< 28 CRC32 of the above
+    uint32_t m_tv_sec;                //!< 34 seconds of timestamp at start time of super-frame processing
+    uint32_t m_tv_usec;               //!< 38 microseconds of timestamp at start time of super-frame processing
+    uint32_t m_crc32;                 //!< 42 CRC32 of the above
 
     bool operator==(const RemoteMetaDataFEC& rhs)
     {
@@ -68,6 +70,8 @@ struct RemoteMetaDataFEC
         m_sampleBits = 0;
         m_nbOriginalBlocks = 0;
         m_nbFECBlocks = 0;
+        m_deviceIndex = 0;
+        m_channelIndex = 0;
         m_tv_sec = 0;
         m_tv_usec = 0;
         m_crc32 = 0;
@@ -126,16 +130,15 @@ struct RemoteTxControlBlock
     bool m_processed;
     uint16_t m_frameIndex;
     int m_nbBlocksFEC;
-    int m_txDelay;
     QString m_dataAddress;
     uint16_t m_dataPort;
 
-    RemoteTxControlBlock() {
+    RemoteTxControlBlock()
+    {
         m_complete = false;
         m_processed = false;
         m_frameIndex = 0;
         m_nbBlocksFEC = 0;
-        m_txDelay = 100;
         m_dataAddress = "127.0.0.1";
         m_dataPort = 9090;
     }
@@ -158,13 +161,13 @@ struct RemoteRxControlBlock
     }
 };
 
-class RemoteDataBlock
+class RemoteDataFrame
 {
 public:
-    RemoteDataBlock() {
-        m_superBlocks = new RemoteSuperBlock[256];
+    RemoteDataFrame() {
+        m_superBlocks = new RemoteSuperBlock[256]; //!< 128 original bloks + 128 possible recovery blocks
     }
-    ~RemoteDataBlock() {
+    ~RemoteDataFrame() {
         delete[] m_superBlocks;
     }
     RemoteTxControlBlock m_txControlBlock;

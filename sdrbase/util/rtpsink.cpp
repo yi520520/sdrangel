@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2018-2019, 2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jiří Pinkava <jiri.pinkava@rossum.ai>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,7 +17,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include "rtpsink.h"
-#include "dsp/dsptypes.h"
 #include <algorithm>
 
 RTPSink::RTPSink(QUdpSocket *udpSocket, int sampleRate, bool stereo) :
@@ -28,8 +27,7 @@ RTPSink::RTPSink(QUdpSocket *udpSocket, int sampleRate, bool stereo) :
     m_bufferSize(0),
     m_sampleBufferIndex(0),
     m_byteBuffer(0),
-    m_destport(9998),
-    m_mutex(QMutex::Recursive)
+    m_destport(9998)
 {
 	m_rtpSessionParams.SetOwnTimestampUnit(1.0 / (double) m_sampleRate);
     m_rtpTransmissionParams.SetRTCPMultiplexing(true); // do not allocate another socket for RTCP
@@ -67,8 +65,10 @@ RTPSink::~RTPSink()
     qrtplib::RTPTime delay = qrtplib::RTPTime(10.0);
     m_rtpSession.BYEDestroy(delay, "Time's up", 9);
 
-    if (m_byteBuffer) {
+    if (m_byteBuffer)
+    {
         delete[] m_byteBuffer;
+        m_byteBuffer = nullptr;
     }
 }
 
@@ -128,8 +128,10 @@ void RTPSink::setPayloadInformation(PayloadType payloadType, int sampleRate)
 
     m_bufferSize = m_packetSamples * m_sampleBytes;
 
-    if (m_byteBuffer) {
+    if (m_byteBuffer)
+    {
         delete[] m_byteBuffer;
+        m_byteBuffer = nullptr;
     }
 
     m_byteBuffer = new uint8_t[m_bufferSize];

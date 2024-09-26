@@ -6,6 +6,8 @@ This plugin can be used to generate a single sideband or double sidebands modula
 
 <h2>Interface</h2>
 
+The top and bottom bars of the channel window are described [here](../../../sdrgui/channel/readme.md)
+
 ![SSB Modulator plugin GUI](../../../doc/img/SSBModulator_plugin.png)
 
 &#9758; In order to toggle USB or LSB mode in SSB mode you have to set the "BW" in channel filter cutoff control (8) to a positive (USB) or negative (LSB) value. The above screenshot shows a USB setup. See the (7) to (9) paragraphs below for details.
@@ -113,25 +115,43 @@ Use this button to toggle audio compression on or off.
 
 <h3>13: Input source control</h3>
 
-![Modulator input source control GUI](../../../doc/img/ModControls.png)
+![Modulator input source control GUI](../../../doc/img/SSBModulator_plugin_cmp.png)
 
-<h4>13.1: Tone input select</h4>
+<h4>13.1: Audio compressor</h4>
+
+Activate/deactivate it for file and audio input only.
+
+<h4>13.2: Audio compressor input gain</h4>
+
+Gain in dB before compression
+
+<h4>13.3: Audio compressor threshold</h4>
+
+Threshold in dB above which compression applies a.k.a. "knee" point. The lower the value the harder is the compression and consequently higher the distortion.
+
+<h4>13.4: Tone input select</h4>
 
 Switches to the tone input. You must switch it off to make other inputs available.
 
-<h4>13.2: Morse keyer input select</h4>
+<h4>13.5: Morse keyer input select</h4>
 
 Switches to the Morse keyer input. You must switch it off to make other inputs available.
 
-<h4>13.3: Tone frequency (kHz)</h4>
+<h4>13.6: Tone frequency (kHz)</h4>
 
 Adjusts the tone frequency from 0.1 to 2.5 kHz in 0.01 kHz steps
 
-<h4>13.4: Audio input select and select audio input device</h4>
+<h4>13.7: Audio input select and select audio input device</h4>
 
 Left click to switch to the audio input. You must switch it off to make other inputs available.
 
 Right click to select audio input device. See [audio management documentation](../../../sdrgui/audio.md) for details.
+
+<h4>13.8: Audio feedback</h4>
+
+Left click to activate audio feedback.
+
+Right click to select audio output device for audio feedback. See [audio management documentation](../../../sdrgui/audio.md) for details.
 
 <h3>14: CW (Morse) text</h3>
 
@@ -141,11 +161,11 @@ Enter the text to be keyed when Morse input is active and in text mode
 
 Clears the CW (Morse) text
 
-<h3>16: Morse keyer controls</h3>
+<h3>16a: Morse keyer controls (line1)</h3>
 
 ![Morse keyer control GUI1](../../../doc/img/ModCWControls1.png)
 
-<h4>16.1: CW keying speed</h4>
+<h4>16a.1: CW keying speed</h4>
 
 Sets the CW speed in Words Per Minute (WPM). This is based on the word "PARIS" sent 5 times. For 5 WPM the dot length is 240 ms. In other terms the dot length is calculated as 1.2 / WPM seconds. The dot length is used as the base to compute other timings:
 
@@ -154,45 +174,51 @@ Sets the CW speed in Words Per Minute (WPM). This is based on the word "PARIS" s
   - Character silence separator: 3 dot lengths
   - Word silence separator: 7 dot lengths
 
-<h4>16.2: Dots keying</h4>
+<h4>16a.2: Dots keying</h4>
 
 Switch this button to send dots continuously
 
-<h4>16.3: Dashes keying</h4>
+<h4>16a.3: Dashes keying</h4>
 
 Switch this button to send dashes continuously
 
-<h4>16.4: Text keying</h4>
+<h4>16a.4: Text keying</h4>
 
 Switch this button to send the text typed into the text box (13)
 
-<h4>16.5: Text auto repeat</h4>
+<h4>16a.5: Text auto repeat</h4>
 
 Switch this button to auto repeat the text keying
 
-<h4>16.6: Text play/stop</h4>
+<h4>16a.6: Text play/stop</h4>
 
 Use this button to stop sending text. When resuming keying restarts at the start of text
+
+<h3>16b: Morse keyer controls (line2)</h3>
 
 ![Morse keyer control GUI2](../../../doc/img/ModCWControls2.png)
 
 &#9888; WARNING: what follows is not really useful if you do not use a proper Morse keyer with direct audio feedback. There is a significant audio delay either with the direct monitoring or by monitoring the transmitted signal so keying with this audio as feedback is not practical
 
-16.7: Activate morse keys keyboard control
+16b.1: Activate morse keys keyboard and mouse control
 
-This disables text or continuous dots or dashes. Toggle input from keyboard. Occasionnaly the focus may get lost and you will have to deactivate and reactivate it to recover the key bindings.
+This disables text or continuous dots or dashes. Toggle input from keyboard or mouse (see 16b.3). Occasionally the focus may get lost and you will have to deactivate and reactivate it to recover the key bindings.
 
-16.8: Iambic or straight
+16b.2: Iambic or straight
 
 Choose iambic or straight keying style. When straight is selected the dot or dash key may be used.
 
-16.9: Register dot key
+16b.3: Mouse control pad
+
+When keyboard and mouse control is activated move the pointer to this area to use the left button as the dot paddle and the right button as the dash paddle. In straight mode both buttons have the same effect (key down).
+
+16b.4: Register dot key
 
 Click on the button and while selected type a character or character and modifier (Shift + key for example) to select which key is used for dots. The key or key sequence appears next (here dot `.`)
 
-16.10: Register dash key
+16b.5: Register dash key
 
-Click on the button and while selected type a character or character and modifier (Shift + key for example) to select which key is used for dashes. The key or key sequence appears next (here dot `.`)
+Click on the button and while selected type a character or character and modifier (Shift + key for example) to select which key is used for dashes. The key or key sequence appears next (here minus sign `-`)
 
 <h3>17: Audio file path</h3>
 
@@ -229,4 +255,4 @@ This slider can be used to randomly set the current position in the file when fi
 
 <h3>22: Channel spectrum display</h3>
 
-This is the channel spectrum display. Controls at the bottom of the panel are the same as with the central spectrum display.
+This is the channel spectrum display. Details on the spectrum view and controls can be found [here](../../../sdrgui/gui/spectrum.md)

@@ -1,5 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +19,7 @@
 #ifndef _TESTMI_TESTMIGUI_H_
 #define _TESTMI_TESTMIGUI_H_
 
-#include <plugin/plugininstancegui.h>
+#include <device/devicegui.h>
 #include <QTimer>
 #include <QWidget>
 
@@ -33,7 +34,7 @@ namespace Ui {
 	class TestMIGui;
 }
 
-class TestMIGui : public QWidget, public PluginInstanceGUI {
+class TestMIGui : public DeviceGUI {
 	Q_OBJECT
 
 public:
@@ -41,21 +42,14 @@ public:
 	virtual ~TestMIGui();
 	virtual void destroy();
 
-	void setName(const QString& name);
-	QString getName() const;
-
 	void resetToDefaults();
-	virtual qint64 getCenterFrequency() const;
-	virtual void setCenterFrequency(qint64 centerFrequency);
 	QByteArray serialize() const;
 	bool deserialize(const QByteArray& data);
 	virtual MessageQueue *getInputMessageQueue() { return &m_inputMessageQueue; }
-	virtual bool handleMessage(const Message& message);
 
 private:
 	Ui::TestMIGui* ui;
 
-	DeviceUISet* m_deviceUISet;
 	TestMISettings m_settings;
     int m_streamIndex; //!< Current stream index being dealt with
     int m_spectrumStreamIndex; //!< Index of the stream displayed on main spectrum
@@ -78,7 +72,8 @@ private:
     void updateAmpCoarseLimit();
     void updateAmpFineLimit();
     void updateFrequencyShiftLimit();
-    void updateFileRecordStatus();
+	bool handleMessage(const Message& message);
+    void makeUIConnections();
 
 private slots:
     void handleInputMessages();
@@ -103,7 +98,6 @@ private slots:
     void on_iBias_valueChanged(int value);
     void on_qBias_valueChanged(int value);
     void on_phaseImbalance_valueChanged(int value);
-    void on_record_toggled(bool checked);
     void openDeviceSettingsDialog(const QPoint& p);
     void updateStatus();
     void updateHardware();

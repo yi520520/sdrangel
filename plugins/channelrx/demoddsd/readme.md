@@ -18,26 +18,9 @@ To enable this plugin at compile time you will need to have DSDcc installed in y
 
 <h2>DV serial device support</h2>
 
-You can use a serial device connected to your system that implements and exposes the packet interface of the AMBE3000 chip. This can be for example a ThumbDV USB dongle. You may also connect to an AMBE server instance over the network.
+You can use a serial device connected to your system that implements and exposes the packet interface of the AMBE3000 chip. This can be for example a ThumbDV USB dongle. You may also connect to an AMBE server instance over the network. This is supported via the [AMBE feature](../../feature/ambe/readme.md).
 
-DV serial devices are supported using the [SerialDV](https://github.com/f4exb/serialDV) library that is a mandatory requirement. Therefore you have to compile and install it in your system. Please refer to this project Readme.md to compile and install SerialDV. f you install it in a custom location say `/opt/install/serialdv` you will need to add this define to the cmake command: `-DSERIALDV_DIR=/opt/install/serialdv`
-
-To effectively use serial DV devices for AMBE decoding you will have to add at least one device to the list of AMBE devices in use using the `AMBE devices control` dialog opened with the `AMBE` option in the `Preferences` menu. The list of devices is saved in the program preferences so that they are persistent across program stop/start. However if the device name or server address changes in between the corresponding reference will be lost.
-
-Although such serial devices work with a serial interface at 400 kb in practice maybe for other reasons they are capable of handling only one conversation at a time. The software will allocate the device dynamically to a conversation with an inactivity timeout of 1 second so that conversations do not get interrupted constantly making the audio output too choppy. In practice you will have to have as many devices connected to your system as the number of conversations you would like to be handled in parallel.
-
-Note also that hardware serial devices are not supported in Windows because of trouble with COM port support (contributors welcome!).
-
-If no AMBE devices or servers are activated with the `AMBE devices control` AMBE decoding will take place with Mbelib. Possible copyright issues apart (see next) the audio quality with the DVSI AMBE chip is much better.
-
----
-&#9888; With kernel 4.4.52 and maybe other 4.4 versions the default for FTDI devices (that is in the ftdi_sio kernel module) is not to set it as low latency. This results in the ThumbDV dongle not working anymore because its response is too slow to sustain the normal AMBE packets flow. The solution is to force low latency by changing the variable for your device (ex: /dev/ttyUSB0) as follows:
-
-`echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB0/latency_timer` or `sudo setserial /dev/ttyUSB0 low_latency`
-
-Newer kernels do not seem to have this issue.
-
----
+If no AMBE features are active or the AMBE support is not engaged (B.19) AMBE decoding will take place with Mbelib. Possible copyright issues apart (see next) the audio quality with the DVSI AMBE chip is much better.
 
 <h2>Mbelib support</h2>
 
@@ -52,13 +35,15 @@ For software built from source if you choose to have `mbelib` support you will n
 
 <h2>Interface</h2>
 
+The top and bottom bars of the channel window are described [here](../../../sdrgui/channel/readme.md)
+
 ![DSD Demodulator plugin GUI](../../../doc/img/DSDdemod_plugin.png)
 
 <h3>A section: settings</h3>
 
 <h4>A.1: Frequency shift from center frequency of reception</h4>
 
-Use the wheels to adjust the frequency shift in Hz from the center frequency of reception. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows.Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
+Use the wheels to adjust the frequency shift in Hz from the center frequency of reception. Left click on a digit sets the cursor position at this digit. Right click on a digit sets all digits on the right to zero. This effectively floors value at the digit position. Wheels are moved with the mousewheel while pointing at the wheel or by selecting the wheel with the left mouse click and using the keyboard arrows. Pressing shift simultaneously moves digit by 5 and pressing control moves it by 2.
 
 <h4>A.2: Channel bandwidth before discriminator</h4>
 
@@ -112,7 +97,7 @@ The level corresponds to the channel power above which the squelch gate opens.
 
 <h4>A.9: Squelch time gate</h4>
 
-Number of milliseconds following squelch gate opening after which the signal is declared open. There is a delay line for the samples so samples applied to the decoder actually start at the beginning of the gate period not loosing any samples. 0 means squelch is declared open with no delay.
+Number of milliseconds following squelch gate opening after which the signal is declared open. There is a delay line for the samples so samples applied to the decoder actually start at the beginning of the gate period not losing any samples. 0 means squelch is declared open with no delay.
 
 <h4>A.10: High-pass filter for audio</h4>
 
@@ -122,7 +107,7 @@ Use this switch to toggle high-pass filter on the audio
 
 Left click to mute/unmute audio. This button lights in green when the squelch opens.
 
-If you right click on it it will open a dialog to select the audio output device. See [audio management documentation](../../../sdrgui/audio.md) for details.
+If you right click on it, it will open a dialog to select the audio output device. See [audio management documentation](../../../sdrgui/audio.md) for details.
 
 <h3>A.12: Format specific status display</h3>
 
@@ -221,7 +206,7 @@ String is in the form: `02223297>G00000222`
 
 ![DSD dPMR status](../../../doc/img/DSDdemod_plugin_dpmr_status.png)
 
-<h5>A11.3.1: dPMR frame tyoe</h5>
+<h5>A11.3.1: dPMR frame type</h5>
 
   - `--`: undetermined
   - `HD`: Header of FS1 type
@@ -306,30 +291,30 @@ This is the control channel used in trunked systems and is usually sent continuo
 
 ![DSD NXDN RTDCH status](../../../doc/img/DSDdemod_plugin_nxdn_rcch_status.png)
 
-<h6>A11.5.1.1: RF channel indicator</h5>
+<h6>A11.5.1.1: RF channel indicator</h6>
 
 This is `RC` for RCCH
 
-<h6>A11.5.2.2: Half/full rate</h5>
+<h6>A11.5.2.2: Half/full rate</h6>
 
 Indicator of transmission rate:
 
   - `H`: half rate (2400 or 4800 S/s). Uses EHR vocoder (AMBE 3600/2450)
   - `F`: full rate (4800 S/s only). Uses EFR vocoder (AMBE 7200/4400)
 
-<h6>A11.5.1.3: RAN number</h5>
+<h6>A11.5.1.3: RAN number</h6>
 
 This is the RAN number (0 to 63) associated to the transmission. RAN stands for "Radio Access Number" and for trunked systems this is the site identifier (Site Id) modulo 64.
 
-<h6>A11.5.1.4: Last message type code</h5>
+<h6>A11.5.1.4: Last message type code</h6>
 
 This is the type code of the last message (6 bits) displayed in hexadecimal. The complete list is found in the NXDN documentation `NXDN TS 1-A Version 1.3` section 6.
 
-<h6>A11.5.1.5: Location Id</h5>
+<h6>A11.5.1.5: Location Id</h6>
 
 This is the 3 byte location Id associated to the site displayed in hexadecimal
 
-<h6>A11.5.1.6: Services available flags</h5>
+<h6>A11.5.1.6: Services available flags</h6>
 
 This is a 16 bit collection of flags to indicate which services are available displayed in hexadecimal. The breakdown is listed in the NXDN documentation `NXDN TS 1-A Version 1.3` section 6.5.33. From MSB to LSB:
 
@@ -356,33 +341,33 @@ This is the transmission channel either in a trunked system (RTCH) or convention
 
 ![DSD NXDN RTDCH status](../../../doc/img/DSDdemod_plugin_nxdn_rtdch_status.png)
 
-<h6>A11.5.2.1: RF channel indicator</h5>
+<h6>A11.5.2.1: RF channel indicator</h6>
 
 It can be either `RT` for RTCH or `RD` for a RDCH channel
 
-<h6>A11.5.2.2: Half/full rate</h5>
+<h6>A11.5.2.2: Half/full rate</h6>
 
 Indicator of transmission rate:
 
   - `H`: half rate (2400 or 4800 S/s). Uses EHR vocoder (AMBE 3600/2450)
   - `F`: full rate (4800 S/s only). Uses EFR vocoder (AMBE 7200/4400)
 
-<h6>A11.5.2.3: RAN number</h5>
+<h6>A11.5.2.3: RAN number</h6>
 
 This is the RAN number (0 to 63) associated to the transmission. RAN stands for "Radio Access Number" and has a different usage in conventional or trunked systems:
 
   - Conventional (RDCH): this is used as a selective squelch. Code `0` means always unmute.
   - Trunked (RTCH): this is the site identifier (Site Id) modulo 64.
 
-<h6>A11.5.2.4: Last message type code</h5>
+<h6>A11.5.2.4: Last message type code</h6>
 
 This is the type code of the last message (6 bits) displayed in hexadecimal. The complete list is found in the NXDN documentation `NXDN TS 1-A Version 1.3` section 6.
 
-<h6>A11.5.2.5: Source Id</h5>
+<h6>A11.5.2.5: Source Id</h6>
 
 This is the source of transmission identification code on two bytes (0 to 65353) displayed in decimal.
 
-<h6>A11.5.2.6: Destination Id</h5>
+<h6>A11.5.2.6: Destination Id</h6>
 
 This is the destination of transmission identification code on two bytes (0 to 65353) displayed in decimal. It is prefixed by a group call indicator:
 
@@ -565,11 +550,11 @@ This button tunes the length of the trace displayed on B.1. Units are millisecon
 
 <h4>B.15: Trace stroke</h4>
 
-This button tunes the stroke of the points displayer on B.1. The trace has limited persistence based on alpha blending. This is the 8 bit unsigned integer value of the trace alpha blending. Default value is 100.
+This button tunes the stroke of the points displayed on B.1. The trace has limited persistence based on alpha blending. This is the 8 bit unsigned integer value of the trace alpha blending. Default value is 100.
 
 <h4>B.16: Trace decay</h4>
 
-This button tunes the persistence decay of the points displayer on B.1. The trace has limited persistence based on alpha blending. This controls the alpha value of the black screen printed at the end of each trace and thus the trace points decay time. The value is 255 minus he displayed value using 8 bit unsigned integers.
+This button tunes the persistence decay of the points displayed on B.1. The trace has limited persistence based on alpha blending. This controls the alpha value of the black screen printed at the end of each trace and thus the trace points decay time. The value is 255 minus the displayed value using 8 bit unsigned integers.
 
   - A value of 0 yields no persistence
   - A value of 255 yields infinite persistence
@@ -588,3 +573,11 @@ This is the one side deviation in kHz (&#177;) leading to maximum (100%) deviati
 <h4>B.18: Gain after discriminator</h4>
 
 This is the gain applied to the output of the discriminator before the decoder. Normally this would be set at unit gain 1.0 while the FM deviation is adjusted. However this can be used to extend the range of FM adjustment.
+
+<h4>B.19: Activate AMBE hardware feature</h4>
+
+Connects to an [AMBE Feature](../../feature/ambe/readme.md) to process AMBE frames in hardware
+
+<h4>B.20: AMBE feature index for hardware decoding</h4>
+
+Select the AMBE feature index used to process AMBE frames in hardware. If no AMBE feature is present then the list is empty. The list is automatically updated when an AMBE feature is added or removed.

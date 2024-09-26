@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2019 Davide Gerhard <rainbow@irh.it>                            //
+// Copyright (C) 2020 Kacper Michajłow <kasper93@gmail.com>                      //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -18,7 +20,6 @@
 #include <QtPlugin>
 
 #include "plugin/pluginapi.h"
-#include "util/simpleserializer.h"
 
 #ifdef SERVER_MODE
 #include "testmi.h"
@@ -26,18 +27,20 @@
 #include "testmigui.h"
 #endif
 #include "testmiplugin.h"
+#include "testmiwebapiadapter.h"
 
 const PluginDescriptor TestMIPlugin::m_pluginDescriptor = {
-	QString("Test Multiple Input"),
-	QString("4.8.1"),
-	QString("(c) Edouard Griffiths, F4EXB"),
-	QString("https://github.com/f4exb/sdrangel"),
+    QStringLiteral("TestMI"),
+	QStringLiteral("Test Multiple Input"),
+    QStringLiteral("7.21.4"),
+	QStringLiteral("(c) Edouard Griffiths, F4EXB"),
+	QStringLiteral("https://github.com/f4exb/sdrangel"),
 	true,
-	QString("https://github.com/f4exb/sdrangel")
+	QStringLiteral("https://github.com/f4exb/sdrangel")
 };
 
-const QString TestMIPlugin::m_hardwareID = "TestMI";
-const QString TestMIPlugin::m_deviceTypeID = TESTMI_DEVICE_TYPE_ID;
+static constexpr const char* const m_hardwareID = "TestMI";
+static constexpr const char* const m_deviceTypeID = TESTMI_DEVICE_TYPE_ID;
 
 TestMIPlugin::TestMIPlugin(QObject* parent) :
 	QObject(parent)
@@ -54,26 +57,50 @@ void TestMIPlugin::initPlugin(PluginAPI* pluginAPI)
 	pluginAPI->registerSampleMIMO(m_deviceTypeID, this);
 }
 
-PluginInterface::SamplingDevices TestMIPlugin::enumSampleMIMO()
+void TestMIPlugin::enumOriginDevices(QStringList& listedHwIds, OriginDevices& originDevices)
+{
+    if (listedHwIds.contains(m_hardwareID)) { // check if it was done
+        return;
+    }
+
+    originDevices.append(OriginDevice(
+        "TestMI",         // Displayable name
+        m_hardwareID,     // Hardware ID
+        QString(),        // Serial
+        0,                // Sequence
+        2,                // Number of Rx streams
+        0                 // Number of Tx streams
+    ));
+
+    listedHwIds.append(m_hardwareID);
+}
+
+PluginInterface::SamplingDevices TestMIPlugin::enumSampleMIMO(const OriginDevices& originDevices)
 {
 	SamplingDevices result;
 
-    result.append(SamplingDevice(
-            "TestMI",
-            m_hardwareID,
-            m_deviceTypeID,
-            QString::null,
-            0,
-            PluginInterface::SamplingDevice::BuiltInDevice,
-            PluginInterface::SamplingDevice::StreamMIMO,
-            1,
-            0));
+    for (OriginDevices::const_iterator it = originDevices.begin(); it != originDevices.end(); ++it)
+    {
+        if (it->hardwareId == m_hardwareID)
+        {
+            result.append(SamplingDevice(
+                    "TestMI",
+                    m_hardwareID,
+                    m_deviceTypeID,
+                    it->serial,
+                    it->sequence,
+                    PluginInterface::SamplingDevice::BuiltInDevice,
+                    PluginInterface::SamplingDevice::StreamMIMO,
+                    1,    // MIMO is always considered as a single device
+                    0));
+        }
+    }
 
 	return result;
 }
 
 #ifdef SERVER_MODE
-PluginInstanceGUI* TestMIPlugin::createSampleMIMOPluginInstanceGUI(
+DeviceGUI* TestMIPlugin::createSampleMIMOPluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -84,7 +111,7 @@ PluginInstanceGUI* TestMIPlugin::createSampleMIMOPluginInstanceGUI(
     return 0;
 }
 #else
-PluginInstanceGUI* TestMIPlugin::createSampleMIMOPluginInstanceGUI(
+DeviceGUI* TestMIPlugin::createSampleMIMOPluginInstanceGUI(
         const QString& sourceId,
         QWidget **widget,
         DeviceUISet *deviceUISet)
@@ -112,3 +139,7 @@ DeviceSampleMIMO *TestMIPlugin::createSampleMIMOPluginInstance(const QString& mi
     }
 }
 
+DeviceWebAPIAdapter *TestMIPlugin::createDeviceWebAPIAdapter() const
+{
+    return new TestMIWebAPIAdapter();
+}

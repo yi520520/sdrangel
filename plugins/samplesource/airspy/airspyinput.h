@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2015 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2014 John Greb <hexameron@spam.no>                              //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -28,9 +31,9 @@
 
 class QNetworkAccessManager;
 class QNetworkReply;
+class QThread;
 class DeviceAPI;
-class AirspyThread;
-class FileRecord;
+class AirspyWorker;
 
 class AirspyInput : public DeviceSampleSource {
     Q_OBJECT
@@ -40,42 +43,26 @@ public:
 
 	public:
 		const AirspySettings& getSettings() const { return m_settings; }
+        const QList<QString>& getSettingsKeys() const { return m_settingsKeys; }
 		bool getForce() const { return m_force; }
 
-		static MsgConfigureAirspy* create(const AirspySettings& settings, bool force)
+		static MsgConfigureAirspy* create(const AirspySettings& settings, const QList<QString>& settingsKeys, bool force)
 		{
-			return new MsgConfigureAirspy(settings, force);
+			return new MsgConfigureAirspy(settings, settingsKeys, force);
 		}
 
 	private:
 		AirspySettings m_settings;
+        QList<QString> m_settingsKeys;
 		bool m_force;
 
-		MsgConfigureAirspy(const AirspySettings& settings, bool force) :
+		MsgConfigureAirspy(const AirspySettings& settings, const QList<QString>& settingsKeys, bool force) :
 			Message(),
 			m_settings(settings),
+            m_settingsKeys(settingsKeys),
 			m_force(force)
 		{ }
 	};
-
-    class MsgFileRecord : public Message {
-        MESSAGE_CLASS_DECLARATION
-
-    public:
-        bool getStartStop() const { return m_startStop; }
-
-        static MsgFileRecord* create(bool startStop) {
-            return new MsgFileRecord(startStop);
-        }
-
-    protected:
-        bool m_startStop;
-
-        MsgFileRecord(bool startStop) :
-            Message(),
-            m_startStop(startStop)
-        { }
-    };
 
     class MsgStartStop : public Message {
         MESSAGE_CLASS_DECLARATION
@@ -140,30 +127,38 @@ public:
             SWGSDRangel::SWGDeviceReport& response,
             QString& errorMessage);
 
+    static void webapiFormatDeviceSettings(
+        SWGSDRangel::SWGDeviceSettings& response,
+        const AirspySettings& settings);
+
+    static void webapiUpdateDeviceSettings(
+            AirspySettings& settings,
+            const QStringList& deviceSettingsKeys,
+            SWGSDRangel::SWGDeviceSettings& response);
+
     static const qint64 loLowLimitFreq;
 	static const qint64 loHighLimitFreq;
 
 private:
 	DeviceAPI *m_deviceAPI;
-	QMutex m_mutex;
+	QRecursiveMutex m_mutex;
 	AirspySettings m_settings;
 	struct airspy_device* m_dev;
-	AirspyThread* m_airspyThread;
+	AirspyWorker* m_airspyWorker;
+    QThread *m_airspyWorkerThread;
 	QString m_deviceDescription;
 	std::vector<uint32_t> m_sampleRates;
 	bool m_running;
-    FileRecord *m_fileSink; //!< File sink to record device I/Q output
     QNetworkAccessManager *m_networkManager;
     QNetworkRequest m_networkRequest;
 
 	bool openDevice();
 	void closeDevice();
-	bool applySettings(const AirspySettings& settings, bool force);
+	bool applySettings(const AirspySettings& settings, const QList<QString>& settingsKeys, bool force);
 	struct airspy_device *open_airspy_from_sequence(int sequence);
 	void setDeviceCenterFrequency(quint64 freq);
-    void webapiFormatDeviceSettings(SWGSDRangel::SWGDeviceSettings& response, const AirspySettings& settings);
     void webapiFormatDeviceReport(SWGSDRangel::SWGDeviceReport& response);
-    void webapiReverseSendSettings(QList<QString>& deviceSettingsKeys, const AirspySettings& settings, bool force);
+    void webapiReverseSendSettings(const QList<QString>& deviceSettingsKeys, const AirspySettings& settings, bool force);
     void webapiReverseSendStartStop(bool start);
 
 private slots:

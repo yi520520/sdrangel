@@ -1,5 +1,8 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2019 Edouard Griffiths, F4EXB.                                  //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2019, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
+// Copyright (C) 2021 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,7 +20,7 @@
 
 #include <QColor>
 
-#include "dsp/dspengine.h"
+#include "audio/audiodevicemanager.h"
 #include "util/simpleserializer.h"
 #include "settings/serializable.h"
 #include "freedvdemodsettings.h"
@@ -31,8 +34,9 @@ const float FreeDVDemodSettings::m_mminPowerThresholdDBf = 100.0f;
 #endif
 
 FreeDVDemodSettings::FreeDVDemodSettings() :
-    m_channelMarker(0),
-    m_spectrumGUI(0)
+    m_channelMarker(nullptr),
+    m_spectrumGUI(nullptr),
+    m_rollupState(nullptr)
 {
     resetToDefaults();
 }
@@ -49,11 +53,14 @@ void FreeDVDemodSettings::resetToDefaults()
     m_title = "FreeDV Demodulator";
     m_audioDeviceName = AudioDeviceManager::m_defaultDeviceName;
     m_freeDVMode = FreeDVMode2400A;
+    m_streamIndex = 0;
     m_useReverseAPI = false;
     m_reverseAPIAddress = "127.0.0.1";
     m_reverseAPIPort = 8888;
     m_reverseAPIDeviceIndex = 0;
     m_reverseAPIChannelIndex = 0;
+    m_workspaceIndex = 0;
+    m_hidden = false;
 }
 
 QByteArray FreeDVDemodSettings::serialize() const
@@ -78,6 +85,15 @@ QByteArray FreeDVDemodSettings::serialize() const
     s.writeU32(21, m_reverseAPIDeviceIndex);
     s.writeU32(22, m_reverseAPIChannelIndex);
     s.writeS32(23, (int) m_freeDVMode);
+    s.writeS32(24, m_streamIndex);
+
+    if (m_rollupState) {
+        s.writeBlob(25, m_rollupState->serialize());
+    }
+
+    s.writeS32(26, m_workspaceIndex);
+    s.writeBlob(27, m_geometryBytes);
+    s.writeBool(28, m_hidden);
 
     return s.final();
 }
@@ -104,7 +120,8 @@ bool FreeDVDemodSettings::deserialize(const QByteArray& data)
         d.readS32(3, &tmp, 30);
         m_volume = tmp / 10.0;
 
-        if (m_spectrumGUI) {
+        if (m_spectrumGUI)
+        {
             d.readBlob(4, &bytetmp);
             m_spectrumGUI->deserialize(bytetmp);
         }
@@ -137,6 +154,18 @@ bool FreeDVDemodSettings::deserialize(const QByteArray& data)
         } else {
             m_freeDVMode = (FreeDVMode) tmp;
         }
+
+        d.readS32(24, &m_streamIndex, 0);
+
+        if (m_rollupState)
+        {
+            d.readBlob(25, &bytetmp);
+            m_rollupState->deserialize(bytetmp);
+        }
+
+        d.readS32(26, &m_workspaceIndex, 0);
+        d.readBlob(27, &m_geometryBytes);
+        d.readBool(28, &m_hidden, false);
 
         return true;
     }

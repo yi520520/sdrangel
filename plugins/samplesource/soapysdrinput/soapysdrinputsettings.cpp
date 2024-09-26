@@ -1,5 +1,7 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 Edouard Griffiths, F4EXB                                   //
+// Copyright (C) 2012 maintech GmbH, Otto-Hahn-Str. 15, 97204 Hoechberg, Germany //
+// written by Christian Daniel                                                   //
+// Copyright (C) 2015-2020, 2022 Edouard Griffiths, F4EXB <f4exb06@gmail.com>    //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -37,7 +39,7 @@ void SoapySDRInputSettings::resetToDefaults()
     m_softIQCorrection = false;
     m_transverterMode = false;
     m_transverterDeltaFrequency = 0;
-    m_fileRecordName = "";
+    m_iqOrder = true;
     m_antenna = "NONE";
     m_bandwidth = 1000000;
     m_globalGain = 0;
@@ -82,6 +84,7 @@ QByteArray SoapySDRInputSettings::serialize() const
     s.writeString(24, m_reverseAPIAddress);
     s.writeU32(25, m_reverseAPIPort);
     s.writeU32(26, m_reverseAPIDeviceIndex);
+    s.writeBool(27, m_iqOrder);
 
     return s.final();
 }
@@ -144,6 +147,7 @@ bool SoapySDRInputSettings::deserialize(const QByteArray& data)
 
         d.readU32(26, &uintval, 0);
         m_reverseAPIDeviceIndex = uintval > 99 ? 99 : uintval;
+        d.readBool(27, &m_iqOrder, true);
 
         return true;
     }

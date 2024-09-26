@@ -1,6 +1,6 @@
 ///////////////////////////////////////////////////////////////////////////////////
-// Copyright (C) 2018 F4EXB                                                      //
-// written by Edouard Griffiths                                                  //
+// Copyright (C) 2018-2019, 2021-2023 Edouard Griffiths, F4EXB <f4exb06@gmail.com> //
+// Copyright (C) 2022 Jon Beniston, M7RCE <jon@beniston.com>                     //
 //                                                                               //
 // This program is free software; you can redistribute it and/or modify          //
 // it under the terms of the GNU General Public License as published by          //
@@ -17,14 +17,14 @@
 ///////////////////////////////////////////////////////////////////////////////////
 
 #include <QCommandLineOption>
-#include <QRegExpValidator>
+#include <QRegularExpressionValidator>
 #include <QDebug>
 
 #include "parserbench.h"
 
 ParserBench::ParserBench() :
     m_testOption(QStringList() << "t" << "test",
-        "Test type: decimateii, decimatefi, decimateff, decimateif, decimateinfii, decimatesupii, ambe",
+        "Test type: decimateii, decimatefi, decimateff, decimateif, decimateinfii, decimatesupii, ambe, golay2312, ft8, ft8protocols, callsign"
         "test",
         "decimateii"),
     m_nbSamplesOption(QStringList() << "n" << "nb-samples",
@@ -38,7 +38,15 @@ ParserBench::ParserBench() :
     m_log2FactorOption(QStringList() << "l" << "log2-factor",
         "Log2 factor for rate conversion.",
         "log2",
-        "2")
+        "2"),
+    m_fileOption(QStringList() << "f" << "file",
+        "File to be used for the test.",
+        "file",
+        ""),
+    m_argsOption(QStringList() << "a" << "args",
+        "Custom arguments string to be used for the test.",
+        "args",
+        "")
 {
     m_testStr = "decimateii";
     m_nbSamples = 1048576;
@@ -53,6 +61,8 @@ ParserBench::ParserBench() :
     m_parser.addOption(m_nbSamplesOption);
     m_parser.addOption(m_repetitionOption);
     m_parser.addOption(m_log2FactorOption);
+    m_parser.addOption(m_fileOption);
+    m_parser.addOption(m_argsOption);
 }
 
 ParserBench::~ParserBench()
@@ -69,9 +79,9 @@ void ParserBench::parse(const QCoreApplication& app)
 
     QString test = m_parser.value(m_testOption);
 
-    QString testStr = "([a-z]+)";
-    QRegExp ipRegex ("^" + testStr + "$");
-    QRegExpValidator ipValidator(ipRegex);
+    QString testStr = "([a-z0-9]+)";
+    QRegularExpression ipRegex ("^" + testStr + "$");
+    QRegularExpressionValidator ipValidator(ipRegex);
 
     if (ipValidator.validate(test, pos) == QValidator::Acceptable) {
         m_testStr = test;
@@ -111,6 +121,14 @@ void ParserBench::parse(const QCoreApplication& app)
     } else {
         qWarning() << "ParserBench::parse: repetilog2 factortion invalid. Defaulting to " << m_log2Factor;
     }
+
+    // file
+
+    m_fileName = m_parser.value(m_fileOption);
+
+    // custom args
+
+    m_argsStr = m_parser.value(m_argsOption);
 }
 
 ParserBench::TestType ParserBench::getTestType() const
@@ -125,8 +143,14 @@ ParserBench::TestType ParserBench::getTestType() const
         return TestDecimatorsInfII;
     } else if (m_testStr == "decimatesupii") {
         return TestDecimatorsSupII;
-    } else if (m_testStr == "ambe") {
-        return TestAMBE;
+    } else if (m_testStr == "golay2312") {
+        return TestGolay2312;
+    } else if (m_testStr == "ft8") {
+        return TestFT8;
+    } else if (m_testStr == "callsign") {
+        return TestCallsign;
+    } else if (m_testStr == "ft8protocols") {
+        return TestFT8Protocols;
     } else {
         return TestDecimatorsII;
     }

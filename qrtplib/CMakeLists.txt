@@ -76,13 +76,13 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/exports
 )
 
-add_library(qrtplib SHARED
+add_library(qrtplib
     ${qrtplib_SOURCES}
 )
 
 target_link_libraries(qrtplib
-    Qt5::Core
-    Qt5::Network
+    Qt::Core
+    Qt::Network
 )
 
 install(TARGETS qrtplib DESTINATION ${INSTALL_LIB_DIR})
